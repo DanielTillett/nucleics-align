@@ -16,6 +16,9 @@
 #include <stdio.h>
 #include <string.h>
 #include <pthread.h>
+#include <sched.h> // sched_yield
+#include <stdatomic.h>
+#include <unistd.h> // sysconf
 
 #include "alignment_macros.h"
 #include "alignment_simd.h"
@@ -45,6 +48,7 @@ typedef struct
   void *vbuf; // striped rows and score profile, see hb_pass_striped()
   void *vbuf2; // the same for a pass on a second thread
   bool simd_ok; // all scores far enough from HB_NEG and overflow
+  int pass_threads; // threads for one pass, see hb_pass_striped()
 #endif
 } hb_state_t;
 
@@ -79,6 +83,12 @@ static void hb_emit_ins(hb_state_t *st, const char *b, size_t n)
   }
 }
 
+// Column-block threading of a pass: blocks of columns run on separate
+// threads, each one row behind the block to its left. Tests lower these
+size_t hirschberg_block_min_cells = 4000000; // rows x columns
+size_t hirschberg_block_min_cols = 1024; // columns per block
+int hirschberg_max_threads = 0; // threads per pass; 0: half the CPUs
+
 #ifdef HB_STRIPED
 
 // Below any real score, with room to add penalties without overflow
@@ -88,36 +98,58 @@ static void hb_emit_ins(hb_state_t *st, const char *b, size_t n)
 // threads; below it, starting a thread costs more than it saves
 #define HB_THREAD_CELLS 1e6
 
-// Striped SIMD (Farrar 2007) version of one pass of hb_diff(): gives exactly
-// the same values as the scalar loops. Rows run over `rows` characters of a
-// starting at a[0] and moving by astep (+1 forward, -1 reverse); columns run
-// over n characters of b the same way (bstep). t0 is tb or te. The last row
-// is written to oc[p*ostep] (best score) and od[p*ostep] (ending in a
-// deletion) for column p = 0..n in pass order.
+
+// What a block passes to the block on its right, for each row r = 0..rows:
+// H[r] best score in its last column, F[r] the insertion gap score entering
+// the next column. done counts the rows published so far
+typedef struct {
+  score_t *H, *F;
+  atomic_size_t done;
+} hb_boundary_t;
+
+// Wait until the block on the left has published row r
+static inline void hb_wait_row(hb_boundary_t *left, size_t r)
+{
+  unsigned spins = 0;
+  while(atomic_load_explicit(&left->done, memory_order_acquire) <= r)
+    if(++spins > 256) { spins = 0; sched_yield(); }
+}
+
+// Striped SIMD (Farrar 2007) version of one pass of hb_diff() over the
+// columns c0 .. c0+width-1 of the pass: gives exactly the same values as the
+// scalar loops. Rows run over `rows` characters of a starting at a[0] and
+// moving by astep (+1 forward, -1 reverse); columns run over characters of b
+// the same way (bstep), b pointing at column 0 of the pass. t0 is tb or te.
+// The last row is written to oc[p*ostep] (best score) and od[p*ostep]
+// (ending in a deletion) for column p in pass order; the first block also
+// writes column p = 0.
 // The insertion (horizontal) gap feeds back into the best score of the same
 // row, so Farrar's lazy F loop carries it across segment boundaries. That is
 // exact only for gap_open <= 0 and gap_extend <= 0, which the caller checks.
+// left / right are the boundaries shared with neighbouring blocks (NULL at
+// the ends). A block with a right neighbour must have width a multiple of
+// ALN_VL, so its last column is the last cell of its last lane.
 ALN_TARGET_CLONES
-static void hb_pass_striped(hb_state_t *st, const char *a, ptrdiff_t astep,
-                            size_t rows, const char *b, ptrdiff_t bstep,
-                            size_t n, score_t t0,
-                            score_t *oc, score_t *od, ptrdiff_t ostep,
-                            void *buf)
+static void hb_block_pass(hb_state_t *st, const char *a, ptrdiff_t astep,
+                          size_t rows, const char *b, ptrdiff_t bstep,
+                          size_t c0, size_t width, score_t t0,
+                          score_t *oc, score_t *od, ptrdiff_t ostep,
+                          void *buf, hb_boundary_t *left, hb_boundary_t *right)
 {
   const scoring_t *scoring = st->scoring;
   const sub_table_t *t = &st->table;
   const score_t g = scoring->gap_open, h = scoring->gap_extend;
   const vscore_t vg = vsplat(g), vh = vsplat(h), vneg = vsplat(HB_NEG);
-  const size_t seg = (n + ALN_VL - 1) / ALN_VL;
+  const size_t seg = (width + ALN_VL - 1) / ALN_VL;
   vscore_t *H = buf, *Hn = H + seg, *D = Hn + seg, *prof = D + seg;
   vscore_t *tmp, vdiag, vf, vd, vc;
   size_t r, k, l, p, c;
 
   // prof[c*seg + k] lane l: score of a character with code c against the
-  // b character in column l*seg+k (0 for padding past the end of b)
+  // b character in column c0+l*seg+k (0 for padding past the block)
   memset(prof, 0, t->n * seg * sizeof(vscore_t));
-  for(p = 0; p < n; p++) {
-    size_t row = t->code[(unsigned char)b[(ptrdiff_t)p * bstep]] * t->n;
+  for(p = 0; p < width; p++) {
+    size_t row = t->code[(unsigned char)b[(ptrdiff_t)(c0+p) * bstep]] * t->n;
     l = p / seg; k = p - l*seg;
     for(c = 0; c < t->n; c++) prof[c*seg + k][l] = t->scores[row + c];
   }
@@ -125,20 +157,36 @@ static void hb_pass_striped(hb_state_t *st, const char *a, ptrdiff_t astep,
   // Row 0: only insertions
   for(k = 0; k < seg; k++)
     for(l = 0; l < ALN_VL; l++) {
-      H[k][l] = g + (score_t)(l*seg + k + 1) * h;
+      H[k][l] = g + (score_t)(c0 + l*seg + k + 1) * h;
       D[k][l] = H[k][l] + g;
     }
+  if(right != NULL) {
+    right->H[0] = g + (score_t)(c0 + width) * h;
+    right->F[0] = HB_NEG; // not used
+    atomic_store_explicit(&right->done, 1, memory_order_release);
+  }
 
-  score_t col0 = t0, col0_prev = 0; // column 0: only deletions
+  // The column left of the block: column 0 (only deletions) for the first
+  // block, otherwise the last column of the block on the left
+  score_t col0 = t0, col0_prev = 0, fstart;
 
   for(r = 0; r < rows; r++)
   {
     const vscore_t *pr = prof +
       (size_t)t->code[(unsigned char)a[(ptrdiff_t)r * astep]] * seg;
-    col0 += h;
+
+    if(left == NULL) {
+      col0 += h;
+      fstart = col0 + g + h;
+    } else {
+      hb_wait_row(left, r+1);
+      col0_prev = left->H[r];
+      col0 = left->H[r+1];
+      fstart = left->F[r+1];
+    }
 
     vdiag = vshift(H[seg-1], col0_prev);
-    vf = vshift(vneg, col0 + g + h); // lanes after 0 are fixed below
+    vf = vshift(vneg, fstart); // lanes after 0 are fixed below
     for(k = 0; k < seg; k++)
     {
       vd = vmax(D[k], H[k] + vg) + vh;
@@ -149,6 +197,9 @@ static void hb_pass_striped(hb_state_t *st, const char *a, ptrdiff_t astep,
       vf = vmax(vf, vc + vg) + vh;
     }
 
+    // Insertion gap leaving the last lane: into the next block
+    score_t fout = vf[ALN_VL-1];
+
     // Lazy F: carry the insertion gap across segment boundaries while it
     // could still raise a best score
     vf = vshift(vf, HB_NEG);
@@ -156,19 +207,112 @@ static void hb_pass_striped(hb_state_t *st, const char *a, ptrdiff_t astep,
     while(vany(vf > Hn[k] + vg)) {
       Hn[k] = vmax(Hn[k], vf);
       vf = vmax(vf + vh, vneg);
-      if(++k == seg) { k = 0; vf = vshift(vf, HB_NEG); }
+      if(++k == seg) {
+        fout = MAX2(fout, vf[ALN_VL-1]);
+        k = 0;
+        vf = vshift(vf, HB_NEG);
+      }
+    }
+
+    if(right != NULL) {
+      right->H[r+1] = Hn[seg-1][ALN_VL-1];
+      right->F[r+1] = fout;
+      atomic_store_explicit(&right->done, r+2, memory_order_release);
     }
 
     tmp = H; H = Hn; Hn = tmp;
     col0_prev = col0;
   }
 
-  oc[0] = od[0] = col0;
+  if(left == NULL) oc[0] = od[0] = col0;
   for(l = 0; l < ALN_VL; l++)
-    for(k = 0, p = l*seg; k < seg && p < n; k++, p++) {
-      oc[(ptrdiff_t)(p+1) * ostep] = H[k][l];
-      od[(ptrdiff_t)(p+1) * ostep] = D[k][l];
+    for(k = 0, p = l*seg; k < seg && p < width; k++, p++) {
+      oc[(ptrdiff_t)(c0+p+1) * ostep] = H[k][l];
+      od[(ptrdiff_t)(c0+p+1) * ostep] = D[k][l];
     }
+}
+
+// One column block of a pass, run on its own thread
+typedef struct {
+  hb_state_t *st; const char *a; ptrdiff_t astep; size_t rows;
+  const char *b; ptrdiff_t bstep; size_t c0, width; score_t t0;
+  score_t *oc, *od; ptrdiff_t ostep; void *buf;
+  hb_boundary_t *left, *right;
+} hb_block_args_t;
+
+static void* hb_block_thread(void *ptr)
+{
+  hb_block_args_t *p = ptr;
+  hb_block_pass(p->st, p->a, p->astep, p->rows, p->b, p->bstep, p->c0,
+                p->width, p->t0, p->oc, p->od, p->ostep, p->buf,
+                p->left, p->right);
+  return NULL;
+}
+
+// One pass of hb_diff() over n columns: as one block, or split into column
+// blocks on several threads when it is big enough (see hb_block_pass())
+static void hb_pass_striped(hb_state_t *st, const char *a, ptrdiff_t astep,
+                            size_t rows, const char *b, ptrdiff_t bstep,
+                            size_t n, score_t t0,
+                            score_t *oc, score_t *od, ptrdiff_t ostep,
+                            void *buf)
+{
+  size_t nblocks = 1, i;
+  if(st->pass_threads > 1 && (double)rows * n >= hirschberg_block_min_cells &&
+     n >= 2 * hirschberg_block_min_cols)
+  {
+    nblocks = MIN2((size_t)st->pass_threads, n / hirschberg_block_min_cols);
+  }
+
+  if(nblocks <= 1) {
+    hb_block_pass(st, a, astep, rows, b, bstep, 0, n, t0, oc, od, ostep, buf,
+                  NULL, NULL);
+    return;
+  }
+
+  // Blocks of equal width (a multiple of ALN_VL); the last takes the rest
+  size_t width = (n / nblocks) / ALN_VL * ALN_VL;
+  size_t seg = (n - width * (nblocks-1) + ALN_VL - 1) / ALN_VL; // widest
+  size_t bufsize = (3 + st->table.n) * seg * sizeof(vscore_t);
+  hb_block_args_t args[nblocks];
+  hb_boundary_t bounds[nblocks-1];
+  pthread_t threads[nblocks];
+  bool started[nblocks];
+  void *bufs = aligned_alloc(sizeof(vscore_t), bufsize * nblocks);
+  score_t *edges = malloc(2 * (nblocks-1) * (rows+1) * sizeof(score_t));
+  if(bufs == NULL || edges == NULL) {
+    fprintf(stderr, "%s:%i: Out of memory\n", __FILE__, __LINE__);
+    exit(EXIT_FAILURE);
+  }
+
+  for(i = 0; i + 1 < nblocks; i++) {
+    bounds[i].H = edges + 2*i*(rows+1);
+    bounds[i].F = bounds[i].H + (rows+1);
+    atomic_init(&bounds[i].done, 0);
+  }
+
+  for(i = 0; i < nblocks; i++) {
+    hb_block_args_t blk = {st, a, astep, rows, b, bstep, i * width,
+                           i + 1 < nblocks ? width : n - i * width, t0,
+                           oc, od, ostep, (char*)bufs + i * bufsize,
+                           i > 0 ? &bounds[i-1] : NULL,
+                           i + 1 < nblocks ? &bounds[i] : NULL};
+    args[i] = blk;
+  }
+
+  // Block 0 runs here; the rest on their own threads. A block whose thread
+  // cannot start runs here too, after the blocks to its left
+  for(i = 1; i < nblocks; i++)
+    started[i] = pthread_create(&threads[i], NULL, hb_block_thread,
+                                &args[i]) == 0;
+  hb_block_thread(&args[0]);
+  for(i = 1; i < nblocks; i++) {
+    if(started[i]) pthread_join(threads[i], NULL);
+    else hb_block_thread(&args[i]);
+  }
+
+  free(bufs);
+  free(edges);
 }
 
 // Arguments for running hb_pass_striped() on another thread
@@ -477,6 +621,13 @@ static void hb_state_init(hb_state_t *st, const char *a, const char *b,
       sub = MAX2(sub, HB_DABS(st->table.scores[c]));
     double steps = (double)len_a + (double)len_b + ALN_VL + 2;
     st->simd_ok = steps * (gap + sub) < (double)(1 << 27);
+  }
+
+  // Threads per pass: the forward and reverse passes already run at once
+  st->pass_threads = hirschberg_max_threads;
+  if(st->pass_threads <= 0) {
+    long cpus = sysconf(_SC_NPROCESSORS_ONLN);
+    st->pass_threads = cpus > 1 ? (int)(cpus / 2) : 1;
   }
 
   st->vbuf = aligned_alloc(sizeof(vscore_t),

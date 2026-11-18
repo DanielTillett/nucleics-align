@@ -702,9 +702,65 @@ void simd_test_hirschberg()
   alignment_free(striped);
 }
 
+/* Column-block threading of the linear-space passes: force small blocks so
+ * short sequences are split across several threads */
+void simd_test_hirschberg_blocks()
+{
+  size_t min_cells = hirschberg_block_min_cells;
+  size_t min_cols = hirschberg_block_min_cols;
+  int max_threads = hirschberg_max_threads;
+  size_t mismatches = hirschberg_striped_mismatches;
+  alignment_t *scalar = alignment_create(256), *striped = alignment_create(256);
+  static char seqa[801], seqb[801];
+  scoring_t scoring;
+  const int threads[] = {2, 3, 5};
+  size_t i, t;
+
+  hirschberg_block_min_cells = 1;
+  hirschberg_block_min_cols = 8;
+
+  for(t = 0; t < sizeof(threads)/sizeof(threads[0]); t++)
+  {
+    hirschberg_max_threads = threads[t];
+    for(i = 0; i < 80; i++)
+    {
+      scoring_init(&scoring, 1 + (int)hb_rand(5), -(int)hb_rand(16),
+                   -(int)hb_rand(11), -(int)hb_rand(6), false, false, false,
+                   false, false, false);
+      hb_rand_seq(seqa, hb_rand(801), "acgt");
+      hb_rand_seq(seqb, hb_rand(801), "acgt");
+      simd_hb_check(seqa, seqb, &scoring, scalar, striped);
+    }
+    scoring_system_BLOSUM62(&scoring);
+    for(i = 0; i < 20; i++)
+    {
+      hb_rand_seq(seqa, hb_rand(801), "ARNDCQEGHILKMFPSTWYV");
+      hb_rand_seq(seqb, hb_rand(801), "ARNDCQEGHILKMFPSTWYV");
+      simd_hb_check(seqa, seqb, &scoring, scalar, striped);
+    }
+    // Insertions carried through whole blocks
+    memset(seqa, 'a', 300); seqa[300] = 0;
+    memset(seqb, 'c', 200); seqb[200] = 0;
+    scoring_init(&scoring, 1, -20, -2, -1, false, false, false, false,
+                 false, true);
+    simd_hb_check(seqa, seqb, &scoring, scalar, striped);
+    simd_hb_check(seqb, seqa, &scoring, scalar, striped);
+  }
+
+  // Every block-threaded pass matched the scalar one exactly
+  ASSERT(hirschberg_striped_mismatches == mismatches);
+
+  hirschberg_block_min_cells = min_cells;
+  hirschberg_block_min_cols = min_cols;
+  hirschberg_max_threads = max_threads;
+  alignment_free(scalar);
+  alignment_free(striped);
+}
+
 void test_simd()
 {
   SUITE_START("Striped SIMD fill");
+  simd_test_hirschberg_blocks();
   simd_test_hirschberg();
   simd_test_matches_scalar();
   simd_test_odd_penalties();

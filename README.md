@@ -92,7 +92,9 @@ Link against `src/libalign.a` (and `libs/string_buffer/libstrbuf.a`, `-lz`,
   same scores as `needleman_wunsch_align()`, but returns false for options it
   does not support (a positive gap open, free end gaps, `no_gaps_in_*`,
   `no_mismatches`). Large sub-problems run their forward and reverse passes
-  on two threads
+  at the same time, each split into column blocks on several threads
+  (tunable with `hirschberg_block_min_cells`, `hirschberg_block_min_cols`
+  and `hirschberg_max_threads`)
 * `hirschberg_score()` (`src/hirschberg.h`): only the global alignment score,
   in one pass and O(n) memory; same options as `hirschberg_align()`
 * `scoring_init()` and the `scoring_system_*()` functions
@@ -126,14 +128,16 @@ Time and peak memory for one global alignment (`needleman_wunsch
 
 | Sequences | Full matrices | `--linear` | `--scoreonly` |
 |---|---|---|---|
-| 5 kb | 0.05-0.15 s, 289 MB | 0.03 s, 2 MB | 0.02 s, 2 MB |
-| 20 kb | 0.8-2.5 s, 4.6 GB | 0.41 s, 3 MB | 0.30 s, 3 MB |
+| 5 kb | 0.05-0.15 s, 289 MB | 0.02 s, 2 MB | <0.01 s, 2 MB |
+| 20 kb | 0.8-2.5 s, 4.6 GB | 0.19 s, 2 MB | 0.04 s, 2 MB |
+| 50 kb | not run (needs ~30 GB) | 0.83 s, 10 MB | 0.22 s, 7 MB |
 
 Full-matrix times vary most: the first run after others have freed memory is
 the slowest, while the kernel finds and clears huge pages.
 
-With `NATIVE=1`, 20 kb takes 0.35 s with `--linear` and 0.23 s with
-`--scoreonly`.
+Measured on 32 CPUs; `--linear` and `--scoreonly` use up to half of them per
+pass. Threads wait for each other by spinning, so CPU time is several times
+the wall time (50 kb `--linear`: 0.8 s wall, ~9 s CPU).
 
 The command line tools align one pair at a time. Splitting a batch across
 processes scales well: 32 pairs ran 4x faster as 8 processes for
@@ -152,8 +156,12 @@ Where the speed comes from:
   unchanged. Used where the CPU has a vector max instruction (see Build), on
   sub-problems large enough to repay building the score profile, with gap
   penalties of zero or less, and while every score stays far from 32-bit
-  overflow. The forward and reverse passes of large sub-problems run on two
-  threads
+  overflow
+* In large passes the columns are split into blocks, one thread each, every
+  thread one row behind the block on its left. Each block hands the next
+  its last column's score and the insertion gap leaving it, so the result is
+  the same as one thread. The forward and reverse passes also run at the
+  same time (20 kb `--linear` 0.79 -> 0.19 s, `--scoreonly` 0.30 -> 0.04 s)
 * On Linux the score matrices are allocated for transparent huge pages:
   page faults for a 5 kb x 5 kb alignment fall from ~72,000 to ~320, and
   fewer TLB misses speed up the fill itself (5 kb NW 0.060 -> 0.046 s)

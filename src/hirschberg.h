@@ -32,6 +32,13 @@ bool hirschberg_align2(const char *a, const char *b,
                        size_t len_a, size_t len_b,
                        const scoring_t *scoring, alignment_t *result);
 
+// Tuning (and testing) of column-block threading in large passes: a pass of
+// at least hirschberg_block_min_cells cells is split into blocks of at least
+// hirschberg_block_min_cols columns, one thread each, up to
+// hirschberg_max_threads per pass (0: half the CPUs). Set before aligning
+extern size_t hirschberg_block_min_cells, hirschberg_block_min_cols;
+extern int hirschberg_max_threads;
+
 // Testing aid: when true, each SIMD pass is redone without SIMD and
 // hirschberg_striped_mismatches counts any row that differs
 extern bool hirschberg_check_striped;
