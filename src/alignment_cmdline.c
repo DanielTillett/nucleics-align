@@ -133,7 +133,8 @@ static void print_usage(enum SeqAlignCmdType cmd_type, score_t defaults[4],
 "\n"
 "    --printscores        Print optimal alignment scores\n"
 "    --zam                A funky type of output\n"
-"    --linear             Align in linear memory (Hirschberg, Myers-Miller)\n");
+"    --linear             Align in linear memory (Hirschberg, Myers-Miller)\n"
+"    --scoreonly          Print only the score (fast, linear memory)\n");
   }
 
   fprintf(stderr,
@@ -337,6 +338,12 @@ cmdline_t* cmdline_new(int argc, char **argv, scoring_t *scoring,
         if(cmd_type != SEQ_ALIGN_NW_CMD)
           usage("--zam only valid with Needleman-Wunsch");
         cmd->zam_stle_output = true;
+      }
+      else if(strcasecmp(argv[argi], "--scoreonly") == 0)
+      {
+        if(cmd_type != SEQ_ALIGN_NW_CMD)
+          usage("--scoreonly only valid with Needleman-Wunsch");
+        cmd->score_only = true;
       }
       else if(strcasecmp(argv[argi], "--linear") == 0)
       {
@@ -549,6 +556,14 @@ cmdline_t* cmdline_new(int argc, char **argv, scoring_t *scoring,
   {
     usage("Cannot use --printscore, --printfasta, --pretty or --colour with "
           "--zam");
+  }
+
+  if(cmd->score_only &&
+     (cmd->zam_stle_output || cmd->print_pretty || cmd->print_colour ||
+      cmd->print_matrices))
+  {
+    usage("--scoreonly cannot be used with --zam, --pretty, --colour or "
+          "--printmatrices");
   }
 
   if(cmd->linear_space &&

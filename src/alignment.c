@@ -101,6 +101,7 @@ bool alignment_striped_enabled = true;
 
 #ifdef ALN_STRIPED
 
+ALN_TARGET_CLONES
 static void alignment_fill_striped(aligner_t *aligner, const sub_table_t *table,
                                    score_t min)
 {

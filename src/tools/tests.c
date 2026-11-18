@@ -327,6 +327,9 @@ static void hb_check(const char *a, const char *b, const scoring_t *scoring,
   needleman_wunsch_align(a, b, scoring, nw, nw_aln);
   ASSERT(hirschberg_align(a, b, scoring, hb_aln));
   ASSERT(hb_aln->score == nw_aln->score);
+  score_t score_only = 0;
+  ASSERT(hirschberg_score(a, b, scoring, &score_only));
+  ASSERT(score_only == nw_aln->score);
   ASSERT(strlen(hb_aln->result_a) == hb_aln->length &&
          strlen(hb_aln->result_b) == hb_aln->length);
   ASSERT(hb_ungapped_equals(hb_aln->result_a, a));
@@ -617,6 +620,15 @@ static void simd_hb_check(const char *a, const char *b,
                           const scoring_t *scoring,
                           alignment_t *scalar, alignment_t *striped)
 {
+  if(scoring->gap_open > 0)
+  {
+    // Not supported in linear space: must be refused, not answered wrongly
+    score_t score;
+    ASSERT(!hirschberg_align(a, b, scoring, scalar));
+    ASSERT(!hirschberg_score(a, b, scoring, &score));
+    return;
+  }
+
   alignment_striped_enabled = false;
   ASSERT(hirschberg_align(a, b, scoring, scalar));
   alignment_striped_enabled = true;
@@ -624,6 +636,12 @@ static void simd_hb_check(const char *a, const char *b,
   ASSERT(hirschberg_align(a, b, scoring, striped));
   hirschberg_check_striped = false;
   ASSERT(scalar->score == striped->score);
+  score_t score_scalar = 0, score_striped = 0;
+  alignment_striped_enabled = false;
+  ASSERT(hirschberg_score(a, b, scoring, &score_scalar));
+  alignment_striped_enabled = true;
+  ASSERT(hirschberg_score(a, b, scoring, &score_striped));
+  ASSERT(score_scalar == scalar->score && score_striped == scalar->score);
   ASSERT(strcmp(scalar->result_a, striped->result_a) == 0);
   ASSERT(strcmp(scalar->result_b, striped->result_b) == 0);
 }

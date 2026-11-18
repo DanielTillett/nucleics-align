@@ -34,6 +34,12 @@ void smith_waterman_align2(const char *seq_a, const char *seq_b,
                            size_t len_a, size_t len_b,
                            const scoring_t *scoring, sw_aligner_t *sw);
 
+// Only consider local alignments scoring at least min_score (default 1) in
+// later calls to smith_waterman_align(). Hits come out best first, so the
+// hits returned are exactly those of a full search up to the first one
+// scoring below min_score; lower-scoring cells are just never indexed
+void smith_waterman_set_min_score(sw_aligner_t *sw, score_t min_score);
+
 // An alignment to read from, and a pointer to memory to store the result
 // returns 1 if an alignment was read, 0 otherwise
 int smith_waterman_fetch(sw_aligner_t *sw, alignment_t *result);

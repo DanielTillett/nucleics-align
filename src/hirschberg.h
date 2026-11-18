@@ -22,8 +22,9 @@ extern "C" {
 // Scores are the same as needleman_wunsch_align() but, where several
 // alignments share the optimal score, the one returned may differ.
 // Supports substitution tables, wildcards and affine gaps. Returns false
-// (and leaves result untouched) if any of no_start_gap_penalty,
-// no_end_gap_penalty, no_gaps_in_a/b/longest or no_mismatches is set.
+// (and leaves result untouched) if gap_open > 0 or any of
+// no_start_gap_penalty, no_end_gap_penalty, no_gaps_in_a/b/longest or
+// no_mismatches is set.
 bool hirschberg_align(const char *a, const char *b,
                       const scoring_t *scoring, alignment_t *result);
 
@@ -35,6 +36,16 @@ bool hirschberg_align2(const char *a, const char *b,
 // hirschberg_striped_mismatches counts any row that differs
 extern bool hirschberg_check_striped;
 extern size_t hirschberg_striped_mismatches;
+
+// Score of the best global alignment, without the alignment itself: one
+// pass in O(len_b) memory. Same score as needleman_wunsch_align(), and the
+// same unsupported options as hirschberg_align() (returns false)
+bool hirschberg_score(const char *a, const char *b,
+                      const scoring_t *scoring, score_t *score);
+
+bool hirschberg_score2(const char *a, const char *b,
+                       size_t len_a, size_t len_b,
+                       const scoring_t *scoring, score_t *score);
 
 // Score an alignment as needleman_wunsch_align() would
 score_t hirschberg_score_alignment(const char *result_a, const char *result_b,

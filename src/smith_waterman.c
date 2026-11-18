@@ -62,6 +62,7 @@ struct sw_aligner_t
   // For following hits back through the matrices without scoring_lookup()
   sub_table_t table;
   bool fast_walk;
+  score_t min_score; // lowest score a hit may start from, at least 1
 };
 
 // One step back through the matrices. Gives the same result as
@@ -198,6 +199,7 @@ sw_aligner_t* smith_waterman_new(void)
     exit(EXIT_FAILURE);
   }
   _init_history(&(sw->history));
+  sw->min_score = 1;
   return sw;
 }
 
@@ -208,6 +210,11 @@ void smith_waterman_free(sw_aligner_t *sw)
   bitset_dealloc(&sw->history.match_scores_mask);
   free(sw->history.sorted_match_indices);
   free(sw);
+}
+
+void smith_waterman_set_min_score(sw_aligner_t *sw, score_t min_score)
+{
+  sw->min_score = MAX2(min_score, 1);
 }
 
 aligner_t* smith_waterman_get_aligner(sw_aligner_t *sw)
@@ -247,22 +254,32 @@ void smith_waterman_align2(const char *a, const char *b,
   // Set number of hits
   hist->num_of_hits = hist->next_hit = 0;
 
+  // Hits may start from cells scoring at least lo. Cells scoring less are
+  // only reached after every higher one, so leaving them out changes no
+  // hit that scores at least lo
   const score_t *scores = aligner->match_scores;
+  const score_t lo = sw->min_score;
   size_t pos, x, y, w = aligner->score_width, h = aligner->score_height;
-  score_t max_score = 0;
-  for(pos = 0; pos < arr_size; pos++)
+  size_t total = 0, count;
+  score_t s, max_score = 0;
+  for(pos = 0; pos < arr_size; pos++) {
     if(scores[pos] > max_score) max_score = scores[pos];
+    total += (scores[pos] >= lo);
+  }
 
   // Order cells by score (highest first), then position in seq_a, then seq_b.
   // Scores are bounded integers, so a counting sort replaces the comparison
-  // sort; it also makes the order of tied hits the same on every platform
-  size_t *starts = calloc((size_t)max_score + 2, sizeof(size_t));
+  // sort; it also makes the order of tied hits the same on every platform.
+  // With few candidates (e.g. a high min_score) a comparison sort of just
+  // those is cheaper than the counting sort's column-major pass
+  size_t *starts = NULL;
+  if(total * 16 >= arr_size && (size_t)max_score <= arr_size)
+    starts = calloc((size_t)max_score + 2, sizeof(size_t));
 
-  if(starts == NULL || (size_t)max_score > arr_size)
+  if(starts == NULL)
   {
-    free(starts);
     for(pos = 0; pos < arr_size; pos++) {
-      if(scores[pos] > 0)
+      if(scores[pos] >= lo)
         hist->sorted_match_indices[hist->num_of_hits++] = pos;
     }
     MatrixSort tmp_struct = {aligner->match_scores, aligner->score_width};
@@ -271,18 +288,17 @@ void smith_waterman_align2(const char *a, const char *b,
     return;
   }
 
-  // starts[s] = number of cells scoring more than s
+  // starts[s] = number of candidate cells scoring more than s
   for(pos = 0; pos < arr_size; pos++)
-    if(scores[pos] > 0) starts[scores[pos]]++;
-  size_t total = 0, count;
-  score_t s;
-  for(s = max_score; s > 0; s--) { count = starts[s]; starts[s] = total; total += count; }
+    if(scores[pos] >= lo) starts[scores[pos]]++;
+  total = 0;
+  for(s = max_score; s >= lo; s--) { count = starts[s]; starts[s] = total; total += count; }
   hist->num_of_hits = total;
 
   // Column-major pass so ties are ordered by x, then y
   for(x = 0; x < w; x++)
     for(y = 0, pos = x; y < h; y++, pos += w)
-      if(scores[pos] > 0)
+      if(scores[pos] >= lo)
         hist->sorted_match_indices[starts[scores[pos]]++] = pos;
 
   free(starts);

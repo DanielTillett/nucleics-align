@@ -15,15 +15,21 @@
 #include <stddef.h> // ptrdiff_t
 #include <stdio.h>
 #include <string.h>
+#include <pthread.h>
 
 #include "alignment_macros.h"
 #include "alignment_simd.h"
 #include "hirschberg.h"
 
-// SIMD passes only where the target has a native vector max: without one
-// (plain SSE2, the x86-64 baseline) the scalar loops are faster here
+// SIMD passes only where the CPU has a native vector max: without one
+// (plain SSE2, the x86-64 baseline) the scalar loops are faster here.
+// With runtime dispatch (ALN_DISPATCH) that is checked when running
 #if defined(ALN_STRIPED) && defined(ALN_NATIVE_VMAX)
 #  define HB_STRIPED 1
+#  define HB_FAST_VMAX() 1
+#elif defined(ALN_STRIPED) && defined(ALN_DISPATCH)
+#  define HB_STRIPED 1
+#  define HB_FAST_VMAX() __builtin_cpu_supports("sse4.1")
 #endif
 
 typedef struct
@@ -37,6 +43,7 @@ typedef struct
   size_t pos; // next position to write in out_a, out_b
 #ifdef HB_STRIPED
   void *vbuf; // striped rows and score profile, see hb_pass_striped()
+  void *vbuf2; // the same for a pass on a second thread
   bool simd_ok; // all scores far enough from HB_NEG and overflow
 #endif
 } hb_state_t;
@@ -77,6 +84,10 @@ static void hb_emit_ins(hb_state_t *st, const char *b, size_t n)
 // Below any real score, with room to add penalties without overflow
 #define HB_NEG (SCORE_MIN / 4)
 
+// Sub-problems with at least this many cells run their two passes on two
+// threads; below it, starting a thread costs more than it saves
+#define HB_THREAD_CELLS 1e6
+
 // Striped SIMD (Farrar 2007) version of one pass of hb_diff(): gives exactly
 // the same values as the scalar loops. Rows run over `rows` characters of a
 // starting at a[0] and moving by astep (+1 forward, -1 reverse); columns run
@@ -86,17 +97,19 @@ static void hb_emit_ins(hb_state_t *st, const char *b, size_t n)
 // The insertion (horizontal) gap feeds back into the best score of the same
 // row, so Farrar's lazy F loop carries it across segment boundaries. That is
 // exact only for gap_open <= 0 and gap_extend <= 0, which the caller checks.
+ALN_TARGET_CLONES
 static void hb_pass_striped(hb_state_t *st, const char *a, ptrdiff_t astep,
                             size_t rows, const char *b, ptrdiff_t bstep,
                             size_t n, score_t t0,
-                            score_t *oc, score_t *od, ptrdiff_t ostep)
+                            score_t *oc, score_t *od, ptrdiff_t ostep,
+                            void *buf)
 {
   const scoring_t *scoring = st->scoring;
   const sub_table_t *t = &st->table;
   const score_t g = scoring->gap_open, h = scoring->gap_extend;
   const vscore_t vg = vsplat(g), vh = vsplat(h), vneg = vsplat(HB_NEG);
   const size_t seg = (n + ALN_VL - 1) / ALN_VL;
-  vscore_t *H = st->vbuf, *Hn = H + seg, *D = Hn + seg, *prof = D + seg;
+  vscore_t *H = buf, *Hn = H + seg, *D = Hn + seg, *prof = D + seg;
   vscore_t *tmp, vdiag, vf, vd, vc;
   size_t r, k, l, p, c;
 
@@ -156,6 +169,21 @@ static void hb_pass_striped(hb_state_t *st, const char *a, ptrdiff_t astep,
       oc[(ptrdiff_t)(p+1) * ostep] = H[k][l];
       od[(ptrdiff_t)(p+1) * ostep] = D[k][l];
     }
+}
+
+// Arguments for running hb_pass_striped() on another thread
+typedef struct {
+  hb_state_t *st; const char *a; ptrdiff_t astep; size_t rows;
+  const char *b; ptrdiff_t bstep; size_t n; score_t t0;
+  score_t *oc, *od; ptrdiff_t ostep; void *buf;
+} hb_pass_args_t;
+
+static void* hb_pass_thread(void *ptr)
+{
+  hb_pass_args_t *p = ptr;
+  hb_pass_striped(p->st, p->a, p->astep, p->rows, p->b, p->bstep, p->n,
+                  p->t0, p->oc, p->od, p->ostep, p->buf);
+  return NULL;
 }
 
 #endif /* HB_STRIPED */
@@ -307,11 +335,26 @@ static void hb_diff(hb_state_t *st, const char *a, const char *b,
   #ifdef HB_STRIPED
   // Building the score profile costs O(n x alphabet), so only use SIMD on
   // sub-problems with enough rows to pay for it
-  if(alignment_striped_enabled && st->simd_ok && g <= 0 && h <= 0 &&
+  if(alignment_striped_enabled && st->simd_ok && HB_FAST_VMAX() &&
+     g <= 0 && h <= 0 &&
      n >= 2*ALN_VL && m >= 32 && m >= 2*st->table.n)
   {
-    hb_pass_striped(st, a, 1, imid, b, 1, n, tb, cc, dd, 1);
-    hb_pass_striped(st, a+m-1, -1, m-imid, b+n-1, -1, n, te, rr+n, ss+n, -1);
+    // The passes read shared, unchanging data and write different rows, so
+    // big ones run at the same time
+    hb_pass_args_t rev = {st, a+m-1, -1, m-imid, b+n-1, -1, n, te,
+                          rr+n, ss+n, -1, st->vbuf2};
+    pthread_t thread;
+    if((double)m * (double)n >= HB_THREAD_CELLS &&
+       pthread_create(&thread, NULL, hb_pass_thread, &rev) == 0)
+    {
+      hb_pass_striped(st, a, 1, imid, b, 1, n, tb, cc, dd, 1, st->vbuf);
+      pthread_join(thread, NULL);
+    }
+    else
+    {
+      hb_pass_striped(st, a, 1, imid, b, 1, n, tb, cc, dd, 1, st->vbuf);
+      hb_pass_thread(&rev);
+    }
     if(hirschberg_check_striped) hb_check_striped(st, a, b, m, n, imid, tb, te);
   }
   else
@@ -383,40 +426,39 @@ bool hirschberg_align(const char *a, const char *b,
   return hirschberg_align2(a, b, strlen(a), strlen(b), scoring, result);
 }
 
-bool hirschberg_align2(const char *a, const char *b,
-                       size_t len_a, size_t len_b,
-                       const scoring_t *scoring, alignment_t *result)
+// Options that need the full matrices. A positive gap_open (opening a gap
+// earns points) breaks the Myers-Miller split: its scores then differ from
+// Needleman-Wunsch, so it is refused too
+static bool hb_unsupported(const scoring_t *scoring)
 {
-  if(scoring->no_start_gap_penalty || scoring->no_end_gap_penalty ||
-     scoring->no_gaps_in_a || scoring->no_gaps_in_b ||
-     scoring->no_gaps_in_longest || scoring->no_mismatches)
-  {
-    return false;
-  }
+  return scoring->gap_open > 0 ||
+         scoring->no_start_gap_penalty || scoring->no_end_gap_penalty ||
+         scoring->no_gaps_in_a || scoring->no_gaps_in_b ||
+         scoring->no_gaps_in_longest || scoring->no_mismatches;
+}
 
-  alignment_ensure_capacity(result, len_a + len_b);
-
-  hb_state_t st;
-  st.scoring = scoring;
-  st.out_a = result->result_a;
-  st.out_b = result->result_b;
-  st.pos = 0;
+static void hb_state_init(hb_state_t *st, const char *a, const char *b,
+                          size_t len_a, size_t len_b, const scoring_t *scoring)
+{
+  st->scoring = scoring;
+  st->out_a = st->out_b = NULL;
+  st->pos = 0;
 
   score_t *rows = malloc(4 * (len_b+1) * sizeof(score_t));
   if(rows == NULL) {
     fprintf(stderr, "%s:%i: Out of memory\n", __FILE__, __LINE__);
     exit(EXIT_FAILURE);
   }
-  sub_table_build(&st.table, scoring, a, len_a, b, len_b);
-  st.b = b;
-  st.row_b = malloc((len_b+1) * sizeof(size_t));
-  if(st.row_b == NULL) {
+  sub_table_build(&st->table, scoring, a, len_a, b, len_b);
+  st->b = b;
+  st->row_b = malloc((len_b+1) * sizeof(size_t));
+  if(st->row_b == NULL) {
     fprintf(stderr, "%s:%i: Out of memory\n", __FILE__, __LINE__);
     exit(EXIT_FAILURE);
   }
   size_t j;
   for(j = 0; j < len_b; j++)
-    st.row_b[j] = st.table.code[(unsigned char)b[j]] * st.table.n;
+    st->row_b[j] = st->table.code[(unsigned char)b[j]] * st->table.n;
 
 #ifdef HB_STRIPED
   // Three striped rows plus a profile row per character code
@@ -431,37 +473,97 @@ bool hirschberg_align2(const char *a, const char *b,
     double gap = HB_DABS(scoring->gap_open) + HB_DABS(scoring->gap_extend);
     double sub = 0;
     size_t c;
-    for(c = 0; c < st.table.n * st.table.n; c++)
-      sub = MAX2(sub, HB_DABS(st.table.scores[c]));
+    for(c = 0; c < st->table.n * st->table.n; c++)
+      sub = MAX2(sub, HB_DABS(st->table.scores[c]));
     double steps = (double)len_a + (double)len_b + ALN_VL + 2;
-    st.simd_ok = steps * (gap + sub) < (double)(1 << 27);
+    st->simd_ok = steps * (gap + sub) < (double)(1 << 27);
   }
 
-  st.vbuf = aligned_alloc(sizeof(vscore_t),
-                          (3 + st.table.n) * seg * sizeof(vscore_t));
-  if(st.vbuf == NULL) {
+  st->vbuf = aligned_alloc(sizeof(vscore_t),
+                           (3 + st->table.n) * seg * sizeof(vscore_t));
+  st->vbuf2 = aligned_alloc(sizeof(vscore_t),
+                            (3 + st->table.n) * seg * sizeof(vscore_t));
+  if(st->vbuf == NULL || st->vbuf2 == NULL) {
     fprintf(stderr, "%s:%i: Out of memory\n", __FILE__, __LINE__);
     exit(EXIT_FAILURE);
   }
 #endif
 
-  st.cc = rows;
-  st.dd = rows + (len_b+1);
-  st.rr = rows + 2*(len_b+1);
-  st.ss = rows + 3*(len_b+1);
+  st->cc = rows;
+  st->dd = rows + (len_b+1);
+  st->rr = rows + 2*(len_b+1);
+  st->ss = rows + 3*(len_b+1);
+}
+
+static void hb_state_free(hb_state_t *st)
+{
+  free(st->cc); // all four rows
+  free(st->row_b);
+#ifdef HB_STRIPED
+  free(st->vbuf);
+  free(st->vbuf2);
+#endif
+  sub_table_free(&st->table);
+}
+
+bool hirschberg_align2(const char *a, const char *b,
+                       size_t len_a, size_t len_b,
+                       const scoring_t *scoring, alignment_t *result)
+{
+  if(hb_unsupported(scoring)) return false;
+
+  alignment_ensure_capacity(result, len_a + len_b);
+
+  hb_state_t st;
+  hb_state_init(&st, a, b, len_a, len_b, scoring);
+  st.out_a = result->result_a;
+  st.out_b = result->result_b;
 
   hb_diff(&st, a, b, len_a, len_b, scoring->gap_open, scoring->gap_open);
-  free(rows);
-  free(st.row_b);
-#ifdef HB_STRIPED
-  free(st.vbuf);
-#endif
-  sub_table_free(&st.table);
+  hb_state_free(&st);
 
   result->result_a[st.pos] = '\0';
   result->result_b[st.pos] = '\0';
   result->length = st.pos;
   result->score = hirschberg_score_alignment(result->result_a,
                                              result->result_b, scoring);
+  return true;
+}
+
+bool hirschberg_score(const char *a, const char *b,
+                      const scoring_t *scoring, score_t *score)
+{
+  return hirschberg_score2(a, b, strlen(a), strlen(b), scoring, score);
+}
+
+bool hirschberg_score2(const char *a, const char *b,
+                       size_t len_a, size_t len_b,
+                       const scoring_t *scoring, score_t *score)
+{
+  if(hb_unsupported(scoring)) return false;
+
+  hb_state_t st;
+  hb_state_init(&st, a, b, len_a, len_b, scoring);
+
+  // One forward pass over every row of a: cc[len_b] is then the best score
+  // of aligning all of a with all of b, ending in any state
+  const score_t g = scoring->gap_open, h = scoring->gap_extend;
+  #ifdef HB_STRIPED
+  if(alignment_striped_enabled && st.simd_ok && HB_FAST_VMAX() &&
+     g <= 0 && h <= 0 && len_b >= 2*ALN_VL)
+  {
+    hb_pass_striped(&st, a, 1, len_a, b, 1, len_b, g, st.cc, st.dd, 1,
+                    st.vbuf);
+  }
+  else
+  #endif
+  {
+    // with imid = len_a the reverse pass has no rows
+    hb_passes_scalar(&st, a, b, len_a, len_b, len_a, g, g);
+  }
+  (void)h;
+
+  *score = st.cc[len_b];
+  hb_state_free(&st);
   return true;
 }

@@ -91,6 +91,21 @@ static void align_zam(const char *seq_a, const char *seq_b)
 static void align(const char *seq_a, const char *seq_b,
                   const char *seq_a_name, const char *seq_b_name)
 {
+  if(cmd->score_only)
+  {
+    // One linear-memory pass; options it cannot handle use the full matrices
+    score_t score;
+    if(!hirschberg_score(seq_a, seq_b, &scoring, &score)) {
+      needleman_wunsch_align(seq_a, seq_b, &scoring, nw, result);
+      score = result->score;
+    }
+    if(cmd->print_fasta && seq_a_name != NULL) printf("%s\n", seq_a_name);
+    if(cmd->print_fasta && seq_b_name != NULL) printf("%s\n", seq_b_name);
+    printf("score: %i\n\n", score);
+    fflush(stdout);
+    return;
+  }
+
   if(cmd->zam_stle_output)
   {
     align_zam(seq_a, seq_b);

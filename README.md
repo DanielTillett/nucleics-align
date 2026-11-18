@@ -55,11 +55,16 @@ Build options:
 
 `NATIVE=1` adds `-march=native`, which lets the SIMD code use 8-lane AVX2 on
 x86 (4 lanes otherwise). Binaries built this way may not run on other CPUs.
-A plain x86-64 build targets SSE2, which has no vector max instruction for
-32-bit integers, so it only uses SIMD for the Needleman-Wunsch/Smith-Waterman
-fill; the linear-space aligner needs SSE4.1, AVX2 or ARM NEON (e.g. Apple
-silicon, where it is on by default). `make OPT="-O3 -msse4.1"` is a portable
-middle ground for x86 CPUs from the last 15 years.
+
+Without it, x86-64 Linux builds with gcc or clang compile the SIMD code for
+AVX2, SSE4.1 and plain SSE2, and pick one for the CPU when the program
+starts. That gets most of the `NATIVE=1` speed in a portable binary (see
+Performance). Plain SSE2 has no vector max instruction for 32-bit integers,
+so on such CPUs the linear-space aligner uses scalar loops. Other platforms
+use the compiler's target: ARM NEON (e.g. Apple silicon) gets all the SIMD
+code, while x86 builds elsewhere (e.g. macOS on Intel) can add
+`OPT="-O3 -msse4.1"` or `NATIVE=1`. ThreadSanitizer builds skip the run-time
+selection, which it cannot handle.
 
 To update:
 
@@ -75,15 +80,21 @@ Bundled dependencies (in `libs/`, under their own licences):
 Using the library
 -----------------
 
-Link against `src/libalign.a` (and `libs/string_buffer/libstrbuf.a`, `-lz`).
-The main entry points are:
+Link against `src/libalign.a` (and `libs/string_buffer/libstrbuf.a`, `-lz`,
+`-lpthread`). The main entry points are:
 
 * `needleman_wunsch_align()` (`src/needleman_wunsch.h`): global alignment
 * `smith_waterman_align()` then `smith_waterman_fetch()` repeatedly
-  (`src/smith_waterman.h`): local alignments, best first
+  (`src/smith_waterman.h`): local alignments, best first.
+  `smith_waterman_set_min_score()` skips hits below a score: the hits
+  returned are the same, but lower-scoring cells are never indexed
 * `hirschberg_align()` (`src/hirschberg.h`): global alignment in O(n) memory;
   same scores as `needleman_wunsch_align()`, but returns false for options it
-  does not support (free end gaps, `no_gaps_in_*`, `no_mismatches`)
+  does not support (a positive gap open, free end gaps, `no_gaps_in_*`,
+  `no_mismatches`). Large sub-problems run their forward and reverse passes
+  on two threads
+* `hirschberg_score()` (`src/hirschberg.h`): only the global alignment score,
+  in one pass and O(n) memory; same options as `hirschberg_align()`
 * `scoring_init()` and the `scoring_system_*()` functions
   (`src/alignment_scoring.h`): set up a scoring system
 
@@ -103,20 +114,27 @@ version gives identical scores and alignments.
 
 | Workload | Before | Now | Now, `NATIVE=1` |
 |---|---|---|---|
-| Needleman-Wunsch, 5 kb DNA | 0.252 s | 0.083 s | 0.069 s |
-| Needleman-Wunsch, 2 kb protein (BLOSUM62) | 0.031 s | 0.011 s | 0.007 s |
-| Linear space (`--linear`), 5 kb DNA | n/a | 0.076 s | 0.042 s |
-| Smith-Waterman, 3 kb DNA, best 20 hits | 0.636 s | 0.116 s | 0.108 s |
+| Needleman-Wunsch, 5 kb DNA | 0.252 s | 0.067 s | 0.060 s |
+| Needleman-Wunsch, 2 kb protein (BLOSUM62) | 0.031 s | 0.007 s | 0.007 s |
+| Linear space (`--linear`), 5 kb DNA | n/a | 0.031 s | 0.026 s |
+| Smith-Waterman, 3 kb DNA, best 20 hits | 0.636 s | 0.109 s | 0.103 s |
 
 Timings vary by a few per cent between runs.
 
 Time and peak memory for one global alignment (`needleman_wunsch
 --printscores`, whole program):
 
-| Sequences | Full matrices | `--linear` | `--linear`, `NATIVE=1` |
+| Sequences | Full matrices | `--linear` | `--scoreonly` |
 |---|---|---|---|
-| 5 kb | 0.16 s, 289 MB | 0.07 s, 2 MB | 0.04 s, 2 MB |
-| 20 kb | 4.2 s, 4.6 GB | 1.16 s, 2 MB | 0.65 s, 3 MB |
+| 5 kb | 0.16 s, 289 MB | 0.03 s, 2 MB | 0.02 s, 2 MB |
+| 20 kb | 4.2 s, 4.6 GB | 0.41 s, 3 MB | 0.30 s, 3 MB |
+
+With `NATIVE=1`, 20 kb takes 0.35 s with `--linear` and 0.23 s with
+`--scoreonly`.
+
+The command line tools align one pair at a time. Splitting a batch across
+processes scales well: 32 pairs ran 4x faster as 8 processes for
+Needleman-Wunsch (5 kb) and 6x faster as 16 for Smith-Waterman (3 kb).
 
 Where the speed comes from:
 * A substitution score table for the characters in the two sequences replaces
@@ -129,15 +147,25 @@ Where the speed comes from:
   layout, with Farrar's lazy F loop carrying insertion gaps across segment
   boundaries. Its rows match the scalar passes exactly, so the alignment is
   unchanged. Used where the CPU has a vector max instruction (see Build), on
-  sub-problems large enough to repay building the score profile, and with
-  gap penalties of zero or less
+  sub-problems large enough to repay building the score profile, with gap
+  penalties of zero or less, and while every score stays far from 32-bit
+  overflow. The forward and reverse passes of large sub-problems run on two
+  threads
+* `--scoreonly` (`hirschberg_score()`) runs only the forward pass over every
+  row: no alignment, no matrices
+* On x86-64 Linux the SIMD code is compiled for several CPU levels and the
+  best is picked when the program starts (see Build)
 * Smith-Waterman hits are ordered with a counting sort on score instead of a
   comparison sort of every cell. Tied hits are ordered by position in the
   first sequence, then the second, on every platform
 * Following Smith-Waterman hits back through the matrices uses the same
   substitution table and fixed gap penalties instead of a general step that
   re-checks every scoring option. Options that change penalties or forbid
-  gaps for particular cells use the general step
+  gaps for particular cells use the general step. A walk stops as soon as
+  its next cell is already used by an earlier hit, before working out the
+  step
+* `smith_waterman` never indexes cells scoring below `--minscore`, and stops
+  at `--maxhits` without searching for one more hit
 
 Most of the remaining Smith-Waterman time is still spent following hits back
 through the matrices. Each hit marks the cells it uses, which defines which
@@ -321,6 +349,7 @@ Needleman-Wunsch
         --printscores        Print optimal alignment scores
         --zam                A funky type of output
         --linear             Align in linear memory (Hirschberg, Myers-Miller)
+        --scoreonly          Print only the score (fast, linear memory)
         --printmatrices      Print dynamic programming matrices
         --printfasta         Print fasta header lines
         --pretty             Print with a descriptor line
@@ -343,8 +372,10 @@ Needleman-Wunsch
       https://github.com/DanielTillett/seq-align  (compiled: <date>)
 
 `--linear` cannot be combined with `--freestartgap`, `--freeendgap`,
-`--nogaps..`, `--nomismatches` or `--printmatrices`. When several alignments
-share the best score, it may return a different one from the default aligner.
+`--nogaps..`, `--nomismatches`, `--printmatrices` or a positive `--gapopen`.
+`--scoreonly` falls back to the full matrices for those scoring options.
+When several alignments share the best score, `--linear` may return a
+different one from the default aligner.
 
 
 Longest Common Substring

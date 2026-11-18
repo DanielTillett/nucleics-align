@@ -149,10 +149,25 @@ void align(const char *seq_a, const char *seq_b,
     return;
   }
 
-  smith_waterman_align(seq_a, seq_b, &scoring, sw);
+  size_t len_a = strlen(seq_a), len_b = strlen(seq_b);
+
+  if(!cmd->min_score_set)
+  {
+    // If min_score hasn't been set, set a limit based on the lengths of seqs
+    // or zero if we're running interactively
+    cmd->min_score = wait_on_keystroke ? 0
+                       : scoring.match * MAX2(0.2 * MIN2(len_a, len_b), 2);
+
+    #ifdef SEQ_ALIGN_VERBOSE
+    printf("min_score: %i\n", cmd->min_score);
+    #endif
+  }
+
+  // Hits below min_score are never printed, so do not index them
+  smith_waterman_set_min_score(sw, cmd->min_score);
+  smith_waterman_align2(seq_a, seq_b, len_a, len_b, &scoring, sw);
 
   aligner_t *aligner = smith_waterman_get_aligner(sw);
-  size_t len_a = aligner->score_width-1, len_b = aligner->score_height-1;
 
   printf("== Alignment %zu lengths (%zu, %zu):\n", alignment_index, len_a, len_b);
 
@@ -188,18 +203,6 @@ void align(const char *seq_a, const char *seq_b,
   }
 
   putc('\n', stdout);
-
-  if(!cmd->min_score_set)
-  {
-    // If min_score hasn't been set, set a limit based on the lengths of seqs
-    // or zero if we're running interactively
-    cmd->min_score = wait_on_keystroke ? 0
-                       : scoring.match * MAX2(0.2 * MIN2(len_a, len_b), 2);
-
-    #ifdef SEQ_ALIGN_VERBOSE
-    printf("min_score: %i\n", cmd->min_score);
-    #endif
-  }
 
   fflush(stdout);
 
