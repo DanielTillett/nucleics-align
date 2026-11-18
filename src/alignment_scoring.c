@@ -36,6 +36,7 @@ void scoring_init(scoring_t* scoring,
   scoring->no_gaps_in_a = no_gaps_in_a;
   scoring->no_gaps_in_b = no_gaps_in_b;
   scoring->no_mismatches = no_mismatches;
+  scoring->no_gaps_in_longest = false;
 
   scoring->use_match_mismatch = 1;
   scoring->match = match;
@@ -101,8 +102,10 @@ void scoring_print(const scoring_t* scoring)
   printf("  gap_open: %i; gap_extend: %i;\n",
          scoring->gap_open, scoring->gap_extend);
 
-  printf("  no_gaps_in_a: %i; no_gaps_in_b: %i; no_mismatches: %i;\n",
-         scoring->no_gaps_in_a, scoring->no_gaps_in_b, scoring->no_mismatches);
+  printf("  no_gaps_in_a: %i; no_gaps_in_b: %i; no_gaps_in_longest: %i;\n",
+         scoring->no_gaps_in_a, scoring->no_gaps_in_b,
+         scoring->no_gaps_in_longest);
+  printf("  no_mismatches: %i;\n", scoring->no_mismatches);
 
   printf("  no_start_gap_penalty: %i; no_end_gap_penalty: %i;\n",
          scoring->no_start_gap_penalty, scoring->no_end_gap_penalty);

@@ -101,6 +101,32 @@ void nw_test_no_gaps_in_longer()
   needleman_wunsch_free(nw);
 }
 
+/* --nogapsinlongest: the longer sequence gets no gaps, whichever input it is */
+void nw_test_no_gaps_in_longest()
+{
+  nw_aligner_t *nw = needleman_wunsch_new();
+  alignment_t *aln = alignment_create(256);
+
+  scoring_t scoring;
+  scoring_init(&scoring, 1, -2, -4, -1, false, false, false, false,
+               false, true);
+  scoring.no_gaps_in_longest = true;
+
+  // Without the option the longer sequence gets a gap: aaaa---cccccgggg
+  // Longer sequence first
+  needleman_wunsch_align("aaaacccccgggg", "aaaattcccccc", &scoring, nw, aln);
+  ASSERT(strcmp(aln->result_a, "aaaacccccgggg") == 0 &&
+         strcmp(aln->result_b, "aaaattcccccc-") == 0);
+
+  // Longer sequence second
+  needleman_wunsch_align("aaaattcccccc", "aaaacccccgggg", &scoring, nw, aln);
+  ASSERT(strcmp(aln->result_a, "aaaattcccccc-") == 0 &&
+         strcmp(aln->result_b, "aaaacccccgggg") == 0);
+
+  alignment_free(aln);
+  needleman_wunsch_free(nw);
+}
+
 /* First sequence is aligned to the corresponding (equal) substring of the second
  * sequence because both gaps at start and at end are free */
 void nw_test_free_gaps_at_ends()
@@ -270,6 +296,7 @@ void test_nw()
   SUITE_START("Needleman-Wunsch");
 
   nw_test_no_gaps_in_longer();
+  nw_test_no_gaps_in_longest();
   nw_test_free_gaps_at_ends();
   nw_test_no_mismatches();
   nw_test_no_mismatches_rand();

@@ -144,7 +144,8 @@ static void print_usage(enum SeqAlignCmdType cmd_type, score_t defaults[4],
 "  Experimental Options:\n"
 "    --nogapsin1          No gaps allowed within the first sequence\n"
 "    --nogapsin2          No gaps allowed within the second sequence\n"
-"    --nogaps             No gaps allowed in either sequence\n");
+"    --nogaps             No gaps allowed in either sequence\n"
+"    --nogapsinlongest    No gaps allowed within the longer sequence\n");
 
   fprintf(stderr,
 "    --nomismatches       No mismatches allowed%s\n",
@@ -288,6 +289,10 @@ cmdline_t* cmdline_new(int argc, char **argv, scoring_t *scoring,
       else if(strcasecmp(argv[argi], "--nogapsin2") == 0)
       {
         scoring->no_gaps_in_b = true;
+      }
+      else if(strcasecmp(argv[argi], "--nogapsinlongest") == 0)
+      {
+        scoring->no_gaps_in_longest = true;
       }
       else if(strcasecmp(argv[argi], "--nomismatches") == 0)
       {
@@ -512,7 +517,8 @@ cmdline_t* cmdline_new(int argc, char **argv, scoring_t *scoring,
   // Cannot guarantee that we can perform a global alignment if nomismatches
   // and nogaps is true
   if(cmd_type == SEQ_ALIGN_NW_CMD && scoring->no_mismatches &&
-     (scoring->no_gaps_in_a || scoring->no_gaps_in_b))
+     (scoring->no_gaps_in_a || scoring->no_gaps_in_b ||
+      scoring->no_gaps_in_longest))
   {
     usage("--nogaps.. --nomismatches cannot be used at together");
   }

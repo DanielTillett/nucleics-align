@@ -27,6 +27,10 @@ typedef struct
   // Turn at most one of these on at a time to prevent gaps/mismatches
   bool no_gaps_in_a, no_gaps_in_b, no_mismatches;
 
+  // Apply no_gaps_in_a or no_gaps_in_b to whichever sequence is longer
+  // (the first sequence if they are the same length)
+  bool no_gaps_in_longest;
+
   // If swap_score not set, should we use match/mismatch values?
   bool use_match_mismatch;
   int match, mismatch;

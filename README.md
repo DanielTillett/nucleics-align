@@ -22,7 +22,8 @@ Features:
 * Align any pair of ASCII sequences (DNA, Protein, words, etc.)
 * Specify alignment scoring systems or choose a common one (BLOSUM etc.)
 * Specify wildcards that match any character with a given score
-* Align with no mismatches (`--nomismatches`), or no gaps (`--nogaps`) with
+* Align with no mismatches (`--nomismatches`), or no gaps (`--nogaps`,
+  `--nogapsin1`, `--nogapsin2`, `--nogapsinlongest`) with
   local and global alignment.  When both used for local alignment, lists common
   substrings in order of length/score
 * Read fastq, fasta, sam, bam, plain (one sequence per line) and gzipped files
@@ -192,6 +193,7 @@ Smith-Waterman
             --nogapsin1          No gaps allowed within the first sequence
             --nogapsin2          No gaps allowed within the second sequence
             --nogaps             No gaps allowed in either sequence
+            --nogapsinlongest    No gaps allowed within the longer sequence
             --nomismatches       No mismatches allowed
 
          DETAILS:
@@ -246,6 +248,7 @@ Needleman-Wunsch
             --nogapsin1          No gaps allowed within the first sequence
             --nogapsin2          No gaps allowed within the second sequence
             --nogaps             No gaps allowed in either sequence
+            --nogapsinlongest    No gaps allowed within the longer sequence
             --nomismatches       No mismatches allowed (cannot be used with --nogaps..)
 
          DETAILS:
@@ -350,12 +353,19 @@ DEVELOPMENT
 Feel free to contact me to request features.  Bug reports are appreciated.  
 (turner.isaac@gmail.com)
 
-Possible features:
-1. May add option to have no gaps in alignment result for longest sequence
-   with `--nogapsinlongest`
+Done:
+* `--nogapsinlongest`: no gaps within the longer of the two sequences
+  (the first sequence if they are the same length)
+* Gotoh: affine gap penalties use Gotoh's three-matrix recurrence
+  (match, gap in a, gap in b) for both Smith-Waterman and Needleman-Wunsch
+  (Gotoh 1982, J Mol Biol 162:705-708)
 
 Algorithms to investigate:
-Gotoh
-Hirschberg's algorithm using linear space
-Myer's bit-vector algorithm
-Combination of Myer's and Hirschberg's algorithm
+* Hirschberg's linear-space algorithm, with the affine-gap extension of
+  Myers & Miller (1988, Comput Appl Biosci 4:11-17). Memory is currently
+  O(nm) (three score_t matrices), which limits Needleman-Wunsch to short
+  sequences
+* Myers' bit-vector algorithm (1999, J ACM 46:395-415). Only computes unit
+  cost edit distance, so it would be a separate fast path rather than a
+  replacement for the scored aligners
+* Combining the two for linear-space edit-distance alignment

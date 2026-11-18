@@ -24,6 +24,17 @@ const char align_col_indel[] = "\033[91m"; // Insertion / deletion (RED)
 const char align_col_context[] = "\033[95m";
 const char align_col_stop[] = "\033[0m";
 
+// Which sequences may not contain gaps once no_gaps_in_longest is resolved
+static inline void alignment_no_gaps(const scoring_t *scoring,
+                                     size_t len_a, size_t len_b,
+                                     bool *no_gaps_in_a, bool *no_gaps_in_b)
+{
+  *no_gaps_in_a = scoring->no_gaps_in_a ||
+                  (scoring->no_gaps_in_longest && len_a >= len_b);
+  *no_gaps_in_b = scoring->no_gaps_in_b ||
+                  (scoring->no_gaps_in_longest && len_a < len_b);
+}
+
 // Fill in traceback matrix
 static void alignment_fill_matrices(aligner_t *aligner, char is_sw)
 {
@@ -46,6 +57,9 @@ static void alignment_fill_matrices(aligner_t *aligner, char is_sw)
   const score_t min = is_sw ? 0 : SCORE_MIN + abs(worst_penalty);
 
   size_t seq_i, seq_j, len_i = score_width-1, len_j = score_height-1;
+
+  bool no_gaps_in_a, no_gaps_in_b;
+  alignment_no_gaps(scoring, len_i, len_j, &no_gaps_in_a, &no_gaps_in_b);
   size_t index, index_left, index_up, index_upleft;
 
   // [0][0]
@@ -130,7 +144,7 @@ static void alignment_fill_matrices(aligner_t *aligner, char is_sw)
                                    gap_a_scores[index_up],
                                    gap_b_scores[index_up]);
       }
-      else if(!scoring->no_gaps_in_a || seq_i == len_i-1)
+      else if(!no_gaps_in_a || seq_i == len_i-1)
       {
         gap_a_scores[index]
           = MAX4(match_scores[index_up] + gap_open_penalty,
@@ -148,7 +162,7 @@ static void alignment_fill_matrices(aligner_t *aligner, char is_sw)
                                    gap_a_scores[index_left],
                                    gap_b_scores[index_left]);
       }
-      else if(!scoring->no_gaps_in_b || seq_j == len_j-1)
+      else if(!no_gaps_in_b || seq_j == len_j-1)
       {
         gap_b_scores[index]
           = MAX4(match_scores[index_left] + gap_open_penalty,
@@ -274,6 +288,9 @@ void alignment_reverse_move(enum Matrix *curr_matrix, score_t *curr_score,
   int match_penalty;
   const scoring_t *scoring = aligner->scoring;
 
+  bool no_gaps_in_a, no_gaps_in_b;
+  alignment_no_gaps(scoring, len_i, len_j, &no_gaps_in_a, &no_gaps_in_b);
+
   scoring_lookup(scoring, aligner->seq_a[seq_x], aligner->seq_b[seq_y],
                  &match_penalty, &is_match);
 
@@ -330,13 +347,13 @@ void alignment_reverse_move(enum Matrix *curr_matrix, score_t *curr_score,
 
   // *arr_index = ARR_2D_INDEX(aligner->score_width, *score_x, *score_y);
 
-  if((!scoring->no_gaps_in_a || *score_x == 0 || *score_x == len_i) &&
+  if((!no_gaps_in_a || *score_x == 0 || *score_x == len_i) &&
      aligner->gap_a_scores[*arr_index] + prev_gap_a_penalty == *curr_score)
   {
     *curr_matrix = GAP_A;
     *curr_score = aligner->gap_a_scores[*arr_index];
   }
-  else if((!scoring->no_gaps_in_b || *score_y == 0 || *score_y == len_j) &&
+  else if((!no_gaps_in_b || *score_y == 0 || *score_y == len_j) &&
           aligner->gap_b_scores[*arr_index] + prev_gap_b_penalty == *curr_score)
   {
     *curr_matrix = GAP_B;
