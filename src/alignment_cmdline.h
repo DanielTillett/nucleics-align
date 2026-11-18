@@ -44,6 +44,7 @@ typedef struct
   bool freestartgap_set, freeendgap_set;
   bool print_matrices, print_scores;
   bool zam_stle_output;
+  bool linear_space; // Hirschberg / Myers-Miller
 
   // Turns off zlib for stdin
   bool interactive;

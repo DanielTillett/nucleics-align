@@ -132,7 +132,8 @@ static void print_usage(enum SeqAlignCmdType cmd_type, score_t defaults[4],
 "    --freeendgap         No penalty for gap at end of alignment\n"
 "\n"
 "    --printscores        Print optimal alignment scores\n"
-"    --zam                A funky type of output\n");
+"    --zam                A funky type of output\n"
+"    --linear             Align in linear memory (Hirschberg, Myers-Miller)\n");
   }
 
   fprintf(stderr,
@@ -336,6 +337,12 @@ cmdline_t* cmdline_new(int argc, char **argv, scoring_t *scoring,
         if(cmd_type != SEQ_ALIGN_NW_CMD)
           usage("--zam only valid with Needleman-Wunsch");
         cmd->zam_stle_output = true;
+      }
+      else if(strcasecmp(argv[argi], "--linear") == 0)
+      {
+        if(cmd_type != SEQ_ALIGN_NW_CMD)
+          usage("--linear only valid with Needleman-Wunsch");
+        cmd->linear_space = true;
       }
       else if(strcasecmp(argv[argi], "--stdin") == 0)
       {
@@ -542,6 +549,16 @@ cmdline_t* cmdline_new(int argc, char **argv, scoring_t *scoring,
   {
     usage("Cannot use --printscore, --printfasta, --pretty or --colour with "
           "--zam");
+  }
+
+  if(cmd->linear_space &&
+     (scoring->no_start_gap_penalty || scoring->no_end_gap_penalty ||
+      scoring->no_gaps_in_a || scoring->no_gaps_in_b ||
+      scoring->no_gaps_in_longest || scoring->no_mismatches ||
+      cmd->print_matrices))
+  {
+    usage("--linear cannot be used with --freestartgap, --freeendgap, "
+          "--nogaps.., --nomismatches or --printmatrices");
   }
 
   return cmd;

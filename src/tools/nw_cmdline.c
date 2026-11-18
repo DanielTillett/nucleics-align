@@ -19,6 +19,7 @@
 #include "alignment_cmdline.h"
 
 #include "needleman_wunsch.h"
+#include "hirschberg.h"
 
 // For this run
 cmdline_t *cmd;
@@ -33,9 +34,20 @@ static void nw_set_default_scoring(void)
   scoring_system_default(&scoring);
 }
 
+static void nw_align(const char *seq_a, const char *seq_b)
+{
+  if(!cmd->linear_space)
+    needleman_wunsch_align(seq_a, seq_b, &scoring, nw, result);
+  else if(!hirschberg_align(seq_a, seq_b, &scoring, result))
+  {
+    fprintf(stderr, "Error: --linear does not support these scoring options\n");
+    exit(EXIT_FAILURE);
+  }
+}
+
 static void align_zam(const char *seq_a, const char *seq_b)
 {
-  needleman_wunsch_align(seq_a, seq_b, &scoring, nw, result);
+  nw_align(seq_a, seq_b);
 
   // Swap '-' for '_'
   int i;
@@ -86,7 +98,7 @@ static void align(const char *seq_a, const char *seq_b,
     return;
   }
 
-  needleman_wunsch_align(seq_a, seq_b, &scoring, nw, result);
+  nw_align(seq_a, seq_b);
 
   if(cmd->print_matrices)
   {

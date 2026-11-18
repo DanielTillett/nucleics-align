@@ -239,6 +239,7 @@ Needleman-Wunsch
 
             --printscores        Print optimal alignment scores
             --zam                A funky type of output
+            --linear             Align in linear memory (Hirschberg, Myers-Miller)
             --printmatrices      Print dynamic programming matrices
             --printfasta         Print fasta header lines
             --pretty             Print with a descriptor line
@@ -359,12 +360,17 @@ Done:
 * Gotoh: affine gap penalties use Gotoh's three-matrix recurrence
   (match, gap in a, gap in b) for both Smith-Waterman and Needleman-Wunsch
   (Gotoh 1982, J Mol Biol 162:705-708)
+* Hirschberg's linear-space algorithm with the affine-gap extension of
+  Myers & Miller (1988, Comput Appl Biosci 4:11-17): `hirschberg_align()`
+  in `src/hirschberg.h` and `needleman_wunsch --linear`. Memory is O(n)
+  instead of three O(nm) matrices. It does about twice the arithmetic but
+  its rows stay in cache: two 5 kb sequences took 0.21 s and 2 MB versus
+  0.31 s and 289 MB, and two 20 kb sequences 3.3 s and 2 MB. Scores
+  match `needleman_wunsch_align()`; tied alignments may be chosen
+  differently. Free end gaps, `--nogaps..` and `--nomismatches` are not
+  supported in linear space
 
 Algorithms to investigate:
-* Hirschberg's linear-space algorithm, with the affine-gap extension of
-  Myers & Miller (1988, Comput Appl Biosci 4:11-17). Memory is currently
-  O(nm) (three score_t matrices), which limits Needleman-Wunsch to short
-  sequences
 * Myers' bit-vector algorithm (1999, J ACM 46:395-415). Only computes unit
   cost edit distance, so it would be a separate fast path rather than a
   replacement for the scored aligners

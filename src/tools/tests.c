@@ -19,6 +19,7 @@
 
 #include "needleman_wunsch.h"
 #include "smith_waterman.h"
+#include "hirschberg.h"
 #include "alignment_scoring_load.h"
 
 //
@@ -291,6 +292,190 @@ void nw_test_penalties_changed_after_init()
   needleman_wunsch_free(nw);
 }
 
+/* Linear-space alignment must score the same as Needleman-Wunsch */
+
+// Deterministic generator so failures can be reproduced
+static unsigned long hb_rand_state = 1;
+static unsigned int hb_rand(unsigned int n)
+{
+  hb_rand_state = hb_rand_state * 6364136223846793005UL + 1442695040888963407UL;
+  return (unsigned int)((hb_rand_state >> 33) % n);
+}
+
+static void hb_rand_seq(char *seq, size_t len, const char *alphabet)
+{
+  size_t i, alen = strlen(alphabet);
+  for(i = 0; i < len; i++) seq[i] = alphabet[hb_rand((unsigned int)alen)];
+  seq[len] = '\0';
+}
+
+// Removing gaps from an alignment string gives back the sequence
+static bool hb_ungapped_equals(const char *aln, const char *seq)
+{
+  for(; *aln != '\0'; aln++) {
+    if(*aln == '-') continue;
+    if(*aln != *seq) return false;
+    seq++;
+  }
+  return *seq == '\0';
+}
+
+static void hb_check(const char *a, const char *b, const scoring_t *scoring,
+                     nw_aligner_t *nw, alignment_t *nw_aln,
+                     alignment_t *hb_aln)
+{
+  needleman_wunsch_align(a, b, scoring, nw, nw_aln);
+  ASSERT(hirschberg_align(a, b, scoring, hb_aln));
+  ASSERT(hb_aln->score == nw_aln->score);
+  ASSERT(strlen(hb_aln->result_a) == hb_aln->length &&
+         strlen(hb_aln->result_b) == hb_aln->length);
+  ASSERT(hb_ungapped_equals(hb_aln->result_a, a));
+  ASSERT(hb_ungapped_equals(hb_aln->result_b, b));
+  // The scorer agrees with Needleman-Wunsch on its own alignment
+  ASSERT(hirschberg_score_alignment(nw_aln->result_a, nw_aln->result_b,
+                                    scoring) == nw_aln->score);
+}
+
+void hb_test_rand_dna()
+{
+  nw_aligner_t *nw = needleman_wunsch_new();
+  alignment_t *nw_aln = alignment_create(256), *hb_aln = alignment_create(256);
+  char seqa[61], seqb[61];
+  scoring_t scoring;
+  size_t i;
+
+  for(i = 0; i < 3000; i++)
+  {
+    // Random affine penalties, including gap_open == 0 (linear gaps) and
+    // mismatches costly enough that deleting both characters is better
+    int match = 1 + (int)hb_rand(5), mismatch = -(int)hb_rand(16);
+    int gap_open = -(int)hb_rand(11), gap_extend = -1 - (int)hb_rand(5);
+    scoring_init(&scoring, match, mismatch, gap_open, gap_extend,
+                 false, false, false, false, false, false);
+    if(hb_rand(2)) scoring_add_wildcard(&scoring, 'n', 0);
+
+    // Short sequences hit the base cases more often
+    unsigned int max_len = i % 4 ? 61 : 9;
+    hb_rand_seq(seqa, hb_rand(max_len), i % 3 ? "acgt" : "acgtn");
+    hb_rand_seq(seqb, hb_rand(max_len), i % 2 ? "acgt" : "ACgtN");
+    hb_check(seqa, seqb, &scoring, nw, nw_aln, hb_aln);
+  }
+
+  alignment_free(nw_aln);
+  alignment_free(hb_aln);
+  needleman_wunsch_free(nw);
+}
+
+void hb_test_rand_protein()
+{
+  nw_aligner_t *nw = needleman_wunsch_new();
+  alignment_t *nw_aln = alignment_create(256), *hb_aln = alignment_create(256);
+  char seqa[201], seqb[201];
+  scoring_t scoring;
+  size_t i;
+
+  scoring_system_BLOSUM62(&scoring);
+
+  for(i = 0; i < 300; i++)
+  {
+    hb_rand_seq(seqa, hb_rand(201), "ARNDCQEGHILKMFPSTWYV");
+    hb_rand_seq(seqb, hb_rand(201), "ARNDCQEGHILKMFPSTWYV");
+    hb_check(seqa, seqb, &scoring, nw, nw_aln, hb_aln);
+  }
+
+  alignment_free(nw_aln);
+  alignment_free(hb_aln);
+  needleman_wunsch_free(nw);
+}
+
+void hb_test_edge_cases()
+{
+  nw_aligner_t *nw = needleman_wunsch_new();
+  alignment_t *nw_aln = alignment_create(256), *hb_aln = alignment_create(256);
+  scoring_t scoring;
+  scoring_init(&scoring, 1, -2, -4, -1, false, false, false, false,
+               false, true);
+
+  hb_check("a", "a", &scoring, nw, nw_aln, hb_aln);
+  hb_check("a", "c", &scoring, nw, nw_aln, hb_aln);
+  hb_check("aaaaacg", "acgt", &scoring, nw, nw_aln, hb_aln);
+  hb_check("acgt", "aaaaacg", &scoring, nw, nw_aln, hb_aln);
+  hb_check("aaaacccccgggg", "aaaattcccccc", &scoring, nw, nw_aln, hb_aln);
+  // Long gaps crossing the split rows
+  hb_check("acgtttttttttttttttttacgt", "acgtacgt", &scoring, nw, nw_aln, hb_aln);
+  hb_check("acgtacgt", "acgtttttttttttttttttacgt", &scoring, nw, nw_aln, hb_aln);
+
+  // Empty sequences
+  ASSERT(hirschberg_align("", "acg", &scoring, hb_aln));
+  ASSERT(strcmp(hb_aln->result_a, "---") == 0 &&
+         strcmp(hb_aln->result_b, "acg") == 0 && hb_aln->score == -7);
+  ASSERT(hirschberg_align("acg", "", &scoring, hb_aln));
+  ASSERT(strcmp(hb_aln->result_a, "acg") == 0 &&
+         strcmp(hb_aln->result_b, "---") == 0 && hb_aln->score == -7);
+  ASSERT(hirschberg_align("", "", &scoring, hb_aln));
+  ASSERT(hb_aln->length == 0 && hb_aln->score == 0);
+
+  // Options that need the full matrices are refused
+  scoring.no_end_gap_penalty = true;
+  ASSERT(!hirschberg_align("acgt", "acg", &scoring, hb_aln));
+  scoring.no_end_gap_penalty = false;
+  scoring.no_gaps_in_longest = true;
+  ASSERT(!hirschberg_align("acgt", "acg", &scoring, hb_aln));
+
+  alignment_free(nw_aln);
+  alignment_free(hb_aln);
+  needleman_wunsch_free(nw);
+}
+
+// Every pair of sequences over {a,c} up to length 6, under penalties that
+// favour matches, long gaps, or deleting rather than mismatching
+void hb_test_exhaustive_small()
+{
+  nw_aligner_t *nw = needleman_wunsch_new();
+  alignment_t *nw_aln = alignment_create(256), *hb_aln = alignment_create(256);
+  const int penalties[][4] = {{1, -1, -1, -1}, {1, -15, -10, -1},
+                              {2, -3, 0, -2}, {1, -5, -10, -5},
+                              {3, 0, -6, -1}, {1, -20, -2, -1}};
+  char seqa[7], seqb[7];
+  scoring_t scoring;
+  size_t p, la, lb, xa, xb, k;
+
+  for(p = 0; p < sizeof(penalties)/sizeof(penalties[0]); p++)
+  {
+    scoring_init(&scoring, penalties[p][0], penalties[p][1],
+                 penalties[p][2], penalties[p][3],
+                 false, false, false, false, false, true);
+
+    // xa, xb enumerate sequences as bit patterns (a=0, c=1)
+    for(la = 0; la <= 6; la++)
+      for(xa = 0; xa < (1UL << la); xa++)
+        for(lb = 0; lb <= 6; lb++)
+          for(xb = 0; xb < (1UL << lb); xb++)
+          {
+            for(k = 0; k < la; k++) seqa[k] = (xa >> k) & 1 ? 'c' : 'a';
+            for(k = 0; k < lb; k++) seqb[k] = (xb >> k) & 1 ? 'c' : 'a';
+            seqa[la] = seqb[lb] = '\0';
+            hb_check(seqa, seqb, &scoring, nw, nw_aln, hb_aln);
+          }
+  }
+
+  alignment_free(nw_aln);
+  alignment_free(hb_aln);
+  needleman_wunsch_free(nw);
+}
+
+void test_hirschberg()
+{
+  SUITE_START("Linear-space global alignment");
+
+  hb_test_edge_cases();
+  hb_test_exhaustive_small();
+  hb_test_rand_dna();
+  hb_test_rand_protein();
+
+  SUITE_END();
+}
+
 void test_nw()
 {
   SUITE_START("Needleman-Wunsch");
@@ -476,6 +661,7 @@ int main(int argc, char **argv)
 
   // Test suites go here
   test_nw();
+  test_hirschberg();
   test_sw();
   test_misc();
 
