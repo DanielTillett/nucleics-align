@@ -1,8 +1,8 @@
 /*
  alignment_cmdline.c
- url: https://github.com/noporpoise/seq-align
- maintainer: Isaac Turner <turner.isaac@gmail.com>
- license: Public Domain, no warranty
+ url: https://github.com/DanielTillett/seq-align
+ original original author: Isaac Turner <turner.isaac@gmail.com>
+ license: BSD 3-Clause, see LICENSE
  date: Nov 2013
  */
 
@@ -103,7 +103,7 @@ static void print_usage(enum SeqAlignCmdType cmd_type, score_t defaults[4],
 "    --gapopen <score>    [default: %i]\n"
 "    --gapextend <score>  [default: %i]\n"
 "\n"
-"    --scoring <PAM30|PAM70|BLOSUM80|BLOSUM62>\n"
+"    --scoring <PAM30|PAM70|BLOSUM80|BLOSUM62|DNA_HYBRIDIZATION>\n"
 "    --substitution_matrix <file>  see details for formatting\n"
 "    --substitution_pairs <file>   see details for formatting\n"
 "\n"
@@ -159,9 +159,9 @@ static void print_usage(enum SeqAlignCmdType cmd_type, score_t defaults[4],
 "  * Gap (of length N) penalty is: (open+N*extend)\n"
 "  * To do alignment without affine gap penalty, set '--gapopen 0'.\n"
 "  * Scoring files should be matrices, with entries separated by a single\n"
-"    character or whitespace. See files in the 'scores' directory for examples.\n"
+"    character or whitespace. See files in the 'scoring' directory for examples.\n"
 "\n"
-"  turner.isaac@gmail.com  (compiled: %s %s)\n", __DATE__, __TIME__);
+"  https://github.com/DanielTillett/seq-align  (compiled: %s %s)\n", __DATE__, __TIME__);
 
   exit(EXIT_FAILURE);
 }

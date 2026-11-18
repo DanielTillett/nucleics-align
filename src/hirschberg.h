@@ -1,7 +1,7 @@
 /*
  hirschberg.h
- url: https://github.com/noporpoise/seq-align
- license: Public Domain, no warranty
+ url: https://github.com/DanielTillett/seq-align
+ license: BSD 3-Clause, see LICENSE
  date: Nov 2026
  */
 

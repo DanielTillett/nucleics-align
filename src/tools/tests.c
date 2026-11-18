@@ -1,8 +1,8 @@
 /*
  tests/tests.c
- url: https://github.com/noporpoise/seq-align
- maintainer: Isaac Turner <turner.isaac@gmail.com>
- license: Public Domain, no warranty
+ url: https://github.com/DanielTillett/seq-align
+ original original author: Isaac Turner <turner.isaac@gmail.com>
+ license: BSD 3-Clause, see LICENSE
  date: Feb 2015
  */
 
@@ -476,6 +476,151 @@ void test_hirschberg()
   SUITE_END();
 }
 
+/* The striped SIMD fill must give exactly the scalar matrices */
+static void simd_check(const char *a, const char *b, const scoring_t *scoring,
+                       char is_sw, aligner_t *scalar, aligner_t *striped)
+{
+  alignment_striped_enabled = false;
+  aligner_align(scalar, a, b, strlen(a), strlen(b), scoring, is_sw);
+  alignment_striped_enabled = true;
+  aligner_align(striped, a, b, strlen(a), strlen(b), scoring, is_sw);
+
+  size_t cells = scalar->score_width * scalar->score_height;
+  ASSERT(memcmp(scalar->match_scores, striped->match_scores,
+                cells * sizeof(score_t)) == 0);
+  ASSERT(memcmp(scalar->gap_a_scores, striped->gap_a_scores,
+                cells * sizeof(score_t)) == 0);
+  ASSERT(memcmp(scalar->gap_b_scores, striped->gap_b_scores,
+                cells * sizeof(score_t)) == 0);
+}
+
+void simd_test_matches_scalar()
+{
+  aligner_t scalar, striped;
+  aligner_init(&scalar);
+  aligner_init(&striped);
+  char seqa[301], seqb[301];
+  scoring_t scoring;
+  size_t i;
+
+  for(i = 0; i < 3000; i++)
+  {
+    // gap_extend == 0 and gap_open == 0 included; short seq_a gives
+    // segments of one or two cells, long gaps exercise the lazy F loop
+    int match = 1 + (int)hb_rand(5), mismatch = -(int)hb_rand(16);
+    int gap_open = -(int)hb_rand(11), gap_extend = -(int)hb_rand(6);
+    scoring_init(&scoring, match, mismatch, gap_open, gap_extend,
+                 hb_rand(2), false, false, false, false, false);
+    if(hb_rand(2)) scoring_add_wildcard(&scoring, 'n', 0);
+
+    unsigned int max_a = i % 4 == 0 ? 20 : 301, max_b = i % 3 == 0 ? 20 : 301;
+    hb_rand_seq(seqa, hb_rand(max_a), "acgtn");
+    hb_rand_seq(seqb, hb_rand(max_b), "ACgtN");
+    simd_check(seqa, seqb, &scoring, (char)hb_rand(2), &scalar, &striped);
+  }
+
+  scoring_system_BLOSUM62(&scoring);
+  for(i = 0; i < 300; i++)
+  {
+    hb_rand_seq(seqa, hb_rand(301), "ARNDCQEGHILKMFPSTWYV");
+    hb_rand_seq(seqb, hb_rand(301), "ARNDCQEGHILKMFPSTWYV");
+    simd_check(seqa, seqb, &scoring, (char)hb_rand(2), &scalar, &striped);
+  }
+
+  // A long gap in seq_b crossing every segment boundary
+  scoring_init(&scoring, 1, -2, -4, -1, false, false, false, false,
+               false, true);
+  simd_check("acgtacgtacgtacgtacgtacgtacgtacgtacgtacgtacgtacgtacgtacgtacgt",
+             "acgtacgt", &scoring, 0, &scalar, &striped);
+
+  // Mismatches far worse than extending a gap: in the first rows the gap
+  // from column 0 wins in every cell, so the lazy F loop has to carry it
+  // through whole segments into later lanes
+  char poly_a[201];
+  memset(poly_a, 'a', 200);
+  poly_a[200] = '\0';
+  for(i = 1; i <= 200; i += 7)
+  {
+    poly_a[i] = '\0';
+    scoring_init(&scoring, 1, -20, -2, -1, false, false, false, false,
+                 false, true);
+    simd_check(poly_a, "c", &scoring, 0, &scalar, &striped);
+    simd_check(poly_a, "cc", &scoring, 0, &scalar, &striped);
+    simd_check(poly_a, "cca", &scoring, 0, &scalar, &striped);
+    scoring_init(&scoring, 1, -20, 0, -1, true, false, false, false,
+                 false, true);
+    simd_check(poly_a, "cgc", &scoring, 0, &scalar, &striped);
+    poly_a[i] = 'a';
+  }
+
+  aligner_destroy(&scalar);
+  aligner_destroy(&striped);
+}
+
+/* Positive or zero gap penalties are unusual but accepted */
+void simd_test_odd_penalties()
+{
+  aligner_t scalar, striped;
+  aligner_init(&scalar);
+  aligner_init(&striped);
+  char seqa[61], seqb[61];
+  scoring_t scoring;
+  size_t i;
+
+  for(i = 0; i < 500; i++)
+  {
+    int gap_open = (int)hb_rand(11) - 5, gap_extend = (int)hb_rand(7) - 3;
+    scoring_init(&scoring, 1 + (int)hb_rand(3), -(int)hb_rand(5),
+                 gap_open, gap_extend, hb_rand(2), false, false, false,
+                 false, false);
+    hb_rand_seq(seqa, hb_rand(61), "acgt");
+    hb_rand_seq(seqb, hb_rand(61), "acgt");
+    simd_check(seqa, seqb, &scoring, (char)hb_rand(2), &scalar, &striped);
+  }
+
+  aligner_destroy(&scalar);
+  aligner_destroy(&striped);
+}
+
+/* A substitution table that only defines pairs of a character from seq_a
+ * with one from seq_b (no match/mismatch) must not ask for any other pair:
+ * scoring_lookup() exits on an undefined pair */
+void simd_test_directional_pairs()
+{
+  scoring_t scoring;
+  scoring_init(&scoring, 0, 0, -4, -1, false, false, false, false,
+               false, true);
+  scoring.use_match_mismatch = 0;
+  scoring_add_mutation(&scoring, 'a', 'x', 3);
+  scoring_add_mutation(&scoring, 'a', 'y', -1);
+  scoring_add_mutation(&scoring, 'c', 'x', -1);
+  scoring_add_mutation(&scoring, 'c', 'y', 2);
+
+  nw_aligner_t *nw = needleman_wunsch_new();
+  sw_aligner_t *sw = smith_waterman_new();
+  alignment_t *aln = alignment_create(256);
+
+  needleman_wunsch_align("ac", "xy", &scoring, nw, aln);
+  ASSERT(aln->score == 5);
+  ASSERT(hirschberg_align("ac", "xy", &scoring, aln));
+  ASSERT(aln->score == 5);
+  smith_waterman_align("ac", "xy", &scoring, sw);
+  ASSERT(smith_waterman_fetch(sw, aln) && aln->score == 5);
+
+  alignment_free(aln);
+  smith_waterman_free(sw);
+  needleman_wunsch_free(nw);
+}
+
+void test_simd()
+{
+  SUITE_START("Striped SIMD fill");
+  simd_test_matches_scalar();
+  simd_test_odd_penalties();
+  simd_test_directional_pairs();
+  SUITE_END();
+}
+
 void test_nw()
 {
   SUITE_START("Needleman-Wunsch");
@@ -662,6 +807,7 @@ int main(int argc, char **argv)
   // Test suites go here
   test_nw();
   test_hirschberg();
+  test_simd();
   test_sw();
   test_misc();
 

@@ -12,6 +12,12 @@ ifdef SANITIZE
 	TGTFLAGS += -fsanitize=address,undefined
 endif
 
+# Tune for this machine's CPU (e.g. 8-lane AVX2 for the SIMD fill):
+# make NATIVE=1. The binaries may not run on other CPUs
+ifdef NATIVE
+	OPT += -march=native
+endif
+
 CFLAGS ?= -Wall -Wextra
 CFLAGS += -std=c11 $(OPT)
 OBJFLAGS = -fPIC

@@ -1,8 +1,8 @@
 /*
  smith_waterman.c
- url: https://github.com/noporpoise/seq-align
- maintainer: Isaac Turner <turner.isaac@gmail.com>
- license: Public Domain, no warranty
+ url: https://github.com/DanielTillett/seq-align
+ original original author: Isaac Turner <turner.isaac@gmail.com>
+ license: BSD 3-Clause, see LICENSE
  date: Nov 2013
  */
 
@@ -82,10 +82,11 @@ static int sort_match_indices(const void *aa, const void *bb, void *arg)
 
   long diff = (long)match_scores[*b] - match_scores[*a];
 
-  // Sort by position (from left to right) on seq_a
+  // Then by position on seq_a, then seq_b (same order as the counting sort)
   if(diff == 0) {
     size_t xa = *a % score_width, xb = *b % score_width;
-    return (xa > xb) - (xa < xb);
+    if(xa != xb) return (xa > xb) - (xa < xb);
+    return (*a > *b) - (*a < *b);
   }
   else return diff > 0 ? 1 : -1;
 }
@@ -279,7 +280,7 @@ static char _follow_hit(sw_aligner_t* sw, size_t arr_index,
 
       default:
       fprintf(stderr, "Program error: invalid matrix in _follow_hit()\n");
-      fprintf(stderr, "Please submit a bug report to: turner.isaac@gmail.com\n");
+      fprintf(stderr, "Please submit a bug report to: https://github.com/DanielTillett/seq-align/issues\n");
       exit(EXIT_FAILURE);
     }
 

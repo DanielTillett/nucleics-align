@@ -1,7 +1,8 @@
 /*
  alignment.h
- author: Isaac Turner <turner.isaac@gmail.com>
- url: https://github.com/noporpoise/seq-align
+ original author: Isaac Turner <turner.isaac@gmail.com>
+ url: https://github.com/DanielTillett/seq-align
+ license: BSD 3-Clause, see LICENSE
  May 2013
  */
 
@@ -74,6 +75,10 @@ void sub_table_build(sub_table_t *t, const scoring_t *scoring,
                      const char *a, size_t len_a,
                      const char *b, size_t len_b);
 void sub_table_free(sub_table_t *t);
+
+// Use the striped SIMD fill where it applies (default true). It gives the
+// same matrices as the scalar fill; turning it off is for tests/benchmarks
+extern bool alignment_striped_enabled;
 
 // Constructors/Destructors for alignment
 alignment_t* alignment_create(size_t capacity);

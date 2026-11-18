@@ -1,8 +1,8 @@
 /*
  alignment.c
- url: https://github.com/noporpoise/seq-align
- maintainer: Isaac Turner <turner.isaac@gmail.com>
- license: Public Domain, no warranty
+ url: https://github.com/DanielTillett/seq-align
+ original original author: Isaac Turner <turner.isaac@gmail.com>
+ license: BSD 3-Clause, see LICENSE
  date: Feb 2015
  */
 
@@ -39,16 +39,19 @@ void sub_table_build(sub_table_t *t, const scoring_t *scoring,
                             const char *a, size_t len_a,
                             const char *b, size_t len_b)
 {
-  bool seen[256] = {false};
+  bool in_a[256] = {false}, in_b[256] = {false};
   unsigned char bytes[256];
   size_t i, j;
 
-  for(i = 0; i < len_a; i++) seen[(unsigned char)a[i]] = true;
-  for(i = 0; i < len_b; i++) seen[(unsigned char)b[i]] = true;
+  for(i = 0; i < len_a; i++) in_a[(unsigned char)a[i]] = true;
+  for(i = 0; i < len_b; i++) in_b[(unsigned char)b[i]] = true;
 
   for(i = 0, t->n = 0; i < 256; i++) {
     t->code[i] = 0;
-    if(seen[i]) { t->code[i] = (unsigned char)t->n; bytes[t->n++] = (unsigned char)i; }
+    if(in_a[i] || in_b[i]) {
+      t->code[i] = (unsigned char)t->n;
+      bytes[t->n++] = (unsigned char)i;
+    }
   }
 
   size_t cells = t->n * t->n + 1;
@@ -59,10 +62,19 @@ void sub_table_build(sub_table_t *t, const scoring_t *scoring,
     exit(EXIT_FAILURE);
   }
 
-  for(j = 0; j < t->n; j++)
-    for(i = 0; i < t->n; i++)
-      scoring_lookup(scoring, (char)bytes[i], (char)bytes[j],
-                     &t->scores[j*t->n+i], &t->is_match[j*t->n+i]);
+  // Only look up pairs that can be aligned (a character of a against one of
+  // b): scoring_lookup() exits on pairs a substitution file does not define
+  for(j = 0; j < t->n; j++) {
+    for(i = 0; i < t->n; i++) {
+      if(in_a[bytes[i]] && in_b[bytes[j]]) {
+        scoring_lookup(scoring, (char)bytes[i], (char)bytes[j],
+                       &t->scores[j*t->n+i], &t->is_match[j*t->n+i]);
+      } else {
+        t->scores[j*t->n+i] = 0; // never read
+        t->is_match[j*t->n+i] = false;
+      }
+    }
+  }
 }
 
 void sub_table_free(sub_table_t *t)
@@ -70,6 +82,174 @@ void sub_table_free(sub_table_t *t)
   free(t->scores);
   free(t->is_match);
 }
+
+//
+// Striped SIMD fill (Farrar 2007, Bioinformatics 23:156-161)
+//
+// Each row of the matrices runs along seq_a. A row is split into ALN_VL
+// segments of seg cells; lane l of vector k holds cell l*seg+k. match and
+// gap_a only depend on the previous row, so they are computed a vector at a
+// time. gap_b depends on the cell to its left: it is first computed within
+// each segment, then corrected by Farrar's 'lazy F' loop, which carries
+// values across segment boundaries until they stop improving any cell.
+// Every value is identical to the scalar recurrence, including the clamp at
+// min, so traceback and Smith-Waterman hit order are unchanged.
+// Uses GCC/clang vector extensions rather than intrinsics so it builds on
+// x86 and ARM; add -mavx2 (or -march=native) for full-width instructions.
+
+bool alignment_striped_enabled = true;
+
+#if defined(__has_builtin)
+#  if __has_builtin(__builtin_shufflevector)
+#    define ALN_STRIPED 1
+#  endif
+#endif
+
+#ifdef ALN_STRIPED
+
+// 8 lanes with AVX2, otherwise 4 (native width for SSE2 and NEON)
+#ifdef __AVX2__
+#  define ALN_VL 8
+#else
+#  define ALN_VL 4
+#endif
+typedef score_t vscore_t __attribute__((vector_size(ALN_VL * sizeof(score_t))));
+
+static inline vscore_t vsplat(score_t x) { return (vscore_t){0} + x; }
+
+static inline vscore_t vmax(vscore_t a, vscore_t b)
+{
+  vscore_t gt = a > b; // all bits set in lanes where a > b
+  return (a & gt) | (b & ~gt);
+}
+
+// Move every lane up by one; lane 0 gets x
+static inline vscore_t vshift(vscore_t v, score_t x)
+{
+#if ALN_VL == 8
+  return __builtin_shufflevector(v, vsplat(x), 8, 0, 1, 2, 3, 4, 5, 6);
+#else
+  return __builtin_shufflevector(v, vsplat(x), 4, 0, 1, 2);
+#endif
+}
+
+static inline bool vany(vscore_t v)
+{
+  score_t r = 0;
+  int l;
+  for(l = 0; l < ALN_VL; l++) r |= v[l];
+  return r != 0;
+}
+
+static void alignment_fill_striped(aligner_t *aligner, const sub_table_t *table,
+                                   score_t min)
+{
+  const scoring_t *scoring = aligner->scoring;
+  score_t *match_scores = aligner->match_scores;
+  score_t *gap_a_scores = aligner->gap_a_scores;
+  score_t *gap_b_scores = aligner->gap_b_scores;
+  const size_t w = aligner->score_width;
+  const size_t len_i = w-1, len_j = aligner->score_height-1;
+  const size_t seg = (len_i + ALN_VL - 1) / ALN_VL;
+  const size_t n = table->n;
+  size_t c, k, l, y, i;
+
+  const vscore_t vmin = vsplat(min);
+  const vscore_t vopen = vsplat(scoring->gap_open + scoring->gap_extend);
+  const vscore_t vext = vsplat(scoring->gap_extend);
+
+  // profile[c*seg + k] lane l: score of seq_a[l*seg+k] against character c
+  // of seq_b (0 past the end of seq_a; those cells are never read back)
+  size_t nvec = (n + 6) * seg;
+  vscore_t *buf = aligned_alloc(sizeof(vscore_t), nvec * sizeof(vscore_t));
+  if(buf == NULL) {
+    fprintf(stderr, "%s:%i: Out of memory\n", __FILE__, __LINE__);
+    exit(EXIT_FAILURE);
+  }
+  vscore_t *profile = buf;
+  vscore_t *pM = buf + n*seg, *pA = pM + seg, *pB = pA + seg; // previous row
+  vscore_t *cM = pB + seg, *cA = cM + seg, *cB = cA + seg; // current row
+  vscore_t *tmp;
+
+  for(c = 0; c < n; c++) {
+    for(k = 0; k < seg; k++) {
+      for(l = 0; l < ALN_VL; l++) {
+        i = l*seg + k;
+        profile[c*seg+k][l] = i < len_i
+          ? table->scores[c*n + table->code[(unsigned char)aligner->seq_a[i]]]
+          : 0;
+      }
+    }
+  }
+
+  // Row 0 (already initialised) in striped order
+  for(k = 0; k < seg; k++) {
+    for(l = 0; l < ALN_VL; l++) {
+      i = l*seg + k;
+      pM[k][l] = i < len_i ? match_scores[1+i] : min;
+      pA[k][l] = i < len_i ? gap_a_scores[1+i] : min;
+      pB[k][l] = i < len_i ? gap_b_scores[1+i] : min;
+    }
+  }
+
+  for(y = 1; y <= len_j; y++)
+  {
+    const size_t row = y*w, prev_row = row-w;
+    const vscore_t *prof = profile +
+      (size_t)table->code[(unsigned char)aligner->seq_b[y-1]] * seg;
+
+    // Column 0 (already initialised) feeds lane 0 at k = 0
+    score_t h0_prev = MAX3(match_scores[prev_row], gap_a_scores[prev_row],
+                           gap_b_scores[prev_row]);
+    score_t x0 = MAX2(match_scores[row], gap_a_scores[row]);
+    score_t b0 = gap_b_scores[row]; // currently always min
+
+    // match from the diagonal, gap_a from the cell above
+    vscore_t vdiag = vshift(vmax(vmax(pM[seg-1], pA[seg-1]), pB[seg-1]),
+                            h0_prev);
+    for(k = 0; k < seg; k++) {
+      cM[k] = vmax(vdiag + prof[k], vmin);
+      cA[k] = vmax(vmax(vmax(pM[k], pB[k]) + vopen, pA[k] + vext), vmin);
+      vdiag = vmax(vmax(pM[k], pA[k]), pB[k]);
+    }
+
+    // gap_b within each segment; lanes other than 0 start without the
+    // gap_b value carried from the previous segment
+    vscore_t vx = vshift(vmax(cM[seg-1], cA[seg-1]), x0);
+    vscore_t vb = vshift(vmin, b0);
+    for(k = 0; k < seg; k++) {
+      cB[k] = vmax(vmax(vx + vopen, vb + vext), vmin);
+      vx = vmax(cM[k], cA[k]);
+      vb = cB[k];
+    }
+
+    // Lazy F: carry gap_b across segment boundaries while it improves a cell
+    vscore_t vf = vmax(vshift(cB[seg-1], min) + vext, vmin);
+    k = 0;
+    while(vany(vf > cB[k])) {
+      cB[k] = vmax(cB[k], vf);
+      vf = vmax(vf + vext, vmin);
+      if(++k == seg) { k = 0; vf = vmax(vshift(vf, min), vmin); }
+    }
+
+    // Back to row-major for traceback
+    for(l = 0; l < ALN_VL; l++) {
+      for(k = 0, i = l*seg; k < seg && i < len_i; k++, i++) {
+        match_scores[row+1+i] = cM[k][l];
+        gap_a_scores[row+1+i] = cA[k][l];
+        gap_b_scores[row+1+i] = cB[k][l];
+      }
+    }
+
+    tmp = pM; pM = cM; cM = tmp;
+    tmp = pA; pA = cA; cA = tmp;
+    tmp = pB; pB = cB; cB = tmp;
+  }
+
+  free(buf);
+}
+
+#endif /* ALN_STRIPED */
 
 // Fill in traceback matrix
 static void alignment_fill_matrices(aligner_t *aligner, char is_sw)
@@ -138,6 +318,19 @@ static void alignment_fill_matrices(aligner_t *aligner, char is_sw)
       gap_b_scores[index] = min;
     }
   }
+
+  #ifdef ALN_STRIPED
+  // The striped fill handles the uniform recurrence only; options that
+  // change it for particular cells use the scalar loop below
+  if(alignment_striped_enabled && len_i > 0 &&
+     !scoring->no_end_gap_penalty && !scoring->no_mismatches &&
+     !no_gaps_in_a && !no_gaps_in_b)
+  {
+    alignment_fill_striped(aligner, &table, min);
+    sub_table_free(&table);
+    return;
+  }
+  #endif
 
   // start at position [1][1]
   index_upleft = 0;
@@ -386,7 +579,7 @@ void alignment_reverse_move(enum Matrix *curr_matrix, score_t *curr_score,
 
     default:
       fprintf(stderr, "Program error: invalid matrix in get_reverse_move()\n");
-      fprintf(stderr, "Please submit a bug report to: turner.isaac@gmail.com\n");
+      fprintf(stderr, "Please submit a bug report to: https://github.com/DanielTillett/seq-align/issues\n");
       exit(EXIT_FAILURE);
   }
 
@@ -428,7 +621,7 @@ void alignment_reverse_move(enum Matrix *curr_matrix, score_t *curr_score,
 "This may be due to an integer overflow if your sequences are long or scores\n"
 "are large. If this is the case using smaller scores or shorter sequences may\n"
 "work around this problem.  \n"
-"  If you think this is a bug, please report it to: turner.isaac@gmail.com\n");
+"  If you think this is a bug, please report it to: https://github.com/DanielTillett/seq-align/issues\n");
     exit(EXIT_FAILURE);
   }
 }
