@@ -102,7 +102,7 @@ version gives identical scores and alignments.
 | Needleman-Wunsch, 5 kb DNA | 0.252 s | 0.097 s | 0.063 s |
 | Needleman-Wunsch, 2 kb protein (BLOSUM62) | 0.031 s | 0.011 s | 0.007 s |
 | Linear space (`--linear`), 5 kb DNA | n/a | 0.077 s | 0.077 s |
-| Smith-Waterman, 3 kb DNA, best 20 hits | 0.636 s | 0.157 s | 0.153 s |
+| Smith-Waterman, 3 kb DNA, best 20 hits | 0.636 s | 0.127 s | 0.119 s |
 
 Time and peak memory for one global alignment (`needleman_wunsch
 --printscores`, whole program):
@@ -122,9 +122,14 @@ Where the speed comes from:
 * Smith-Waterman hits are ordered with a counting sort on score instead of a
   comparison sort of every cell. Tied hits are ordered by position in the
   first sequence, then the second, on every platform
+* Following Smith-Waterman hits back through the matrices uses the same
+  substitution table and fixed gap penalties instead of a general step that
+  re-checks every scoring option. Options that change penalties or forbid
+  gaps for particular cells use the general step
 
-Most of the remaining Smith-Waterman time is spent following hits back through
-the matrices, which defines which hits are reported, so it is unchanged.
+Most of the remaining Smith-Waterman time is still spent following hits back
+through the matrices. Each hit marks the cells it uses, which defines which
+later hits are reported, so the walk itself is unchanged.
 
 Examples
 ========

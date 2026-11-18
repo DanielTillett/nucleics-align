@@ -59,7 +59,81 @@ struct sw_aligner_t
 {
   aligner_t aligner;
   sw_history_t history;
+  // For following hits back through the matrices without scoring_lookup()
+  sub_table_t table;
+  bool fast_walk;
 };
+
+// One step back through the matrices. Gives the same result as
+// alignment_reverse_move() (same checks, same order), but uses the
+// substitution table and fixed gap penalties, so it only applies when no
+// option changes the penalties or forbids gaps for particular cells
+static inline void _sw_reverse_move(const sw_aligner_t *sw,
+                                    enum Matrix *curr_matrix,
+                                    score_t *curr_score,
+                                    size_t *score_x, size_t *score_y,
+                                    size_t *arr_index)
+{
+  const aligner_t *aligner = &sw->aligner;
+
+  if(!sw->fast_walk || (*curr_matrix != MATCH && *curr_matrix != GAP_A &&
+                        *curr_matrix != GAP_B))
+  {
+    alignment_reverse_move(curr_matrix, curr_score, score_x, score_y,
+                           arr_index, aligner);
+    return;
+  }
+
+  const scoring_t *scoring = aligner->scoring;
+  const score_t open = scoring->gap_open + scoring->gap_extend;
+  const score_t ext = scoring->gap_extend;
+  score_t from_a, from_b, from_m; // penalty for arriving from each matrix
+  size_t prev;
+
+  if(*curr_matrix == MATCH)
+  {
+    const sub_table_t *t = &sw->table;
+    unsigned char ca = (unsigned char)aligner->seq_a[*score_x-1];
+    unsigned char cb = (unsigned char)aligner->seq_b[*score_y-1];
+    from_a = from_b = from_m = t->scores[t->code[cb]*t->n + t->code[ca]];
+    prev = *arr_index - aligner->score_width - 1;
+  }
+  else if(*curr_matrix == GAP_A)
+  {
+    from_a = ext; from_b = open; from_m = open;
+    prev = *arr_index - aligner->score_width;
+  }
+  else
+  {
+    from_a = open; from_b = ext; from_m = open;
+    prev = *arr_index - 1;
+  }
+
+  enum Matrix next;
+  score_t next_score;
+
+  if(aligner->gap_a_scores[prev] + from_a == *curr_score) {
+    next = GAP_A; next_score = aligner->gap_a_scores[prev];
+  }
+  else if(aligner->gap_b_scores[prev] + from_b == *curr_score) {
+    next = GAP_B; next_score = aligner->gap_b_scores[prev];
+  }
+  else if(aligner->match_scores[prev] + from_m == *curr_score) {
+    next = MATCH; next_score = aligner->match_scores[prev];
+  }
+  else {
+    // No valid predecessor: the general version reports it and exits
+    alignment_reverse_move(curr_matrix, curr_score, score_x, score_y,
+                           arr_index, aligner);
+    return;
+  }
+
+  if(*curr_matrix != GAP_A) (*score_x)--;
+  if(*curr_matrix != GAP_B) (*score_y)--;
+  *arr_index = prev;
+  *curr_matrix = next;
+  *curr_score = next_score;
+}
 
 // Sort indices by their matrix values
 // Struct used to pass data to sort_match_indices
@@ -130,6 +204,7 @@ sw_aligner_t* smith_waterman_new(void)
 void smith_waterman_free(sw_aligner_t *sw)
 {
   aligner_destroy(&(sw->aligner));
+  sub_table_free(&sw->table);
   bitset_dealloc(&sw->history.match_scores_mask);
   free(sw->history.sorted_match_indices);
   free(sw);
@@ -153,6 +228,13 @@ void smith_waterman_align2(const char *a, const char *b,
   aligner_t *aligner = &sw->aligner;
   sw_history_t *hist = &sw->history;
   aligner_align(aligner, a, b, len_a, len_b, scoring, 1);
+
+  sub_table_free(&sw->table);
+  sub_table_build(&sw->table, scoring, a, len_a, b, len_b);
+  sw->fast_walk = !scoring->no_start_gap_penalty &&
+                  !scoring->no_end_gap_penalty &&
+                  !scoring->no_gaps_in_a && !scoring->no_gaps_in_b &&
+                  !scoring->no_gaps_in_longest;
 
   size_t arr_size = aligner->score_width * aligner->score_height;
   _ensure_history_capacity(hist, arr_size);
@@ -231,16 +313,19 @@ static char _follow_hit(sw_aligner_t* sw, size_t arr_index,
 
   for(length = 0; ; length++)
   {
-    if(bitset32_get(hist->match_scores_mask.b, arr_index)) return 0;
-    bitset32_set(hist->match_scores_mask.b, arr_index);
+    // Stop at a cell already used by an earlier hit, else mark it as used
+    uint32_t *word = &hist->match_scores_mask.b[arr_index >> 5];
+    uint32_t bit = 1U << (arr_index & 31);
+    if(*word & bit) return 0;
+    *word |= bit;
 
     if(curr_score == 0) break;
 
     //printf(" %i (%i, %i)\n", length, score_x, score_y);
 
     // Find out where to go next
-    alignment_reverse_move(&curr_matrix, &curr_score,
-                           &score_x, &score_y, &arr_index, aligner);
+    _sw_reverse_move(sw, &curr_matrix, &curr_score,
+                     &score_x, &score_y, &arr_index);
   }
 
   // We got a result!
@@ -284,8 +369,8 @@ static char _follow_hit(sw_aligner_t* sw, size_t arr_index,
       exit(EXIT_FAILURE);
     }
 
-    alignment_reverse_move(&curr_matrix, &curr_score,
-                           &score_x, &score_y, &arr_index, aligner);
+    _sw_reverse_move(sw, &curr_matrix, &curr_score,
+                     &score_x, &score_y, &arr_index);
   }
 
   result->result_a[length] = '\0';
