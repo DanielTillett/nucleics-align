@@ -11,10 +11,12 @@
 
 // request decent POSIX version
 #define _XOPEN_SOURCE 700
-#define _BSD_SOURCE
+#define _DEFAULT_SOURCE
 
 #include <stdlib.h>
 #include <stdio.h>
+#include <string.h>
+#include <strings.h> // strcasecmp
 #include <limits.h> // INT_MIN
 #include <stdarg.h> // for va_list
 
@@ -23,11 +25,6 @@
 #include "alignment.h"
 #include "alignment_cmdline.h"
 #include "alignment_scoring_load.h"
-
-// File loading
-int file_list_length = 0;
-int file_list_capacity = 0;
-char **file_paths1 = NULL, **file_paths2 = NULL;
 
 char parse_entire_int(char *str, int *result)
 {
@@ -153,7 +150,7 @@ static void print_usage(enum SeqAlignCmdType cmd_type, score_t defaults[4],
 "    --nomismatches       No mismatches allowed%s\n",
           cmd_type == SEQ_ALIGN_SW_CMD ? "" : " (cannot be used with --nogaps..)");
 
-  printf(
+  fprintf(stderr,
 "\n"
 " DETAILS:\n"
 "  * For help choosing scoring, see the README file. \n"
@@ -180,10 +177,18 @@ cmdline_t* cmdline_new(int argc, char **argv, scoring_t *scoring,
                        enum SeqAlignCmdType cmd_type)
 {
   cmdline_t* cmd = calloc(1, sizeof(cmdline_t));
+  if(cmd == NULL) {
+    fprintf(stderr, "%s:%i: Out of memory\n", __FILE__, __LINE__);
+    exit(EXIT_FAILURE);
+  }
   cmd->file_list_length = 0;
   cmd->file_list_capacity = 256;
   cmd->file_paths1 = malloc(sizeof(char*) * cmd->file_list_capacity);
   cmd->file_paths2 = malloc(sizeof(char*) * cmd->file_list_capacity);
+  if(cmd->file_paths1 == NULL || cmd->file_paths2 == NULL) {
+    fprintf(stderr, "%s:%i: Out of memory\n", __FILE__, __LINE__);
+    exit(EXIT_FAILURE);
+  }
   cmd->seq1 = cmd->seq2 = NULL;
   // All values initially 0
 
@@ -219,6 +224,11 @@ cmdline_t* cmdline_new(int argc, char **argv, scoring_t *scoring,
         usage("More than one scoring system specified - not permitted");
       }
 
+      if(argi + 1 >= argc)
+      {
+        usage("--scoring requires an argument");
+      }
+
       if(strcasecmp(argv[argi+1], "PAM30") == 0)
       {
         scoring_system_PAM30(scoring);
@@ -241,7 +251,7 @@ cmdline_t* cmdline_new(int argc, char **argv, scoring_t *scoring,
       }
       else {
         usage("Unknown --scoring choice, not one of "
-              "PAM30|PAM70|BLOSUM80|BLOSUM62");
+              "PAM30|PAM70|BLOSUM80|BLOSUM62|DNA_HYBRIDIZATION");
       }
 
       scoring_set = 1;
@@ -594,8 +604,9 @@ void align_from_file(const char *path1, const char *path2,
   }
   else if((sf2 = open_seq_file(path2, use_zlib)) == NULL)
   {
-    fprintf(stderr, "Alignment Error: couldn't open file %s\n", path1);
+    fprintf(stderr, "Alignment Error: couldn't open file %s\n", path2);
     fflush(stderr);
+    seq_close(sf1);
     return;
   }
 

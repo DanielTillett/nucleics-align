@@ -25,7 +25,7 @@ typedef struct {
 static inline BitSet* bitset_alloc(BitSet *bs, size_t l) {
   bs->s = (l+31)/32;
   bs->l = l;
-  bs->b = calloc(sizeof(bs->b[0]), bs->s);
+  bs->b = calloc(bs->s, sizeof(bs->b[0]));
   return bs->b ? bs : NULL;
 }
 
@@ -37,12 +37,14 @@ static inline void bitset_dealloc(BitSet *bs) {
 static inline BitSet* bitset_set_length(BitSet *bs, size_t l) {
   size_t ss = (l+31)/32;
   if(ss > bs->s) {
-    bs->b = realloc(bs->b, ss*sizeof(bs->b[0]));
-    memset(bs->b+bs->s, 0, (ss-bs->s)*sizeof(bs->b[0])); // zero new memory
+    uint32_t *b = realloc(bs->b, ss*sizeof(bs->b[0]));
+    if(b == NULL) return NULL;
+    memset(b+bs->s, 0, (ss-bs->s)*sizeof(b[0])); // zero new memory
+    bs->b = b;
     bs->s = ss;
   }
   bs->l = l;
-  return bs->b ? bs : NULL;
+  return bs;
 }
 
 // For iterating through local alignments
@@ -64,11 +66,11 @@ struct sw_aligner_t
 typedef struct
 {
   score_t *match_scores;
-  unsigned int score_width;
+  size_t score_width;
 } MatrixSort;
 
 // Function passed to sort_r
-int sort_match_indices(const void *aa, const void *bb, void *arg)
+static int sort_match_indices(const void *aa, const void *bb, void *arg)
 {
   const size_t *a = aa;
   const size_t *b = bb;
@@ -81,36 +83,45 @@ int sort_match_indices(const void *aa, const void *bb, void *arg)
   long diff = (long)match_scores[*b] - match_scores[*a];
 
   // Sort by position (from left to right) on seq_a
-  if(diff == 0) return (*a % score_width) - (*b % score_width);
+  if(diff == 0) {
+    size_t xa = *a % score_width, xb = *b % score_width;
+    return (xa > xb) - (xa < xb);
+  }
   else return diff > 0 ? 1 : -1;
 }
 
 static void _init_history(sw_history_t *hist)
 {
-  bitset_alloc(&hist->match_scores_mask, 256);
   hist->hits_capacity = 256;
   size_t mem = hist->hits_capacity * sizeof(*(hist->sorted_match_indices));
   hist->sorted_match_indices = malloc(mem);
+  if(!bitset_alloc(&hist->match_scores_mask, 256) || !hist->sorted_match_indices) {
+    fprintf(stderr, "%s:%i: Out of memory\n", __FILE__, __LINE__);
+    exit(EXIT_FAILURE);
+  }
 }
 
 static void _ensure_history_capacity(sw_history_t *hist, size_t arr_size)
 {
   if(arr_size > hist->hits_capacity) {
     hist->hits_capacity = ROUNDUP2POW(arr_size);
-    bitset_set_length(&hist->match_scores_mask, hist->hits_capacity);
-
     size_t mem = hist->hits_capacity * sizeof(*(hist->sorted_match_indices));
     hist->sorted_match_indices = realloc(hist->sorted_match_indices, mem);
-    if(!hist->match_scores_mask.b || !hist->sorted_match_indices) {
+    if(!bitset_set_length(&hist->match_scores_mask, hist->hits_capacity) ||
+       !hist->sorted_match_indices) {
       fprintf(stderr, "%s:%i: Out of memory\n", __FILE__, __LINE__);
       exit(EXIT_FAILURE);
     }
   }
 }
 
-sw_aligner_t* smith_waterman_new()
+sw_aligner_t* smith_waterman_new(void)
 {
   sw_aligner_t *sw = calloc(1, sizeof(sw_aligner_t));
+  if(sw == NULL) {
+    fprintf(stderr, "%s:%i: Out of memory\n", __FILE__, __LINE__);
+    exit(EXIT_FAILURE);
+  }
   _init_history(&(sw->history));
   return sw;
 }
@@ -145,8 +156,12 @@ void smith_waterman_align2(const char *a, const char *b,
   size_t arr_size = aligner->score_width * aligner->score_height;
   _ensure_history_capacity(hist, arr_size);
 
+  // Clear the visited-cell mask. Size is in bytes: clearing only one byte per
+  // 32-bit word left stale bits that silently dropped hits on reuse
+  memset(hist->match_scores_mask.b, 0,
+         hist->match_scores_mask.s * sizeof(hist->match_scores_mask.b[0]));
+
   // Set number of hits
-  memset(hist->match_scores_mask.b, 0, (hist->match_scores_mask.l+31)/32);
   hist->num_of_hits = hist->next_hit = 0;
 
   size_t pos;
@@ -212,7 +227,7 @@ static char _follow_hit(sw_aligner_t* sw, size_t arr_index,
   curr_score = end_score;
 
   // Now follow backwards again to create alignment!
-  unsigned int i;
+  size_t i;
 
   for(i = length-1; curr_score > 0; i--)
   {

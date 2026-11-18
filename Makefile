@@ -1,12 +1,19 @@
 LIBS_PATH=libs
 
 ifdef DEBUG
-	OPT = -O0 --debug -g -ggdb
+	OPT = -O0 -g -ggdb
 else
 	OPT = -O3
 endif
 
-CFLAGS = -Wall -Wextra -std=c99 $(OPT)
+# Build with sanitizers: make SANITIZE=1 test
+ifdef SANITIZE
+	OPT = -O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined
+	TGTFLAGS += -fsanitize=address,undefined
+endif
+
+CFLAGS ?= -Wall -Wextra
+CFLAGS += -std=c11 $(OPT)
 OBJFLAGS = -fPIC
 LINKFLAGS = -lalign -lstrbuf -lpthread -lz
 
@@ -29,20 +36,19 @@ src/libalign.a: $(OBJS)
 	$(CC) $(CFLAGS) $(OBJFLAGS) $(INCS) -c $< -o $@
 
 bin/needleman_wunsch: src/tools/nw_cmdline.c src/libalign.a | bin
-	$(CC) -o bin/needleman_wunsch $(SRCS) $(TGTFLAGS) $(INCS) $(LIBS) src/tools/nw_cmdline.c $(LINKFLAGS)
+	$(CC) -o bin/needleman_wunsch $(SRCS) $(CFLAGS) $(TGTFLAGS) $(INCS) $(LIBS) src/tools/nw_cmdline.c $(LINKFLAGS)
 
 bin/smith_waterman: src/tools/sw_cmdline.c src/libalign.a | bin
-	$(CC) -o bin/smith_waterman $(SRCS) $(TGTFLAGS) $(INCS) $(LIBS) src/tools/sw_cmdline.c $(LINKFLAGS)
+	$(CC) -o bin/smith_waterman $(SRCS) $(CFLAGS) $(TGTFLAGS) $(INCS) $(LIBS) src/tools/sw_cmdline.c $(LINKFLAGS)
 
 bin/lcs: src/tools/lcs_cmdline.c src/libalign.a | bin
-	$(CC) -o bin/lcs $(SRCS) $(TGTFLAGS) $(INCS) $(LIBS) src/tools/lcs_cmdline.c $(LINKFLAGS)
+	$(CC) -o bin/lcs $(SRCS) $(CFLAGS) $(TGTFLAGS) $(INCS) $(LIBS) src/tools/lcs_cmdline.c $(LINKFLAGS)
 
-bin/seq_align_tests: src/tools/tests.c src/libalign.a
-	mkdir -p bin
-	$(CC) -o $@ $< $(CFLAGS) $(INCS) $(LIBS) $(LINK)
+bin/seq_align_tests: src/tools/tests.c src/libalign.a | bin
+	$(CC) -o $@ $< $(CFLAGS) $(TGTFLAGS) $(INCS) $(LIBS) $(LINK)
 
 examples: src/libalign.a
-	cd examples; $(MAKE) LIBS_PATH=$(abspath $(LIBS_PATH))
+	cd examples; $(MAKE) LIBS_PATH=$(abspath $(LIBS_PATH)) SANFLAGS="$(TGTFLAGS)"
 
 bin:
 	mkdir -p bin

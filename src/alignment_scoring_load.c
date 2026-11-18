@@ -8,7 +8,7 @@
 
 // request decent POSIX version
 #define _XOPEN_SOURCE 700
-#define _BSD_SOURCE
+#define _DEFAULT_SOURCE
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -19,6 +19,8 @@
 
 #include "alignment_cmdline.h"
 #include "alignment_scoring_load.h"
+
+#define lc(c,case_sensitive) ((case_sensitive) ? (c) : (char)tolower((unsigned char)(c)))
 
 static void _loading_error(const char* err_msg, const char* file_path,
                            int line_num, char is_matrix)
@@ -31,11 +33,12 @@ static void _loading_error(const char* err_msg, const char* file_path,
   else fprintf(stderr, "Error: substitution pairs : %s\n", err_msg);
 
   if(file_path != NULL) fprintf(stderr, "File: %s\n", file_path);
-  if(line_num != -1) fprintf(stderr, "Line: %s\n", file_path);
+  if(line_num != -1) fprintf(stderr, "Line: %i\n", line_num);
 
   exit(EXIT_FAILURE);
 }
 
+// Line numbers reported in errors are 1-based
 void align_scoring_load_matrix(gzFile file, const char* file_path,
                                scoring_t* scoring, char case_sensitive)
 {
@@ -46,6 +49,7 @@ void align_scoring_load_matrix(gzFile file, const char* file_path,
   // Read first line (column headings)
   while((read_length = strbuf_reset_gzreadline(sbuf, file)) > 0)
   {
+    line_num++;
     strbuf_chomp(sbuf);
 
     if(sbuf->end > 0 && sbuf->b[0] != '#' && // line is not empty, not comment
@@ -60,40 +64,46 @@ void align_scoring_load_matrix(gzFile file, const char* file_path,
 
       break;
     }
-
-    line_num++;
   }
 
-  if(line_num == 0 && sbuf->end <= 0)
+  if(read_length == 0)
   {
-    _loading_error("Empty file", file_path, -1, 0);
+    // Reached the end of the file without finding the column headings
+    _loading_error("Empty file", file_path, -1, 1);
   }
 
   // If the separator character is whitespace,
   // the set of whitespace characters is used
   char sep = sbuf->b[0];
 
-  if((sep >= (int)'0' && sep <= (int)'9') || sep == '-')
+  if((sep >= '0' && sep <= '9') || sep == '-')
   {
     _loading_error("Numbers (0-9) and dashes (-) do not make good separators",
-                   file_path, line_num, 0);
+                   file_path, line_num, 1);
   }
 
-  char* characters = (char*)malloc(sbuf->end);
+  char* characters = malloc(sbuf->end);
   int num_of_chars = 0;
 
-  if(isspace(sep))
+  if(characters == NULL)
+  {
+    fprintf(stderr, "%s:%i: Out of memory\n", __FILE__, __LINE__);
+    exit(EXIT_FAILURE);
+  }
+
+  if(isspace((unsigned char)sep))
   {
     char* next = sbuf->b;
 
     while((next = string_next_nonwhitespace(next+1)) != NULL)
     {
-      characters[num_of_chars++] = case_sensitive ? *next : tolower(*next);
+      characters[num_of_chars++] = lc(*next, case_sensitive);
     }
 
     // Now read lines below
     while((read_length = strbuf_reset_gzreadline(sbuf, file)) > 0)
     {
+      line_num++;
       strbuf_chomp(sbuf);
 
       char* from_char_pos = string_next_nonwhitespace(sbuf->b);
@@ -104,10 +114,10 @@ void align_scoring_load_matrix(gzFile file, const char* file_path,
         continue;
       }
 
-      char from_char = case_sensitive ? *from_char_pos : tolower(*from_char_pos);
+      char from_char = lc(*from_char_pos, case_sensitive);
       char to_char;
 
-      char* score_txt = sbuf->b+1;
+      char* score_txt = from_char_pos+1;
       int score;
 
       int i;
@@ -115,13 +125,23 @@ void align_scoring_load_matrix(gzFile file, const char* file_path,
       {
         to_char = characters[i];
 
-        if(!isspace(*score_txt))
+        if(*score_txt == '\0')
+        {
+          _loading_error("Too few columns on row", file_path, line_num, 1);
+        }
+
+        if(!isspace((unsigned char)*score_txt))
         {
           _loading_error("Expected whitespace between elements - found character",
                          file_path, line_num, 1);
         }
 
         score_txt = string_next_nonwhitespace(score_txt+1);
+
+        if(score_txt == NULL)
+        {
+          _loading_error("Too few columns on row", file_path, line_num, 1);
+        }
 
         char* strtol_last_char_ptr = score_txt;
         score = (int)strtol(strtol_last_char_ptr, &strtol_last_char_ptr, 10);
@@ -141,47 +161,58 @@ void align_scoring_load_matrix(gzFile file, const char* file_path,
       {
         _loading_error("Too many columns on row", file_path, line_num, 1);
       }
-
-      line_num++;
     }
   }
   else
   {
     size_t i;
 
-    for(i = 0; i < sbuf->end; i += 2)
+    // Header is <sep><char><sep><char>...
+    for(i = 0; i + 1 < sbuf->end; i += 2)
     {
       if(sbuf->b[i] != sep)
       {
         _loading_error("Separator missing from line", file_path, line_num, 1);
       }
 
-      char c = case_sensitive ? sbuf->b[i+1] : tolower(sbuf->b[i+1]);
-      characters[num_of_chars++] = c;
+      characters[num_of_chars++] = lc(sbuf->b[i+1], case_sensitive);
+    }
+
+    if(i < sbuf->end)
+    {
+      // e.g. ",A,C," - a separator with no heading after it
+      _loading_error("Empty column heading", file_path, line_num, 1);
     }
 
     int score;
 
-    // Read rows
+    // Read rows: <char><sep><score><sep><score>...
     while((read_length = strbuf_reset_gzreadline(sbuf, file)) > 0)
     {
+      line_num++;
       strbuf_chomp(sbuf);
 
-      char from_char = case_sensitive ? sbuf->b[0] : tolower(sbuf->b[0]);
-
-      if(from_char == '#' || string_is_all_whitespace(sbuf->b))
+      if(sbuf->b[0] == '#' || string_is_all_whitespace(sbuf->b))
       {
         // skip this line
         continue;
       }
 
-      char* str_pos = sbuf->b;
+      char from_char = lc(sbuf->b[0], case_sensitive);
+
+      // Skip the row's character
+      char* str_pos = sbuf->b+1;
 
       int to_char_index = 0;
       char to_char;
 
       while(*str_pos != '\0')
       {
+        if(to_char_index >= num_of_chars)
+        {
+          _loading_error("Too many columns on row", file_path, line_num, 1);
+        }
+
         to_char = characters[to_char_index++];
 
         if(*str_pos != sep)
@@ -201,17 +232,15 @@ void align_scoring_load_matrix(gzFile file, const char* file_path,
           _loading_error("Missing number value on line", file_path, line_num, 1);
         }
 
-        if(to_char_index >= num_of_chars)
-        {
-          _loading_error("Too many columns on row", file_path, line_num, 1);
-        }
-
         scoring_add_mutation(scoring, from_char, to_char, score);
 
         str_pos = after_num_str;
       }
 
-      line_num++;
+      if(to_char_index < num_of_chars)
+      {
+        _loading_error("Too few columns on row", file_path, line_num, 1);
+      }
     }
   }
 
@@ -234,17 +263,18 @@ void align_scoring_load_pairwise(gzFile file, const char* file_path,
 
   while((read_length = strbuf_reset_gzreadline(sbuf, file)) > 0)
   {
+    line_num++;
     strbuf_chomp(sbuf);
 
     if(sbuf->end > 0 && sbuf->b[0] != '#' && // line is not empty, not comment
        !string_is_all_whitespace(sbuf->b)) // and not whitespace
     {
-      if(read_length < 5)
+      if(sbuf->end < 5)
       {
-        _loading_error("Too few column headings", file_path, line_num, 0);
+        _loading_error("Line too short", file_path, line_num, 0);
       }
 
-      if(isspace(sbuf->b[1]))
+      if(isspace((unsigned char)sbuf->b[1]))
       {
         // split by whitespace
         a = sbuf->b[0];
@@ -252,10 +282,11 @@ void align_scoring_load_pairwise(gzFile file, const char* file_path,
         size_t char2_pos;
 
         for(char2_pos = 1;
-            sbuf->b[char2_pos] != '\0' && isspace(sbuf->b[char2_pos]);
+            sbuf->b[char2_pos] != '\0' && isspace((unsigned char)sbuf->b[char2_pos]);
             char2_pos++);
 
-        if(char2_pos+2 >= sbuf->end || !isspace(sbuf->b[char2_pos+1]))
+        if(char2_pos+2 >= sbuf->end ||
+           !isspace((unsigned char)sbuf->b[char2_pos+1]))
         {
           _loading_error("Line too short", file_path, line_num, 0);
         }
@@ -283,17 +314,10 @@ void align_scoring_load_pairwise(gzFile file, const char* file_path,
         }
       }
 
-      if(!case_sensitive)
-      {
-        a = tolower(a);
-        b = tolower(b);
-      }
-
-      scoring_add_mutation(scoring, a, b, score);
+      scoring_add_mutation(scoring, lc(a, case_sensitive), lc(b, case_sensitive),
+                           score);
       num_pairs_added++;
     }
-
-    line_num++;
   }
 
   strbuf_free(sbuf);
@@ -301,6 +325,6 @@ void align_scoring_load_pairwise(gzFile file, const char* file_path,
   if(num_pairs_added == 0)
   {
     _loading_error("No pairs added from file (file empty?)",
-                   file_path, line_num, 0);
+                   file_path, -1, 0);
   }
 }

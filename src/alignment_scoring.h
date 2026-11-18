@@ -40,16 +40,17 @@ typedef struct
 } scoring_t;
 
 #ifndef bitset32_get
-  #define bitset32_get(arr,idx)   (((arr)[(idx)>>5] >> ((idx)&31)) & 0x1)
-  #define bitset32_set(arr,idx)   ((arr)[(idx)>>5] |=   (1<<((idx)&31)))
-  #define bitset32_clear(arr,idx) ((arr)[(idx)>>5] &=  ~(1<<((idx)&31)))
+  #define bitset32_get(arr,idx)   (((arr)[(idx)>>5] >> ((idx)&31)) & 0x1U)
+  #define bitset32_set(arr,idx)   ((arr)[(idx)>>5] |=   (1U<<((idx)&31)))
+  #define bitset32_clear(arr,idx) ((arr)[(idx)>>5] &=  ~(1U<<((idx)&31)))
 #endif
 
-#define get_wildcard_bit(scoring,c) bitset32_get((scoring)->wildcards,c)
-#define set_wildcard_bit(scoring,c) bitset32_set((scoring)->wildcards,c)
+// Characters are cast to unsigned char so bytes >= 0x80 index tables safely
+#define get_wildcard_bit(scoring,c) bitset32_get((scoring)->wildcards,(unsigned char)(c))
+#define set_wildcard_bit(scoring,c) bitset32_set((scoring)->wildcards,(unsigned char)(c))
 
-#define get_swap_bit(scoring,a,b) bitset32_get((scoring)->swap_set[(size_t)(a)],b)
-#define set_swap_bit(scoring,a,b) bitset32_set((scoring)->swap_set[(size_t)(a)],b)
+#define get_swap_bit(scoring,a,b)   bitset32_get((scoring)->swap_set[(unsigned char)(a)],(unsigned char)(b))
+#define set_swap_bit(scoring,a,b)   bitset32_set((scoring)->swap_set[(unsigned char)(a)],(unsigned char)(b))
 
 #ifdef __cplusplus
 extern "C" {

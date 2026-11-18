@@ -38,7 +38,12 @@ static void alignment_fill_matrices(aligner_t *aligner, char is_sw)
   int gap_open_penalty = scoring->gap_extend + scoring->gap_open;
   int gap_extend_penalty = scoring->gap_extend;
 
-  const score_t min = is_sw ? 0 : SCORE_MIN + abs(scoring->min_penalty);
+  // Penalties may have been changed since scoring_init() (e.g. by the command
+  // line parser), so take the most negative penalty from the current values
+  int worst_penalty = MIN3(scoring->min_penalty, gap_open_penalty, gap_extend_penalty);
+  worst_penalty = MIN3(worst_penalty, scoring->match, scoring->mismatch);
+
+  const score_t min = is_sw ? 0 : SCORE_MIN + abs(worst_penalty);
 
   size_t seq_i, seq_j, len_i = score_width-1, len_j = score_height-1;
   size_t index, index_left, index_up, index_upleft;
@@ -178,6 +183,11 @@ void aligner_align(aligner_t *aligner,
   aligner->score_width = len_a+1;
   aligner->score_height = len_b+1;
 
+  if(aligner->score_height > SIZE_MAX / aligner->score_width / sizeof(score_t)) {
+    fprintf(stderr, "%s:%i: Sequences too long to align\n", __FILE__, __LINE__);
+    exit(EXIT_FAILURE);
+  }
+
   size_t new_capacity = aligner->score_width * aligner->score_height;
 
   if(aligner->capacity < new_capacity)
@@ -187,6 +197,10 @@ void aligner_align(aligner_t *aligner,
     aligner->match_scores = realloc(aligner->match_scores, mem);
     aligner->gap_a_scores = realloc(aligner->gap_a_scores, mem);
     aligner->gap_b_scores = realloc(aligner->gap_b_scores, mem);
+    if(!aligner->match_scores || !aligner->gap_a_scores || !aligner->gap_b_scores) {
+      fprintf(stderr, "%s:%i: Out of memory\n", __FILE__, __LINE__);
+      exit(EXIT_FAILURE);
+    }
   }
 
   alignment_fill_matrices(aligner, is_sw);
@@ -206,8 +220,16 @@ alignment_t* alignment_create(size_t capacity)
 {
   capacity = ROUNDUP2POW(capacity);
   alignment_t *result = malloc(sizeof(alignment_t));
+  if(result == NULL) {
+    fprintf(stderr, "%s:%i: Out of memory\n", __FILE__, __LINE__);
+    exit(EXIT_FAILURE);
+  }
   result->result_a = malloc(sizeof(char)*capacity);
   result->result_b = malloc(sizeof(char)*capacity);
+  if(result->result_a == NULL || result->result_b == NULL) {
+    fprintf(stderr, "%s:%i: Out of memory\n", __FILE__, __LINE__);
+    exit(EXIT_FAILURE);
+  }
   result->capacity = capacity;
   result->length = 0;
   result->result_a[0] = result->result_b[0] = '\0';
@@ -403,7 +425,7 @@ void alignment_colour_print_against(const char *alignment_a,
                                     const char *alignment_b,
                                     char case_sensitive)
 {
-  int i;
+  size_t i;
   char red = 0, green = 0;
 
   for(i = 0; alignment_a[i] != '\0'; i++)
@@ -423,7 +445,8 @@ void alignment_colour_print_against(const char *alignment_a,
     }
 
     if(((case_sensitive && alignment_a[i] != alignment_b[i]) ||
-        (!case_sensitive && tolower(alignment_a[i]) != tolower(alignment_b[i]))) &&
+        (!case_sensitive && tolower((unsigned char)alignment_a[i]) !=
+                            tolower((unsigned char)alignment_b[i]))) &&
        alignment_a[i] != '-' && alignment_b[i] != '-')
     {
       if(!green)
@@ -452,7 +475,7 @@ void alignment_colour_print_against(const char *alignment_a,
 void alignment_print_spacer(const char* alignment_a, const char* alignment_b,
                             const scoring_t* scoring)
 {
-  int i;
+  size_t i;
 
   for(i = 0; alignment_a[i] != '\0'; i++)
   {
@@ -462,7 +485,8 @@ void alignment_print_spacer(const char* alignment_a, const char* alignment_b,
     }
     else if(alignment_a[i] == alignment_b[i] ||
             (!scoring->case_sensitive &&
-             tolower(alignment_a[i]) == tolower(alignment_b[i])))
+             tolower((unsigned char)alignment_a[i]) ==
+             tolower((unsigned char)alignment_b[i])))
     {
       putc('|', stdout);
     }

@@ -6,7 +6,7 @@ author: Isaac Turner <turner.isaac@gmail.com>
 license: Public Domain  
 updated: 18 Aug 2015
 
-[![Build Status](https://travis-ci.org/noporpoise/seq-align.png?branch=master)](https://travis-ci.org/noporpoise/seq-align)
+[![CI](https://github.com/DanielTillett/seq-align/actions/workflows/ci.yml/badge.svg)](https://github.com/DanielTillett/seq-align/actions/workflows/ci.yml)
 
 About
 =====
@@ -48,6 +48,10 @@ To update:
 To run tests:
 
     $ make test
+
+To run the tests with AddressSanitizer and UndefinedBehaviorSanitizer:
+
+    $ make clean && make SANITIZE=1 test
 
 For those interested, the bundled depedencies used are:
 

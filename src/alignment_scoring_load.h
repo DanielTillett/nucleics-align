@@ -9,6 +9,7 @@
 #ifndef ALIGNMENT_SCORING_LOAD_HEADER_SEEN
 #define ALIGNMENT_SCORING_LOAD_HEADER_SEEN
 
+#include <zlib.h>
 #include "alignment_scoring.h"
 
 void align_scoring_load_matrix(gzFile file, const char* file_path,

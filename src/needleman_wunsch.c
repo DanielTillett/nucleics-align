@@ -12,9 +12,13 @@
 
 #include "needleman_wunsch.h"
 
-nw_aligner_t* needleman_wunsch_new()
+nw_aligner_t* needleman_wunsch_new(void)
 {
   nw_aligner_t *nw = calloc(1, sizeof(nw_aligner_t));
+  if(nw == NULL) {
+    fprintf(stderr, "%s:%i: Out of memory\n", __FILE__, __LINE__);
+    exit(EXIT_FAILURE);
+  }
   return nw;
 }
 
@@ -79,7 +83,7 @@ void needleman_wunsch_align2(const char *a, const char *b,
   for(; score_x > 0 && score_y > 0; next_char--)
   {
     #ifdef SEQ_ALIGN_VERBOSE
-    printf("matrix: %s (%lu,%lu) score: %i\n",
+    printf("matrix: %s (%zu,%zu) score: %i\n",
            MATRIX_NAME(curr_matrix), score_x-1, score_y-1, curr_score);
     #endif
 
@@ -132,8 +136,8 @@ void needleman_wunsch_align2(const char *a, const char *b,
   }
 
   // Shift alignment strings back into 0th position in char arrays
-  int first_char = next_char+1;
-  int alignment_len = longest_alignment - first_char;
+  size_t first_char = next_char+1;
+  size_t alignment_len = longest_alignment - first_char;
 
   // Use memmove
   memmove(alignment_a, alignment_a+first_char, alignment_len);

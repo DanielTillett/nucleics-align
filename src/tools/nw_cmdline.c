@@ -8,7 +8,7 @@
 
 // request decent POSIX version
 #define _XOPEN_SOURCE 700
-#define _BSD_SOURCE
+#define _DEFAULT_SOURCE
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -28,7 +28,7 @@ scoring_t scoring;
 nw_aligner_t *nw;
 alignment_t *result;
 
-static void nw_set_default_scoring()
+static void nw_set_default_scoring(void)
 {
   scoring_system_default(&scoring);
 }
@@ -59,7 +59,8 @@ static void align_zam(const char *seq_a, const char *seq_b)
       num_of_indels++;
     }
     else if((scoring.case_sensitive && result->result_a[i] != result->result_b[i]) ||
-            tolower(result->result_a[i]) != tolower(result->result_b[i]))
+            tolower((unsigned char)result->result_a[i]) !=
+            tolower((unsigned char)result->result_b[i]))
     {
       putc('*', stdout);
       num_of_mismatches++;

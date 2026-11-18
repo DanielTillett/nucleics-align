@@ -46,26 +46,24 @@ void scoring_init(scoring_t* scoring,
   memset(scoring->wildcards, 0, sizeof(scoring->wildcards));
   memset(scoring->swap_set, 0, sizeof(scoring->swap_set));
 
-  scoring->min_penalty = MIN2(match, mismatch);
-  scoring->max_penalty = MAX2(match, mismatch);
-  if(!no_gaps_in_a || !no_gaps_in_b) {
-    scoring->min_penalty = MIN3(scoring->min_penalty,gap_open+gap_extend,gap_extend);
-    scoring->max_penalty = MAX3(scoring->max_penalty,gap_open+gap_extend,gap_extend);
-  }
+  // Gaps are always included: even with no_gaps_in_a/b set, gaps are
+  // permitted at the ends of an alignment
+  scoring->min_penalty = MIN3(MIN2(match, mismatch), gap_open+gap_extend, gap_extend);
+  scoring->max_penalty = MAX3(MAX2(match, mismatch), gap_open+gap_extend, gap_extend);
 }
 
 void scoring_add_wildcard(scoring_t* scoring, char c, int score)
 {
-  if(!scoring->case_sensitive) c = tolower(c);
+  if(!scoring->case_sensitive) c = (char)tolower((unsigned char)c);
   set_wildcard_bit(scoring,c);
-  scoring->wildscores[(size_t)c] = score;
+  scoring->wildscores[(unsigned char)c] = score;
   scoring->min_penalty = MIN2(scoring->min_penalty, score);
   scoring->max_penalty = MAX2(scoring->max_penalty, score);
 }
 
 void scoring_add_mutation(scoring_t* scoring, char a, char b, int score)
 {
-  scoring->swap_scores[(size_t)a][(size_t)b] = score;
+  scoring->swap_scores[(unsigned char)a][(unsigned char)b] = score;
   set_swap_bit(scoring,a,b);
   scoring->min_penalty = MIN2(scoring->min_penalty, score);
   scoring->max_penalty = MAX2(scoring->max_penalty, score);
@@ -80,11 +78,11 @@ void scoring_add_mutations(scoring_t* scoring, const char *str, const int *score
 
   for(i = 0; i < len; i++)
   {
-    a = scoring->case_sensitive ? str[i] : tolower(str[i]);
+    a = scoring->case_sensitive ? str[i] : (char)tolower((unsigned char)str[i]);
 
     for(j = 0; j < len; j++)
     {
-      b = scoring->case_sensitive ? str[j] : tolower(str[j]);
+      b = scoring->case_sensitive ? str[j] : (char)tolower((unsigned char)str[j]);
       score = ARR_LOOKUP(scores, len, i, j);
 
       scoring_add_mutation(scoring, a, b, score);
@@ -117,8 +115,8 @@ static char _scoring_check_wildcards(const scoring_t* scoring, char a, char b,
 {
   // Check if either characters are wildcards
   int tmp_score = INT_MAX;
-  if(get_wildcard_bit(scoring,a)) tmp_score = scoring->wildscores[(size_t)a];
-  if(get_wildcard_bit(scoring,b)) tmp_score = MIN2(scoring->wildscores[(size_t)b],tmp_score);
+  if(get_wildcard_bit(scoring,a)) tmp_score = scoring->wildscores[(unsigned char)a];
+  if(get_wildcard_bit(scoring,b)) tmp_score = MIN2(scoring->wildscores[(unsigned char)b],tmp_score);
   if(tmp_score != INT_MAX) {
     *score = tmp_score;
     return 1;
@@ -135,8 +133,8 @@ void scoring_lookup(const scoring_t* scoring, char a, char b,
 {
   if(!scoring->case_sensitive)
   {
-    a = tolower(a);
-    b = tolower(b);
+    a = (char)tolower((unsigned char)a);
+    b = (char)tolower((unsigned char)b);
   }
 
   //#ifdef SEQ_ALIGN_VERBOSE
@@ -155,7 +153,7 @@ void scoring_lookup(const scoring_t* scoring, char a, char b,
   // Look up in table
   if(get_swap_bit(scoring,a,b))
   {
-    *score = scoring->swap_scores[(size_t)a][(size_t)b];
+    *score = scoring->swap_scores[(unsigned char)a][(unsigned char)b];
     return;
   }
 
@@ -185,7 +183,7 @@ void scoring_lookup(const scoring_t* scoring, char a, char b,
 // Some scoring systems
 //
 
-static char amino_acids[] = "ARNDCQEGHILKMFPSTWYVBZX*";
+static const char amino_acids[] = "ARNDCQEGHILKMFPSTWYVBZX*";
 
 static const int pam30[576] =
 { 6, -7, -4, -3, -6, -4, -2, -2, -7, -5, -6, -7, -5, -8, -2,  0, -1,-13, -8, -2, -3, -3, -3,-17,
@@ -265,7 +263,7 @@ static const int blosum80[576] =
  -1,-2,-2,-3,-4,-2,-2,-3,-2,-2,-2,-2,-2,-3,-3,-1,-1,-5,-3,-2,-3,-1,-2,-8,
  -8,-8,-8,-8,-8,-8,-8,-8,-8,-8,-8,-8,-8,-8,-8,-8,-8,-8,-8,-8,-8,-8,-8, 1};
 
-int blosum62[576] =
+static const int blosum62[576] =
 { 4,-1,-2,-2, 0,-1,-1, 0,-2,-1,-1,-1,-1,-2,-1, 1, 0,-3,-2, 0,-2,-1, 0,-4,
  -1, 5, 0,-2,-3, 1, 0,-2, 0,-3,-2, 2,-1,-3,-2,-1,-1,-3,-2,-3,-1, 0,-1,-4,
  -2, 0, 6, 1,-3, 0, 0, 0, 1,-3,-3, 0,-2,-3,-2, 1, 0,-4,-2,-3, 3, 0,-1,-4,

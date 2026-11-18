@@ -1,6 +1,6 @@
 LIBS_PATH=../libs
-CFLAGS=-Wall -Wextra -std=c99
-CXXFLAGS=-Wall -Wextra
+CFLAGS=-Wall -Wextra -std=c11 $(SANFLAGS)
+CXXFLAGS=-Wall -Wextra $(SANFLAGS)
 
 INCS=-I $(LIBS_PATH) -I ../src
 LIBS=-L $(LIBS_PATH)/string_buffer -L ../src

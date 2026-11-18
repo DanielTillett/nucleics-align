@@ -10,8 +10,12 @@
 #define ALIGNMENT_CMDLINE_HEADER_SEEN
 
 // request decent POSIX version
-#define _XOPEN_SOURCE 700
-#define _BSD_SOURCE
+#ifndef _XOPEN_SOURCE
+  #define _XOPEN_SOURCE 700
+#endif
+#ifndef _DEFAULT_SOURCE
+  #define _DEFAULT_SOURCE
+#endif
 
 #include <stdarg.h> // required for va_list
 #include <stdbool.h>

@@ -8,7 +8,7 @@
 
 // request decent POSIX version
 #define _XOPEN_SOURCE 700
-#define _BSD_SOURCE
+#define _DEFAULT_SOURCE
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -34,7 +34,7 @@ alignment_t *result;
 size_t alignment_index = 0;
 bool wait_on_keystroke = 0;
 
-static void sw_set_default_scoring()
+static void sw_set_default_scoring(void)
 {
   scoring_system_default(&scoring);
 
@@ -78,10 +78,10 @@ void print_alignment_part(const char* seq1, const char* seq2,
 
   for(i = 0; i < spaces_right; i++) putc(' ', stdout);
 
-  printf("  [pos: %li; len: %lu]\n", pos, len);
+  printf("  [pos: %zu; len: %zu]\n", pos, len);
 }
 
-static char get_next_hit()
+static char get_next_hit(void)
 {
   if(!wait_on_keystroke)
     return 1;
@@ -154,7 +154,7 @@ void align(const char *seq_a, const char *seq_b,
   aligner_t *aligner = smith_waterman_get_aligner(sw);
   size_t len_a = aligner->score_width-1, len_b = aligner->score_height-1;
 
-  printf("== Alignment %zu lengths (%lu, %lu):\n", alignment_index, len_a, len_b);
+  printf("== Alignment %zu lengths (%zu, %zu):\n", alignment_index, len_a, len_b);
 
   if(cmd->print_matrices)
   {
@@ -241,7 +241,7 @@ void align(const char *seq_a, const char *seq_b,
     }
 
     #ifdef SEQ_ALIGN_VERBOSE
-    printf("context left = %lu; right = %lu spacing: [%lu,%lu] [%lu,%lu]\n",
+    printf("context left = %zu; right = %zu spacing: [%zu,%zu] [%zu,%zu]\n",
            context_left, context_right,
            left_spaces_a, right_spaces_a,
            left_spaces_b, right_spaces_b);

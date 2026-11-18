@@ -6,6 +6,9 @@
  date: Feb 2015
  */
 
+// request decent POSIX version (mkstemp, getpid)
+#define _XOPEN_SOURCE 700
+
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdarg.h>
@@ -16,6 +19,7 @@
 
 #include "needleman_wunsch.h"
 #include "smith_waterman.h"
+#include "alignment_scoring_load.h"
 
 //
 // Tests
@@ -218,6 +222,49 @@ void nw_test_no_mismatches_rand()
 }
 
 
+/* Bytes >= 0x80 (e.g. UTF-8) must not index outside the scoring tables */
+void nw_test_high_bit_chars()
+{
+  nw_aligner_t *nw = needleman_wunsch_new();
+  alignment_t *result = alignment_create(256);
+
+  scoring_t scoring;
+  scoring_init(&scoring, 1, -2, -4, -1, false, false, false, false, false, false);
+  scoring_add_wildcard(&scoring, (char)0xff, 1);
+
+  needleman_wunsch_align("ac\xc3\xa9t", "ac\xc3\xa9t", &scoring, nw, result);
+  ASSERT(strcmp(result->result_a, "ac\xc3\xa9t") == 0 &&
+         strcmp(result->result_b, "ac\xc3\xa9t") == 0);
+  ASSERT(result->score == 5);
+
+  // 0xff is a wildcard so matches anything
+  needleman_wunsch_align("a\xff" "t", "act", &scoring, nw, result);
+  ASSERT(result->score == 3);
+
+  alignment_free(result);
+  needleman_wunsch_free(nw);
+}
+
+/* Changing penalties after scoring_init() (as the command line parser does)
+ * must not let the matrix floor overflow */
+void nw_test_penalties_changed_after_init()
+{
+  nw_aligner_t *nw = needleman_wunsch_new();
+  alignment_t *result = alignment_create(256);
+
+  scoring_t scoring;
+  scoring_init(&scoring, 1, -2, -4, -1, false, false, true, false, false, true);
+  scoring.gap_open = -1000;
+
+  needleman_wunsch_align("acgt", "aacgt", &scoring, nw, result);
+  ASSERT(result->score == 4 + -1000 + -1);
+  ASSERT(strcmp(result->result_a, "-acgt") == 0 &&
+         strcmp(result->result_b, "aacgt") == 0);
+
+  alignment_free(result);
+  needleman_wunsch_free(nw);
+}
+
 void test_nw()
 {
   SUITE_START("Needleman-Wunsch");
@@ -226,6 +273,8 @@ void test_nw()
   nw_test_free_gaps_at_ends();
   nw_test_no_mismatches();
   nw_test_no_mismatches_rand();
+  nw_test_high_bit_chars();
+  nw_test_penalties_changed_after_init();
 
   SUITE_END();
 }
@@ -268,11 +317,118 @@ void sw_test_no_gaps_smith_waterman()
 }
 
 
+// Fetch every hit, returning the number of hits and the sum of their scores
+static size_t sw_fetch_all(sw_aligner_t *sw, alignment_t *result, long *score_sum)
+{
+  size_t n = 0;
+  *score_sum = 0;
+  while(smith_waterman_fetch(sw, result)) { n++; *score_sum += result->score; }
+  return n;
+}
+
+/* Re-using an aligner must give the same hits as a fresh one */
+void sw_test_reuse_aligner()
+{
+  sw_aligner_t *reused = smith_waterman_new(), *fresh = smith_waterman_new();
+  alignment_t *r1 = alignment_create(256), *r2 = alignment_create(256);
+
+  scoring_t scoring;
+  scoring_system_default(&scoring);
+
+  // Leave visited-cell marks behind in the reused aligner
+  long sum;
+  smith_waterman_align("aaaaaaaa", "aaaaaaaa", &scoring, reused);
+  ASSERT(sw_fetch_all(reused, r1, &sum) > 0);
+
+  smith_waterman_align("cccccccc", "cccccccc", &scoring, reused);
+  smith_waterman_align("cccccccc", "cccccccc", &scoring, fresh);
+
+  // Compare hit by hit
+  size_t n = 0;
+  int got1, got2;
+  while(1) {
+    got1 = smith_waterman_fetch(reused, r1);
+    got2 = smith_waterman_fetch(fresh, r2);
+    ASSERT(got1 == got2);
+    if(!got1 || !got2) break;
+    ASSERT(r1->score == r2->score && r1->pos_a == r2->pos_a &&
+           r1->pos_b == r2->pos_b && strcmp(r1->result_a, r2->result_a) == 0);
+    n++;
+  }
+  ASSERT(n > 0);
+
+  alignment_free(r1);
+  alignment_free(r2);
+  smith_waterman_free(reused);
+  smith_waterman_free(fresh);
+}
+
 void test_sw()
 {
   SUITE_START("Smith-Waterman");
 
   sw_test_no_gaps_smith_waterman();
+  sw_test_reuse_aligner();
+
+  SUITE_END();
+}
+
+void alignment_test_create_zero()
+{
+  alignment_t *result = alignment_create(0);
+  ASSERT(result->capacity >= 1 && result->result_a[0] == '\0');
+  alignment_ensure_capacity(result, 100);
+  ASSERT(result->capacity >= 101);
+  alignment_free(result);
+}
+
+// Write text to a temporary file and load it as a substitution matrix
+static void load_matrix_text(const char *text, scoring_t *scoring)
+{
+  char path[] = "/tmp/seq_align_testXXXXXX";
+  int fd = mkstemp(path);
+  if(fd < 0) die("Cannot create temp file");
+  if(write(fd, text, strlen(text)) != (ssize_t)strlen(text)) die("write failed");
+  close(fd);
+
+  gzFile gz = gzopen(path, "r");
+  if(gz == NULL) die("Cannot open %s", path);
+  align_scoring_load_matrix(gz, path, scoring, false);
+  gzclose(gz);
+  unlink(path);
+}
+
+void scoring_test_load_matrix()
+{
+  scoring_t scoring;
+  int score;
+  bool is_match;
+
+  // Whitespace separated, as in scoring/*.txt
+  scoring_init(&scoring, 0, 0, -4, -1, false, false, false, false, false, false);
+  load_matrix_text("# comment\n   A  C\nA  5 -3\nC -3  7\n", &scoring);
+  scoring_lookup(&scoring, 'a', 'c', &score, &is_match);
+  ASSERT(score == -3);
+  scoring_lookup(&scoring, 'C', 'C', &score, &is_match);
+  ASSERT(score == 7);
+
+  // Single character separator
+  scoring_init(&scoring, 0, 0, -4, -1, false, false, false, false, false, false);
+  load_matrix_text(",A,C\nA,5,-3\nC,-3,7\n", &scoring);
+  scoring_lookup(&scoring, 'a', 'a', &score, &is_match);
+  ASSERT(score == 5);
+  scoring_lookup(&scoring, 'c', 'a', &score, &is_match);
+  ASSERT(score == -3);
+  scoring_lookup(&scoring, 'c', 'c', &score, &is_match);
+  ASSERT(score == 7);
+}
+
+void test_misc()
+{
+  SUITE_START("Alignment buffers and scoring files");
+
+  alignment_test_create_zero();
+  scoring_test_load_matrix();
 
   SUITE_END();
 }
@@ -282,7 +438,7 @@ int main(int argc, char **argv)
   if(argc != 1)
   {
     printf("  Unused args '%s..'\n", argv[1]);
-    printf("Usage: ./bit_array_test\n");
+    printf("Usage: ./seq_align_tests\n");
     exit(EXIT_FAILURE);
   }
 
@@ -294,6 +450,7 @@ int main(int argc, char **argv)
   // Test suites go here
   test_nw();
   test_sw();
+  test_misc();
 
   printf("\n");
   printf(" %i / %i suites failed\n", suites_failed, suites_run);
