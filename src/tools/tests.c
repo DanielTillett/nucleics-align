@@ -668,6 +668,15 @@ void simd_test_hirschberg()
   simd_hb_check(seqa, seqb, &scoring, scalar, striped);
   simd_hb_check(seqb, seqa, &scoring, scalar, striped);
 
+  // Huge gap_open with gap_extend 0: two gaps score below the SIMD
+  // sentinel, which used to make the lazy F loop run forever, but nothing
+  // overflows. Must fall back to the scalar passes
+  memset(seqa, 'a', 32); seqa[32] = 0;
+  memset(seqb, 'c', 32); seqb[32] = 0;
+  scoring_init(&scoring, 0, 0, -300000000, 0, false, false, false, false,
+               false, true);
+  simd_hb_check(seqa, seqb, &scoring, scalar, striped);
+
   // Every SIMD row pass matched the scalar one exactly
   ASSERT(hirschberg_striped_mismatches == 0);
 

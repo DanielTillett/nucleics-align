@@ -211,10 +211,12 @@ void align(const char *seq_a, const char *seq_b,
   size_t right_spaces_a = 0, right_spaces_b = 0;
 
 
+  // Check the hit limit before fetching: finding a hit that would not be
+  // printed can mean following many rejected paths
   while(get_next_hit() &&
-        smith_waterman_fetch(sw, result) && result->score >= cmd->min_score &&
         (!cmd->max_hits_per_alignment_set ||
-         hit_index < cmd->max_hits_per_alignment))
+         hit_index < cmd->max_hits_per_alignment) &&
+        smith_waterman_fetch(sw, result) && result->score >= cmd->min_score)
   {
     printf("hit %zu.%zu score: %i\n", alignment_index, hit_index++, result->score);
 

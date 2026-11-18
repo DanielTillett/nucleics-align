@@ -37,6 +37,7 @@ typedef struct
   size_t pos; // next position to write in out_a, out_b
 #ifdef HB_STRIPED
   void *vbuf; // striped rows and score profile, see hb_pass_striped()
+  bool simd_ok; // all scores far enough from HB_NEG and overflow
 #endif
 } hb_state_t;
 
@@ -306,7 +307,7 @@ static void hb_diff(hb_state_t *st, const char *a, const char *b,
   #ifdef HB_STRIPED
   // Building the score profile costs O(n x alphabet), so only use SIMD on
   // sub-problems with enough rows to pay for it
-  if(alignment_striped_enabled && g <= 0 && h <= 0 &&
+  if(alignment_striped_enabled && st->simd_ok && g <= 0 && h <= 0 &&
      n >= 2*ALN_VL && m >= 32 && m >= 2*st->table.n)
   {
     hb_pass_striped(st, a, 1, imid, b, 1, n, tb, cc, dd, 1);
@@ -420,6 +421,22 @@ bool hirschberg_align2(const char *a, const char *b,
 #ifdef HB_STRIPED
   // Three striped rows plus a profile row per character code
   size_t seg = (len_b + ALN_VL - 1) / ALN_VL + 1;
+  // HB_NEG must stay below every real score, with room to add penalties.
+  // No path through the matrices (including padding columns) has more than
+  // len_a + len_b + ALN_VL steps, each scoring at most |gap_open| +
+  // |gap_extend| or the largest substitution score in magnitude. Beyond a
+  // conservative bound use the scalar passes
+  {
+    #define HB_DABS(x) ((x) < 0 ? -(double)(x) : (double)(x))
+    double gap = HB_DABS(scoring->gap_open) + HB_DABS(scoring->gap_extend);
+    double sub = 0;
+    size_t c;
+    for(c = 0; c < st.table.n * st.table.n; c++)
+      sub = MAX2(sub, HB_DABS(st.table.scores[c]));
+    double steps = (double)len_a + (double)len_b + ALN_VL + 2;
+    st.simd_ok = steps * (gap + sub) < (double)(1 << 27);
+  }
+
   st.vbuf = aligned_alloc(sizeof(vscore_t),
                           (3 + st.table.n) * seg * sizeof(vscore_t));
   if(st.vbuf == NULL) {

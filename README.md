@@ -106,7 +106,7 @@ version gives identical scores and alignments.
 | Needleman-Wunsch, 5 kb DNA | 0.252 s | 0.083 s | 0.069 s |
 | Needleman-Wunsch, 2 kb protein (BLOSUM62) | 0.031 s | 0.011 s | 0.007 s |
 | Linear space (`--linear`), 5 kb DNA | n/a | 0.076 s | 0.042 s |
-| Smith-Waterman, 3 kb DNA, best 20 hits | 0.636 s | 0.122 s | 0.114 s |
+| Smith-Waterman, 3 kb DNA, best 20 hits | 0.636 s | 0.116 s | 0.108 s |
 
 Timings vary by a few per cent between runs.
 

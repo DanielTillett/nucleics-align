@@ -323,6 +323,13 @@ static char _follow_hit(sw_aligner_t* sw, size_t arr_index,
 
     //printf(" %i (%i, %i)\n", length, score_x, score_y);
 
+    // The current matrix fixes which cell comes next, so check it before
+    // working out the move: most rejected walks stop after a step or two
+    size_t next = arr_index - (curr_matrix == GAP_B ? 1 :
+                               curr_matrix == GAP_A ? aligner->score_width :
+                                                      aligner->score_width + 1);
+    if(bitset32_get(hist->match_scores_mask.b, next)) return 0;
+
     // Find out where to go next
     _sw_reverse_move(sw, &curr_matrix, &curr_score,
                      &score_x, &score_y, &arr_index);
