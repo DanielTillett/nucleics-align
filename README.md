@@ -53,9 +53,13 @@ Build options:
     $ make NATIVE=1                       # tune for this CPU (e.g. AVX2)
     $ make DEBUG=1                        # no optimisation, debug symbols
 
-`NATIVE=1` adds `-march=native`, which lets the SIMD fill use 8-lane AVX2 on
-x86 (4-lane SSE2 or NEON otherwise). Binaries built this way may not run on
-other CPUs.
+`NATIVE=1` adds `-march=native`, which lets the SIMD code use 8-lane AVX2 on
+x86 (4 lanes otherwise). Binaries built this way may not run on other CPUs.
+A plain x86-64 build targets SSE2, which has no vector max instruction for
+32-bit integers, so it only uses SIMD for the Needleman-Wunsch/Smith-Waterman
+fill; the linear-space aligner needs SSE4.1, AVX2 or ARM NEON (e.g. Apple
+silicon, where it is on by default). `make OPT="-O3 -msse4.1"` is a portable
+middle ground for x86 CPUs from the last 15 years.
 
 To update:
 
@@ -83,9 +87,9 @@ The main entry points are:
 * `scoring_init()` and the `scoring_system_*()` functions
   (`src/alignment_scoring.h`): set up a scoring system
 
-`alignment_striped_enabled` (`src/alignment.h`, default true) switches the
-SIMD fill off, for testing or comparison. It gives exactly the same matrices
-as the scalar fill.
+`alignment_striped_enabled` (`src/alignment.h`, default true) switches SIMD
+off in both the matrix fill and the linear-space aligner, for testing or
+comparison; results are exactly the same either way.
 
 See `examples/` for complete C and C++ programs.
 
@@ -99,18 +103,20 @@ version gives identical scores and alignments.
 
 | Workload | Before | Now | Now, `NATIVE=1` |
 |---|---|---|---|
-| Needleman-Wunsch, 5 kb DNA | 0.252 s | 0.097 s | 0.063 s |
+| Needleman-Wunsch, 5 kb DNA | 0.252 s | 0.083 s | 0.069 s |
 | Needleman-Wunsch, 2 kb protein (BLOSUM62) | 0.031 s | 0.011 s | 0.007 s |
-| Linear space (`--linear`), 5 kb DNA | n/a | 0.077 s | 0.077 s |
-| Smith-Waterman, 3 kb DNA, best 20 hits | 0.636 s | 0.127 s | 0.119 s |
+| Linear space (`--linear`), 5 kb DNA | n/a | 0.076 s | 0.042 s |
+| Smith-Waterman, 3 kb DNA, best 20 hits | 0.636 s | 0.122 s | 0.114 s |
+
+Timings vary by a few per cent between runs.
 
 Time and peak memory for one global alignment (`needleman_wunsch
 --printscores`, whole program):
 
-| Sequences | Full matrices | `--linear` |
-|---|---|---|
-| 5 kb | 0.24 s, 289 MB | 0.07 s, 2 MB |
-| 20 kb | 4.8 s, 4.6 GB | 1.2 s, 2 MB |
+| Sequences | Full matrices | `--linear` | `--linear`, `NATIVE=1` |
+|---|---|---|---|
+| 5 kb | 0.16 s, 289 MB | 0.07 s, 2 MB | 0.04 s, 2 MB |
+| 20 kb | 4.2 s, 4.6 GB | 1.16 s, 2 MB | 0.65 s, 3 MB |
 
 Where the speed comes from:
 * A substitution score table for the characters in the two sequences replaces
@@ -119,6 +125,12 @@ Where the speed comes from:
   Bioinformatics 23:156-161), written with GCC/clang vector extensions so it
   builds on x86 and ARM. Options that change the recurrence for particular
   cells (free end gaps, `--nogaps..`, `--nomismatches`) use the scalar fill
+* The linear-space aligner's forward and reverse passes use the same striped
+  layout, with Farrar's lazy F loop carrying insertion gaps across segment
+  boundaries. Its rows match the scalar passes exactly, so the alignment is
+  unchanged. Used where the CPU has a vector max instruction (see Build), on
+  sub-problems large enough to repay building the score profile, and with
+  gap penalties of zero or less
 * Smith-Waterman hits are ordered with a counting sort on score instead of a
   comparison sort of every cell. Tied hits are ordered by position in the
   first sequence, then the second, on every platform
@@ -412,10 +424,10 @@ Done:
 * Hirschberg's linear-space algorithm with the affine-gap extension of
   Myers & Miller (1988, Comput Appl Biosci 4:11-17): `hirschberg_align()`
   and `needleman_wunsch --linear`
-* Striped SIMD matrix fill (Farrar 2007, Bioinformatics 23:156-161)
+* Striped SIMD matrix fill (Farrar 2007, Bioinformatics 23:156-161), for
+  the full matrices and the linear-space aligner
 
 Algorithms to investigate:
-* SIMD for the linear-space aligner, which still uses a scalar loop
 * Myers' bit-vector algorithm (1999, J ACM 46:395-415). Only computes unit
   cost edit distance, so it would be a separate fast path rather than a
   replacement for the scored aligners

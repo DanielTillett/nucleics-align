@@ -612,9 +612,73 @@ void simd_test_directional_pairs()
   needleman_wunsch_free(nw);
 }
 
+/* Linear-space alignment must give the same alignment with or without SIMD */
+static void simd_hb_check(const char *a, const char *b,
+                          const scoring_t *scoring,
+                          alignment_t *scalar, alignment_t *striped)
+{
+  alignment_striped_enabled = false;
+  ASSERT(hirschberg_align(a, b, scoring, scalar));
+  alignment_striped_enabled = true;
+  hirschberg_check_striped = true;
+  ASSERT(hirschberg_align(a, b, scoring, striped));
+  hirschberg_check_striped = false;
+  ASSERT(scalar->score == striped->score);
+  ASSERT(strcmp(scalar->result_a, striped->result_a) == 0);
+  ASSERT(strcmp(scalar->result_b, striped->result_b) == 0);
+}
+
+void simd_test_hirschberg()
+{
+  alignment_t *scalar = alignment_create(256), *striped = alignment_create(256);
+  static char seqa[801], seqb[801];
+  scoring_t scoring;
+  size_t i;
+
+  for(i = 0; i < 400; i++)
+  {
+    // Includes gap_open/gap_extend of 0, and positive values (scalar only)
+    int gap_open = (int)hb_rand(13) - (i % 5 ? 11 : 1);
+    int gap_extend = (int)hb_rand(6) - (i % 7 ? 5 : 1);
+    scoring_init(&scoring, 1 + (int)hb_rand(5), -(int)hb_rand(16),
+                 gap_open, gap_extend, false, false, false, false,
+                 false, false);
+    if(hb_rand(2)) scoring_add_wildcard(&scoring, 'n', 0);
+
+    // Lengths either side of the thresholds for using SIMD
+    unsigned int max_a = i % 3 ? 801 : 70, max_b = i % 4 ? 801 : 20;
+    hb_rand_seq(seqa, hb_rand(max_a), "acgtn");
+    hb_rand_seq(seqb, hb_rand(max_b), "ACgtN");
+    simd_hb_check(seqa, seqb, &scoring, scalar, striped);
+  }
+
+  scoring_system_BLOSUM62(&scoring);
+  for(i = 0; i < 100; i++)
+  {
+    hb_rand_seq(seqa, hb_rand(801), "ARNDCQEGHILKMFPSTWYV");
+    hb_rand_seq(seqb, hb_rand(801), "ARNDCQEGHILKMFPSTWYV");
+    simd_hb_check(seqa, seqb, &scoring, scalar, striped);
+  }
+
+  // Mismatches far worse than gaps: insertions carried through whole segments
+  memset(seqa, 'a', 300); seqa[300] = 0;
+  memset(seqb, 'c', 40); seqb[40] = 0;
+  scoring_init(&scoring, 1, -20, -2, -1, false, false, false, false,
+               false, true);
+  simd_hb_check(seqa, seqb, &scoring, scalar, striped);
+  simd_hb_check(seqb, seqa, &scoring, scalar, striped);
+
+  // Every SIMD row pass matched the scalar one exactly
+  ASSERT(hirschberg_striped_mismatches == 0);
+
+  alignment_free(scalar);
+  alignment_free(striped);
+}
+
 void test_simd()
 {
   SUITE_START("Striped SIMD fill");
+  simd_test_hirschberg();
   simd_test_matches_scalar();
   simd_test_odd_penalties();
   simd_test_directional_pairs();

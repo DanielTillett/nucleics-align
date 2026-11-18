@@ -31,6 +31,11 @@ bool hirschberg_align2(const char *a, const char *b,
                        size_t len_a, size_t len_b,
                        const scoring_t *scoring, alignment_t *result);
 
+// Testing aid: when true, each SIMD pass is redone without SIMD and
+// hirschberg_striped_mismatches counts any row that differs
+extern bool hirschberg_check_striped;
+extern size_t hirschberg_striped_mismatches;
+
 // Score an alignment as needleman_wunsch_align() would
 score_t hirschberg_score_alignment(const char *result_a, const char *result_b,
                                    const scoring_t *scoring);

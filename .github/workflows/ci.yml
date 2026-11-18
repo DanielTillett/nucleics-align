@@ -12,10 +12,22 @@ jobs:
         os: [ubuntu-latest, macos-latest]
         cc: [gcc, clang]
         sanitize: ['', '1']
+        native: ['']
         exclude:
           # gcc on macOS is an alias for Apple clang
           - os: macos-latest
             cc: gcc
+        include:
+          # -march=native: exercises the SIMD paths that need SSE4.1/AVX2
+          # (plain x86-64 builds use the scalar linear-space aligner)
+          - os: ubuntu-latest
+            cc: gcc
+            sanitize: '1'
+            native: '1'
+          - os: ubuntu-latest
+            cc: clang
+            sanitize: ''
+            native: '1'
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -25,4 +37,4 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y zlib1g-dev
       - name: Build and test
-        run: make CC=${{ matrix.cc }} ${{ matrix.sanitize && 'SANITIZE=1' || '' }} all test
+        run: make CC=${{ matrix.cc }} ${{ matrix.sanitize && 'SANITIZE=1' || '' }} ${{ matrix.native && 'NATIVE=1' || '' }} all test
