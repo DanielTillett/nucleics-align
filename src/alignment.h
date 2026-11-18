@@ -40,6 +40,16 @@ typedef struct
   score_t score;
 } alignment_t;
 
+// Substitution scores for every pair of characters present in two
+// sequences, so DP inner loops do an array load instead of scoring_lookup()
+typedef struct
+{
+  unsigned char code[256]; // byte -> row/column in scores
+  size_t n; // number of distinct bytes
+  int *scores; // scores[code_b*n + code_a]
+  bool *is_match;
+} sub_table_t;
+
 // Matrix names
 enum Matrix { MATCH,GAP_A,GAP_B };
 
@@ -59,6 +69,11 @@ void aligner_align(aligner_t *aligner,
                    size_t len_a, size_t len_b,
                    const scoring_t *scoring, char is_sw);
 void aligner_destroy(aligner_t *aligner);
+
+void sub_table_build(sub_table_t *t, const scoring_t *scoring,
+                     const char *a, size_t len_a,
+                     const char *b, size_t len_b);
+void sub_table_free(sub_table_t *t);
 
 // Constructors/Destructors for alignment
 alignment_t* alignment_create(size_t capacity);

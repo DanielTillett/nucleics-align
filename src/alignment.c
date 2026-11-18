@@ -35,6 +35,42 @@ static inline void alignment_no_gaps(const scoring_t *scoring,
                   (scoring->no_gaps_in_longest && len_a < len_b);
 }
 
+void sub_table_build(sub_table_t *t, const scoring_t *scoring,
+                            const char *a, size_t len_a,
+                            const char *b, size_t len_b)
+{
+  bool seen[256] = {false};
+  unsigned char bytes[256];
+  size_t i, j;
+
+  for(i = 0; i < len_a; i++) seen[(unsigned char)a[i]] = true;
+  for(i = 0; i < len_b; i++) seen[(unsigned char)b[i]] = true;
+
+  for(i = 0, t->n = 0; i < 256; i++) {
+    t->code[i] = 0;
+    if(seen[i]) { t->code[i] = (unsigned char)t->n; bytes[t->n++] = (unsigned char)i; }
+  }
+
+  size_t cells = t->n * t->n + 1;
+  t->scores = malloc(cells * sizeof(int));
+  t->is_match = malloc(cells * sizeof(bool));
+  if(t->scores == NULL || t->is_match == NULL) {
+    fprintf(stderr, "%s:%i: Out of memory\n", __FILE__, __LINE__);
+    exit(EXIT_FAILURE);
+  }
+
+  for(j = 0; j < t->n; j++)
+    for(i = 0; i < t->n; i++)
+      scoring_lookup(scoring, (char)bytes[i], (char)bytes[j],
+                     &t->scores[j*t->n+i], &t->is_match[j*t->n+i]);
+}
+
+void sub_table_free(sub_table_t *t)
+{
+  free(t->scores);
+  free(t->is_match);
+}
+
 // Fill in traceback matrix
 static void alignment_fill_matrices(aligner_t *aligner, char is_sw)
 {
@@ -61,6 +97,10 @@ static void alignment_fill_matrices(aligner_t *aligner, char is_sw)
   bool no_gaps_in_a, no_gaps_in_b;
   alignment_no_gaps(scoring, len_i, len_j, &no_gaps_in_a, &no_gaps_in_b);
   size_t index, index_left, index_up, index_upleft;
+
+  sub_table_t table;
+  sub_table_build(&table, scoring, aligner->seq_a, len_i,
+                  aligner->seq_b, len_j);
 
   // [0][0]
   match_scores[0] = 0;
@@ -107,15 +147,17 @@ static void alignment_fill_matrices(aligner_t *aligner, char is_sw)
 
   for(seq_j = 0; seq_j < len_j; seq_j++)
   {
+    size_t row = table.code[(unsigned char)aligner->seq_b[seq_j]] * table.n;
+    const int *sub_row = table.scores + row;
+    const bool *match_row = table.is_match + row;
+
     for(seq_i = 0; seq_i < len_i; seq_i++)
     {
       // Update match_scores[i][j] with position [i-1][j-1]
       // substitution penalty
-      bool is_match;
-      int substitution_penalty;
-
-      scoring_lookup(scoring, aligner->seq_a[seq_i], aligner->seq_b[seq_j],
-                     &substitution_penalty, &is_match);
+      unsigned char code_a = table.code[(unsigned char)aligner->seq_a[seq_i]];
+      bool is_match = match_row[code_a];
+      int substitution_penalty = sub_row[code_a];
 
       if(scoring->no_mismatches && !is_match)
       {
@@ -127,10 +169,11 @@ static void alignment_fill_matrices(aligner_t *aligner, char is_sw)
         // 1) continue alignment
         // 2) close gap in seq_a
         // 3) close gap in seq_b
+        // max(x+s, y+s, z+s) == max(x,y,z)+s, with one add instead of three
         match_scores[index]
-          = MAX4(match_scores[index_upleft] + substitution_penalty,
-                 gap_a_scores[index_upleft] + substitution_penalty,
-                 gap_b_scores[index_upleft] + substitution_penalty,
+          = MAX2(MAX3(match_scores[index_upleft],
+                      gap_a_scores[index_upleft],
+                      gap_b_scores[index_upleft]) + substitution_penalty,
                  min);
       }
 
@@ -147,9 +190,9 @@ static void alignment_fill_matrices(aligner_t *aligner, char is_sw)
       else if(!no_gaps_in_a || seq_i == len_i-1)
       {
         gap_a_scores[index]
-          = MAX4(match_scores[index_up] + gap_open_penalty,
+          = MAX3(MAX2(match_scores[index_up],
+                      gap_b_scores[index_up]) + gap_open_penalty,
                  gap_a_scores[index_up] + gap_extend_penalty,
-                 gap_b_scores[index_up] + gap_open_penalty,
                  min);
       }
       else
@@ -165,8 +208,8 @@ static void alignment_fill_matrices(aligner_t *aligner, char is_sw)
       else if(!no_gaps_in_b || seq_j == len_j-1)
       {
         gap_b_scores[index]
-          = MAX4(match_scores[index_left] + gap_open_penalty,
-                 gap_a_scores[index_left] + gap_open_penalty,
+          = MAX3(MAX2(match_scores[index_left],
+                      gap_a_scores[index_left]) + gap_open_penalty,
                  gap_b_scores[index_left] + gap_extend_penalty,
                  min);
       }
@@ -184,6 +227,8 @@ static void alignment_fill_matrices(aligner_t *aligner, char is_sw)
     index_up++;
     index_upleft++;
   }
+
+  sub_table_free(&table);
 }
 
 void aligner_align(aligner_t *aligner,

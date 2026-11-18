@@ -21,6 +21,9 @@
 typedef struct
 {
   const scoring_t *scoring;
+  sub_table_t table;
+  const char *b; // whole of seq b, to index row_b
+  size_t *row_b; // table row offset for each character of b
   score_t *cc, *dd, *rr, *ss; // forward and reverse rows, len_b+1 each
   char *out_a, *out_b;
   size_t pos; // next position to write in out_a, out_b
@@ -111,8 +114,13 @@ static void hb_diff(hb_state_t *st, const char *a, const char *b,
   for(j = 1; j <= n; j++) { t += h; cc[j] = t; dd[j] = t + g; }
 
   t = tb;
+  // Substitution scores: column of the table for a[i], row for each b[j]
+  const int *col;
+  const size_t *row_b = st->row_b + (b - st->b);
+
   for(i = 1; i <= imid; i++)
   {
+    col = st->table.scores + st->table.code[(unsigned char)a[i-1]];
     s = cc[0];
     t += h;
     c = t;
@@ -122,7 +130,7 @@ static void hb_diff(hb_state_t *st, const char *a, const char *b,
     {
       e = MAX2(e, c + g) + h;
       dd[j] = MAX2(dd[j], cc[j] + g) + h;
-      c = MAX3(dd[j], e, s + hb_sub(scoring, a[i-1], b[j-1]));
+      c = MAX3(dd[j], e, s + col[row_b[j-1]]);
       s = cc[j];
       cc[j] = c;
     }
@@ -138,6 +146,7 @@ static void hb_diff(hb_state_t *st, const char *a, const char *b,
   t = te;
   for(i = m; i-- > imid; )
   {
+    col = st->table.scores + st->table.code[(unsigned char)a[i]];
     s = rr[n];
     t += h;
     c = t;
@@ -147,7 +156,7 @@ static void hb_diff(hb_state_t *st, const char *a, const char *b,
     {
       e = MAX2(e, c + g) + h;
       ss[j] = MAX2(ss[j], rr[j] + g) + h;
-      c = MAX3(ss[j], e, s + hb_sub(scoring, a[i], b[j]));
+      c = MAX3(ss[j], e, s + col[row_b[j]]);
       s = rr[j];
       rr[j] = c;
     }
@@ -241,6 +250,17 @@ bool hirschberg_align2(const char *a, const char *b,
     fprintf(stderr, "%s:%i: Out of memory\n", __FILE__, __LINE__);
     exit(EXIT_FAILURE);
   }
+  sub_table_build(&st.table, scoring, a, len_a, b, len_b);
+  st.b = b;
+  st.row_b = malloc((len_b+1) * sizeof(size_t));
+  if(st.row_b == NULL) {
+    fprintf(stderr, "%s:%i: Out of memory\n", __FILE__, __LINE__);
+    exit(EXIT_FAILURE);
+  }
+  size_t j;
+  for(j = 0; j < len_b; j++)
+    st.row_b[j] = st.table.code[(unsigned char)b[j]] * st.table.n;
+
   st.cc = rows;
   st.dd = rows + (len_b+1);
   st.rr = rows + 2*(len_b+1);
@@ -248,6 +268,8 @@ bool hirschberg_align2(const char *a, const char *b,
 
   hb_diff(&st, a, b, len_a, len_b, scoring->gap_open, scoring->gap_open);
   free(rows);
+  free(st.row_b);
+  sub_table_free(&st.table);
 
   result->result_a[st.pos] = '\0';
   result->result_b[st.pos] = '\0';

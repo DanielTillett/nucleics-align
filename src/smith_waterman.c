@@ -164,16 +164,45 @@ void smith_waterman_align2(const char *a, const char *b,
   // Set number of hits
   hist->num_of_hits = hist->next_hit = 0;
 
-  size_t pos;
-  for(pos = 0; pos < arr_size; pos++) {
-    if(aligner->match_scores[pos] > 0)
-      hist->sorted_match_indices[hist->num_of_hits++] = pos;
+  const score_t *scores = aligner->match_scores;
+  size_t pos, x, y, w = aligner->score_width, h = aligner->score_height;
+  score_t max_score = 0;
+  for(pos = 0; pos < arr_size; pos++)
+    if(scores[pos] > max_score) max_score = scores[pos];
+
+  // Order cells by score (highest first), then position in seq_a, then seq_b.
+  // Scores are bounded integers, so a counting sort replaces the comparison
+  // sort; it also makes the order of tied hits the same on every platform
+  size_t *starts = calloc((size_t)max_score + 2, sizeof(size_t));
+
+  if(starts == NULL || (size_t)max_score > arr_size)
+  {
+    free(starts);
+    for(pos = 0; pos < arr_size; pos++) {
+      if(scores[pos] > 0)
+        hist->sorted_match_indices[hist->num_of_hits++] = pos;
+    }
+    MatrixSort tmp_struct = {aligner->match_scores, aligner->score_width};
+    sort_r(hist->sorted_match_indices, hist->num_of_hits,
+           sizeof(size_t), sort_match_indices, &tmp_struct);
+    return;
   }
 
-  // Now sort matched hits
-  MatrixSort tmp_struct = {aligner->match_scores, aligner->score_width};
-  sort_r(hist->sorted_match_indices, hist->num_of_hits,
-         sizeof(size_t), sort_match_indices, &tmp_struct);
+  // starts[s] = number of cells scoring more than s
+  for(pos = 0; pos < arr_size; pos++)
+    if(scores[pos] > 0) starts[scores[pos]]++;
+  size_t total = 0, count;
+  score_t s;
+  for(s = max_score; s > 0; s--) { count = starts[s]; starts[s] = total; total += count; }
+  hist->num_of_hits = total;
+
+  // Column-major pass so ties are ordered by x, then y
+  for(x = 0; x < w; x++)
+    for(y = 0, pos = x; y < h; y++, pos += w)
+      if(scores[pos] > 0)
+        hist->sorted_match_indices[starts[scores[pos]]++] = pos;
+
+  free(starts);
 }
 
 // Return 1 if alignment was found, 0 otherwise
