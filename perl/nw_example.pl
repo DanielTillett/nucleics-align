@@ -2,7 +2,7 @@
 
 # perl/nw_example.pl
 # url: https://github.com/DanielTillett/seq-align
-# original original author: Isaac Turner <turner.isaac@gmail.com>
+# original author: Isaac Turner <turner.isaac@gmail.com>
 # license: BSD 3-Clause, see LICENSE
 # date: Oct 2012
 

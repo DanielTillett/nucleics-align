@@ -1,7 +1,7 @@
 /*
  alignment.c
  url: https://github.com/DanielTillett/seq-align
- original original author: Isaac Turner <turner.isaac@gmail.com>
+ original author: Isaac Turner <turner.isaac@gmail.com>
  license: BSD 3-Clause, see LICENSE
  date: Feb 2015
  */
@@ -9,11 +9,16 @@
 // Turn on debugging output by defining SEQ_ALIGN_VERBOSE
 //#define SEQ_ALIGN_VERBOSE
 
+#define _DEFAULT_SOURCE // madvise
+
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 #include <ctype.h> // tolower
 #include <assert.h>
+#ifdef __linux__
+#  include <sys/mman.h> // madvise
+#endif
 
 #include "alignment.h"
 #include "alignment_macros.h"
@@ -385,6 +390,24 @@ static void alignment_fill_matrices(aligner_t *aligner, char is_sw)
   sub_table_free(&table);
 }
 
+// Allocate memory for one score matrix. On Linux, large matrices are 2 MB
+// aligned and marked for transparent huge pages: with 4 KB pages a 5 kb x
+// 5 kb alignment takes ~72,000 page faults and many TLB misses, with huge
+// pages ~320 (whole program 0.14 -> 0.08 s; repeated alignments ~30% faster)
+static score_t* alignment_alloc_matrix(size_t mem)
+{
+#ifdef __linux__
+  const size_t huge = (size_t)2 << 20;
+  if(mem >= huge) {
+    mem = (mem + huge - 1) / huge * huge; // aligned_alloc needs a multiple
+    score_t *ptr = aligned_alloc(huge, mem);
+    if(ptr != NULL) madvise(ptr, mem, MADV_HUGEPAGE); // only a hint
+    return ptr;
+  }
+#endif
+  return malloc(mem);
+}
+
 void aligner_align(aligner_t *aligner,
                    const char *seq_a, const char *seq_b,
                    size_t len_a, size_t len_b,
@@ -407,9 +430,13 @@ void aligner_align(aligner_t *aligner,
   {
     aligner->capacity = ROUNDUP2POW(new_capacity);
     size_t mem = sizeof(score_t) * aligner->capacity;
-    aligner->match_scores = realloc(aligner->match_scores, mem);
-    aligner->gap_a_scores = realloc(aligner->gap_a_scores, mem);
-    aligner->gap_b_scores = realloc(aligner->gap_b_scores, mem);
+    // The fill overwrites every cell it uses, so old contents are not kept
+    free(aligner->match_scores);
+    free(aligner->gap_a_scores);
+    free(aligner->gap_b_scores);
+    aligner->match_scores = alignment_alloc_matrix(mem);
+    aligner->gap_a_scores = alignment_alloc_matrix(mem);
+    aligner->gap_b_scores = alignment_alloc_matrix(mem);
     if(!aligner->match_scores || !aligner->gap_a_scores || !aligner->gap_b_scores) {
       fprintf(stderr, "%s:%i: Out of memory\n", __FILE__, __LINE__);
       exit(EXIT_FAILURE);

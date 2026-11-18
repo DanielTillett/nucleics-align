@@ -114,10 +114,10 @@ version gives identical scores and alignments.
 
 | Workload | Before | Now | Now, `NATIVE=1` |
 |---|---|---|---|
-| Needleman-Wunsch, 5 kb DNA | 0.252 s | 0.067 s | 0.060 s |
-| Needleman-Wunsch, 2 kb protein (BLOSUM62) | 0.031 s | 0.007 s | 0.007 s |
-| Linear space (`--linear`), 5 kb DNA | n/a | 0.031 s | 0.026 s |
-| Smith-Waterman, 3 kb DNA, best 20 hits | 0.636 s | 0.109 s | 0.103 s |
+| Needleman-Wunsch, 5 kb DNA | 0.252 s | 0.046 s | 0.045 s |
+| Needleman-Wunsch, 2 kb protein (BLOSUM62) | 0.031 s | 0.005 s | 0.005 s |
+| Linear space (`--linear`), 5 kb DNA | n/a | 0.030 s | 0.026 s |
+| Smith-Waterman, 3 kb DNA, best 20 hits | 0.636 s | 0.096 s | 0.094 s |
 
 Timings vary by a few per cent between runs.
 
@@ -126,8 +126,11 @@ Time and peak memory for one global alignment (`needleman_wunsch
 
 | Sequences | Full matrices | `--linear` | `--scoreonly` |
 |---|---|---|---|
-| 5 kb | 0.16 s, 289 MB | 0.03 s, 2 MB | 0.02 s, 2 MB |
-| 20 kb | 4.2 s, 4.6 GB | 0.41 s, 3 MB | 0.30 s, 3 MB |
+| 5 kb | 0.05-0.15 s, 289 MB | 0.03 s, 2 MB | 0.02 s, 2 MB |
+| 20 kb | 0.8-2.5 s, 4.6 GB | 0.41 s, 3 MB | 0.30 s, 3 MB |
+
+Full-matrix times vary most: the first run after others have freed memory is
+the slowest, while the kernel finds and clears huge pages.
 
 With `NATIVE=1`, 20 kb takes 0.35 s with `--linear` and 0.23 s with
 `--scoreonly`.
@@ -151,6 +154,9 @@ Where the speed comes from:
   penalties of zero or less, and while every score stays far from 32-bit
   overflow. The forward and reverse passes of large sub-problems run on two
   threads
+* On Linux the score matrices are allocated for transparent huge pages:
+  page faults for a 5 kb x 5 kb alignment fall from ~72,000 to ~320, and
+  fewer TLB misses speed up the fill itself (5 kb NW 0.060 -> 0.046 s)
 * `--scoreonly` (`hirschberg_score()`) runs only the forward pass over every
   row: no alignment, no matrices
 * On x86-64 Linux the SIMD code is compiled for several CPU levels and the
