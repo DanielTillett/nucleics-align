@@ -80,6 +80,12 @@ void sub_table_free(sub_table_t *t);
 // same matrices as the scalar fill; turning it off is for tests/benchmarks
 extern bool alignment_striped_enabled;
 
+// Large striped fills split the columns into blocks, one thread each: at
+// least alignment_block_min_cells cells and alignment_block_min_cols columns
+// per block, on up to alignment_max_threads threads (0: half the CPUs)
+extern size_t alignment_block_min_cells, alignment_block_min_cols;
+extern int alignment_max_threads;
+
 // Constructors/Destructors for alignment
 alignment_t* alignment_create(size_t capacity);
 void alignment_ensure_capacity(alignment_t* result, size_t strlength);

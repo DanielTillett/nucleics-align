@@ -102,7 +102,10 @@ Link against `src/libalign.a` (and `libs/string_buffer/libstrbuf.a`, `-lz`,
 
 `alignment_striped_enabled` (`src/alignment.h`, default true) switches SIMD
 off in both the matrix fill and the linear-space aligner, for testing or
-comparison; results are exactly the same either way.
+comparison; results are exactly the same either way. Large full-matrix fills
+are split into column blocks on several threads, tunable with
+`alignment_block_min_cells`, `alignment_block_min_cols` and
+`alignment_max_threads`.
 
 See `examples/` for complete C and C++ programs.
 
@@ -128,15 +131,14 @@ Time and peak memory for one global alignment (`needleman_wunsch
 
 | Sequences | Full matrices | `--linear` | `--scoreonly` |
 |---|---|---|---|
-| 5 kb | 0.05-0.15 s, 289 MB | 0.02 s, 2 MB | <0.01 s, 2 MB |
-| 20 kb | 0.8-2.5 s, 4.6 GB | 0.19 s, 2 MB | 0.04 s, 2 MB |
+| 5 kb | 0.03-0.15 s, 289 MB | 0.02 s, 2 MB | <0.01 s, 2 MB |
+| 20 kb | 0.35-2.5 s, 4.6 GB | 0.19 s, 2 MB | 0.04 s, 2 MB |
 | 50 kb | not run (needs ~30 GB) | 0.83 s, 10 MB | 0.22 s, 7 MB |
 
 Full-matrix times vary most: the first run after others have freed memory is
 the slowest, while the kernel finds and clears huge pages.
 
-Measured on 32 CPUs; `--linear` and `--scoreonly` use up to half of them per
-pass. Threads wait for each other by spinning, so CPU time is several times
+Measured on 32 CPUs; large fills and passes use up to half of them. Threads wait for each other by spinning, so CPU time is several times
 the wall time (50 kb `--linear`: 0.8 s wall, ~9 s CPU).
 
 The command line tools align one pair at a time. Splitting a batch across
@@ -162,6 +164,10 @@ Where the speed comes from:
   its last column's score and the insertion gap leaving it, so the result is
   the same as one thread. The forward and reverse passes also run at the
   same time (20 kb `--linear` 0.79 -> 0.19 s, `--scoreonly` 0.30 -> 0.04 s)
+* The full-matrix striped fill is split into column blocks the same way,
+  each block reading its left neighbour's last column straight from the
+  matrices (20 kb Needleman-Wunsch 0.78 -> 0.35 s). Smith-Waterman gains less
+  (20 kb 6.6 -> 6.2 s), as most of its time goes on finding hits
 * On Linux the score matrices are allocated for transparent huge pages:
   page faults for a 5 kb x 5 kb alignment fall from ~72,000 to ~320, and
   fewer TLB misses speed up the fill itself (5 kb NW 0.060 -> 0.046 s)

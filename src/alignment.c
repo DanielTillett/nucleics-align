@@ -16,6 +16,10 @@
 #include <string.h>
 #include <ctype.h> // tolower
 #include <assert.h>
+#include <pthread.h>
+#include <sched.h> // sched_yield
+#include <stdatomic.h>
+#include <unistd.h> // sysconf
 #ifdef __linux__
 #  include <sys/mman.h> // madvise
 #endif
@@ -104,18 +108,41 @@ void sub_table_free(sub_table_t *t)
 
 bool alignment_striped_enabled = true;
 
+// Column-block threading of the striped fill: blocks of columns run on
+// separate threads, each one row behind the block to its left. Tests lower
+// these
+size_t alignment_block_min_cells = 4000000; // rows x columns
+size_t alignment_block_min_cols = 1024; // columns per block
+int alignment_max_threads = 0; // 0: half the CPUs
+
 #ifdef ALN_STRIPED
 
+// Wait until the block on the left has finished row y
+static inline void alignment_wait_row(atomic_size_t *left_done, size_t y)
+{
+  unsigned spins = 0;
+  while(atomic_load_explicit(left_done, memory_order_acquire) < y)
+    if(++spins > 256) { spins = 0; sched_yield(); }
+}
+
+// Fill the columns of seq_a c0 .. c0+width-1 (matrix columns c0+1 ..
+// c0+width). Matrix column c0 plays the part of column 0: it is the
+// initialised first column for the first block and the last column of the
+// block on the left otherwise. With a left block, row y is only started
+// once left_done reaches y; done is set to y once row y is written
 ALN_TARGET_CLONES
 static void alignment_fill_striped(aligner_t *aligner, const sub_table_t *table,
-                                   score_t min)
+                                   score_t min, size_t c0, size_t width,
+                                   atomic_size_t *left_done,
+                                   atomic_size_t *done)
 {
   const scoring_t *scoring = aligner->scoring;
-  score_t *match_scores = aligner->match_scores;
-  score_t *gap_a_scores = aligner->gap_a_scores;
-  score_t *gap_b_scores = aligner->gap_b_scores;
+  score_t *match_scores = aligner->match_scores + c0;
+  score_t *gap_a_scores = aligner->gap_a_scores + c0;
+  score_t *gap_b_scores = aligner->gap_b_scores + c0;
+  const char *seq_a = aligner->seq_a + c0;
   const size_t w = aligner->score_width;
-  const size_t len_i = w-1, len_j = aligner->score_height-1;
+  const size_t len_i = width, len_j = aligner->score_height-1;
   const size_t seg = (len_i + ALN_VL - 1) / ALN_VL;
   const size_t n = table->n;
   size_t c, k, l, y, i;
@@ -142,7 +169,7 @@ static void alignment_fill_striped(aligner_t *aligner, const sub_table_t *table,
       for(l = 0; l < ALN_VL; l++) {
         i = l*seg + k;
         profile[c*seg+k][l] = i < len_i
-          ? table->scores[c*n + table->code[(unsigned char)aligner->seq_a[i]]]
+          ? table->scores[c*n + table->code[(unsigned char)seq_a[i]]]
           : 0;
       }
     }
@@ -164,11 +191,13 @@ static void alignment_fill_striped(aligner_t *aligner, const sub_table_t *table,
     const vscore_t *prof = profile +
       (size_t)table->code[(unsigned char)aligner->seq_b[y-1]] * seg;
 
-    // Column 0 (already initialised) feeds lane 0 at k = 0
+    // Column 0 (already initialised, or the left block's) feeds lane 0
+    // at k = 0
+    if(left_done != NULL) alignment_wait_row(left_done, y);
     score_t h0_prev = MAX3(match_scores[prev_row], gap_a_scores[prev_row],
                            gap_b_scores[prev_row]);
     score_t x0 = MAX2(match_scores[row], gap_a_scores[row]);
-    score_t b0 = gap_b_scores[row]; // currently always min
+    score_t b0 = gap_b_scores[row]; // min in the real column 0
 
     // match from the diagonal, gap_a from the cell above
     vscore_t vdiag = vshift(vmax(vmax(pM[seg-1], pA[seg-1]), pB[seg-1]),
@@ -206,6 +235,7 @@ static void alignment_fill_striped(aligner_t *aligner, const sub_table_t *table,
         gap_b_scores[row+1+i] = cB[k][l];
       }
     }
+    if(done != NULL) atomic_store_explicit(done, y, memory_order_release);
 
     tmp = pM; pM = cM; cM = tmp;
     tmp = pA; pA = cA; cA = tmp;
@@ -213,6 +243,73 @@ static void alignment_fill_striped(aligner_t *aligner, const sub_table_t *table,
   }
 
   free(buf);
+}
+
+// One column block of the fill, run on its own thread
+typedef struct {
+  aligner_t *aligner; const sub_table_t *table; score_t min;
+  size_t c0, width; atomic_size_t *left_done, *done;
+} alignment_block_t;
+
+static void* alignment_block_thread(void *ptr)
+{
+  alignment_block_t *p = ptr;
+  alignment_fill_striped(p->aligner, p->table, p->min, p->c0, p->width,
+                         p->left_done, p->done);
+  return NULL;
+}
+
+// Striped fill of the whole matrix: as one block, or split into column
+// blocks on several threads when it is big enough
+static void alignment_fill_blocks(aligner_t *aligner, const sub_table_t *table,
+                                  score_t min)
+{
+  const size_t len_i = aligner->score_width-1;
+  const size_t len_j = aligner->score_height-1;
+  size_t nblocks = 1, i;
+
+  int threads = alignment_max_threads;
+  if(threads <= 0) {
+    long cpus = sysconf(_SC_NPROCESSORS_ONLN);
+    threads = cpus > 1 ? (int)(cpus / 2) : 1;
+  }
+  if(threads > 1 && (double)len_i * len_j >= alignment_block_min_cells &&
+     len_i >= 2 * alignment_block_min_cols)
+  {
+    nblocks = MIN2((size_t)threads, len_i / alignment_block_min_cols);
+  }
+
+  if(nblocks <= 1) {
+    alignment_fill_striped(aligner, table, min, 0, len_i, NULL, NULL);
+    return;
+  }
+
+  // Blocks of equal width (a multiple of ALN_VL); the last takes the rest
+  size_t width = (len_i / nblocks) / ALN_VL * ALN_VL;
+  alignment_block_t args[nblocks];
+  atomic_size_t done[nblocks];
+  pthread_t thread_ids[nblocks];
+  bool started[nblocks];
+
+  for(i = 0; i < nblocks; i++) {
+    atomic_init(&done[i], 0);
+    alignment_block_t blk = {aligner, table, min, i * width,
+                             i + 1 < nblocks ? width : len_i - i * width,
+                             i > 0 ? &done[i-1] : NULL,
+                             i + 1 < nblocks ? &done[i] : NULL};
+    args[i] = blk;
+  }
+
+  // Block 0 runs here; the rest on their own threads. A block whose thread
+  // cannot start runs here too, after the blocks to its left
+  for(i = 1; i < nblocks; i++)
+    started[i] = pthread_create(&thread_ids[i], NULL, alignment_block_thread,
+                                &args[i]) == 0;
+  alignment_block_thread(&args[0]);
+  for(i = 1; i < nblocks; i++) {
+    if(started[i]) pthread_join(thread_ids[i], NULL);
+    else alignment_block_thread(&args[i]);
+  }
 }
 
 #endif /* ALN_STRIPED */
@@ -292,7 +389,7 @@ static void alignment_fill_matrices(aligner_t *aligner, char is_sw)
      !scoring->no_end_gap_penalty && !scoring->no_mismatches &&
      !no_gaps_in_a && !no_gaps_in_b)
   {
-    alignment_fill_striped(aligner, &table, min);
+    alignment_fill_blocks(aligner, &table, min);
     sub_table_free(&table);
     return;
   }
