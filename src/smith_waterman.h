@@ -40,6 +40,14 @@ void smith_waterman_align2(const char *seq_a, const char *seq_b,
 // scoring below min_score; lower-scoring cells are just never indexed
 void smith_waterman_set_min_score(sw_aligner_t *sw, score_t min_score);
 
+// For callers that usually want just the best hit (default false): later
+// calls to smith_waterman_align() keep one traceback byte per cell instead
+// of the three score matrices, where the scoring options allow (see
+// aligner_t.compact). The hits are the same. Fetching a second hit fills the
+// matrices then; until it does, the aligner from smith_waterman_get_aligner()
+// has no score matrices if its traced flag is set
+void smith_waterman_set_compact(sw_aligner_t *sw, bool compact);
+
 // An alignment to read from, and a pointer to memory to store the result
 // returns 1 if an alignment was read, 0 otherwise
 int smith_waterman_fetch(sw_aligner_t *sw, alignment_t *result);

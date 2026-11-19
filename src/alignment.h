@@ -10,6 +10,8 @@
 #define ALIGNMENT_HEADER_SEEN
 
 #include <string.h> // memset
+#include <stdint.h>
+#include <stdbool.h>
 #include "alignment_scoring.h"
 
 #ifndef ROUNDUP2POW
@@ -29,6 +31,15 @@ typedef struct
   size_t score_width, score_height; // width=len(seq_a)+1, height=len(seq_b)+1
   score_t *match_scores, *gap_a_scores, *gap_b_scores;
   size_t capacity;
+  // Set compact before aligning to keep one traceback byte per cell instead
+  // of the three score matrices, where the options allow (12x less memory).
+  // traced then says the bytes were made and the matrices were not filled
+  bool compact, traced;
+  uint8_t *trace; // per cell: for matrix m, bits 2m..2m+1 = matrix stepped to
+  size_t trace_capacity;
+  score_t final_scores[3]; // traced: MATCH, GAP_A, GAP_B at the last cell
+  size_t best_index; // traced Smith-Waterman: first cell with best_score
+  score_t best_score;
 } aligner_t;
 
 // Store alignment result here
@@ -55,6 +66,16 @@ typedef struct
 enum Matrix { MATCH,GAP_A,GAP_B };
 
 #define MATRIX_NAME(x) ((x) == MATCH ? "MATCH" : ((x) == GAP_A ? "GAP_A" : "GAP_B"))
+
+// Traceback byte value for a step with no valid predecessor
+#define ALN_TRACE_NONE 3
+
+// Matrix the step back from matrix m at cell index goes to (traced only)
+static inline int alignment_trace_next(const aligner_t *aligner, size_t index,
+                                       enum Matrix m)
+{
+  return (aligner->trace[index] >> (2 * (int)m)) & 3;
+}
 
 #ifdef __cplusplus
 extern "C" {

@@ -21,6 +21,7 @@
 #include "smith_waterman.h"
 #include "hirschberg.h"
 #include "alignment_scoring_load.h"
+#include "alignment_simd.h" // ALN_STRIPED
 
 //
 // Tests
@@ -838,8 +839,9 @@ void simd_test_hirschberg_band()
     }
   }
 
-  // The band was used, and unbanded passes still matched the scalar ones
-  ASSERT(hirschberg_banded_passes > banded);
+  // The band was used (it needs the SIMD passes), and unbanded passes still
+  // matched the scalar ones
+  ASSERT(hirschberg_banded_passes > banded || !hirschberg_simd_available());
   ASSERT(hirschberg_striped_mismatches == mismatches);
 
   hirschberg_band_strip_rows = strip_rows;
@@ -953,9 +955,112 @@ void simd_test_tiny_blocks()
   alignment_free(hb_striped);
 }
 
+static bool alignments_equal(const alignment_t *x, const alignment_t *y)
+{
+  return x->score == y->score && x->length == y->length &&
+         strcmp(x->result_a, y->result_a) == 0 &&
+         strcmp(x->result_b, y->result_b) == 0 &&
+         x->pos_a == y->pos_a && x->pos_b == y->pos_b &&
+         x->len_a == y->len_a && x->len_b == y->len_b;
+}
+
+/* Compact mode (traceback bytes instead of score matrices) gives the same
+ * Needleman-Wunsch alignment and the same Smith-Waterman hits, in order:
+ * first from the bytes, the rest after the matrices are filled */
+void simd_test_compact()
+{
+  size_t min_cells = alignment_block_min_cells;
+  size_t min_cols = alignment_block_min_cols;
+  int max_threads = alignment_max_threads;
+  nw_aligner_t *nw_full = needleman_wunsch_new(), *nw_compact = needleman_wunsch_new();
+  sw_aligner_t *sw_full = smith_waterman_new(), *sw_compact = smith_waterman_new();
+  alignment_t *r_full = alignment_create(256), *r_compact = alignment_create(256);
+  char seqa[401], seqb[401];
+  scoring_t scoring;
+  const int threads[] = {1, 2, 5};
+  const char *alphabets[] = {"acgt", "ac", "a", "acgtn", "ARNDCQEGHILKMFPSTWYV"};
+  size_t i, t, traced_nw = 0, traced_sw = 0, hits = 0;
+
+  nw_compact->compact = true;
+  smith_waterman_set_compact(sw_compact, true);
+  alignment_block_min_cells = 1;
+  alignment_block_min_cols = 8;
+
+  for(t = 0; t < sizeof(threads)/sizeof(threads[0]); t++)
+  {
+    alignment_max_threads = threads[t];
+    for(i = 0; i < 400; i++)
+    {
+      const char *alpha = alphabets[hb_rand(5)];
+      if(alpha[0] == 'A') scoring_system_BLOSUM62(&scoring);
+      else {
+        // Free start gaps (one in 8) are not traced: compared all the same
+        scoring_init(&scoring, 1 + (int)hb_rand(5), -(int)hb_rand(16),
+                     (int)hb_rand(13) - 10, (int)hb_rand(8) - 6,
+                     hb_rand(8) == 0, false, false, false, false, false);
+        if(hb_rand(2)) scoring_add_wildcard(&scoring, 'n', 0);
+      }
+      unsigned int max_len = i % 4 == 0 ? 12 : 401;
+      hb_rand_seq(seqa, hb_rand(max_len), alpha);
+      hb_rand_seq(seqb, hb_rand(max_len), alpha);
+
+      needleman_wunsch_align(seqa, seqb, &scoring, nw_full, r_full);
+      needleman_wunsch_align(seqa, seqb, &scoring, nw_compact, r_compact);
+      ASSERT(!nw_full->traced);
+      ASSERT(alignments_equal(r_full, r_compact));
+      traced_nw += nw_compact->traced;
+
+      score_t min_score = 1 + (score_t)hb_rand(4) * (score_t)hb_rand(10);
+      smith_waterman_set_min_score(sw_full, min_score);
+      smith_waterman_set_min_score(sw_compact, min_score);
+      smith_waterman_align(seqa, seqb, &scoring, sw_full);
+      smith_waterman_align(seqa, seqb, &scoring, sw_compact);
+      traced_sw += smith_waterman_get_aligner(sw_compact)->traced;
+      // Up to 6 hits, or all of them
+      size_t h, max_hits = hb_rand(2) ? 6 : SIZE_MAX;
+      for(h = 0; h < max_hits; h++) {
+        int got_full = smith_waterman_fetch(sw_full, r_full);
+        int got_compact = smith_waterman_fetch(sw_compact, r_compact);
+        ASSERT(got_full == got_compact);
+        if(!got_full || !got_compact) break;
+        ASSERT(alignments_equal(r_full, r_compact));
+        hits++;
+      }
+    }
+  }
+  // Traceback bytes come from the striped fill only
+#ifdef ALN_STRIPED
+  ASSERT(traced_nw > 600 && traced_sw > 600);
+#else
+  ASSERT(traced_nw == 0 && traced_sw == 0);
+#endif
+  ASSERT(hits > 1000);
+
+  // A gap penalty so large that the first column falls below the clamp:
+  // working out the bytes would overflow, so the matrices are used
+  scoring_init(&scoring, 1, -1, 0, -1073741824, false, false, false, false,
+               false, false);
+  needleman_wunsch_align("AA", "A", &scoring, nw_full, r_full);
+  needleman_wunsch_align("AA", "A", &scoring, nw_compact, r_compact);
+  ASSERT(!nw_compact->traced);
+  ASSERT(alignments_equal(r_full, r_compact));
+  ASSERT(r_compact->score == -1073741823);
+
+  alignment_block_min_cells = min_cells;
+  alignment_block_min_cols = min_cols;
+  alignment_max_threads = max_threads;
+  needleman_wunsch_free(nw_full);
+  needleman_wunsch_free(nw_compact);
+  smith_waterman_free(sw_full);
+  smith_waterman_free(sw_compact);
+  alignment_free(r_full);
+  alignment_free(r_compact);
+}
+
 void test_simd()
 {
   SUITE_START("Striped SIMD fill");
+  simd_test_compact();
   simd_test_tiny_blocks();
   simd_test_fill_blocks();
   simd_test_hirschberg_band();

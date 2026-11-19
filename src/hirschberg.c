@@ -528,6 +528,15 @@ static void hb_passes_scalar(hb_state_t *st, const char *a, const char *b,
 bool hirschberg_check_striped = false;
 size_t hirschberg_striped_mismatches = 0;
 
+bool hirschberg_simd_available(void)
+{
+#ifdef HB_STRIPED
+  return alignment_striped_enabled && HB_FAST_VMAX();
+#else
+  return false;
+#endif
+}
+
 #ifdef HB_STRIPED
 static score_t hb_midpoint(const hb_state_t *st, size_t n, size_t *midj,
                            int *type);

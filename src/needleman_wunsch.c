@@ -35,12 +35,106 @@ void needleman_wunsch_align(const char *a, const char *b,
   needleman_wunsch_align2(a, b, strlen(a), strlen(b), scoring, nw, result);
 }
 
+// Gaps before the first aligned pair, then shift the alignment (written
+// backwards from next_char) to the start of the buffers
+static void _nw_finish(const nw_aligner_t *nw, alignment_t *result,
+                       size_t score_x, size_t score_y, size_t next_char,
+                       size_t longest_alignment)
+{
+  char *alignment_a = result->result_a, *alignment_b = result->result_b;
+
+  // Gap in A
+  while(score_y > 0)
+  {
+    alignment_a[next_char] = '-';
+    alignment_b[next_char] = nw->seq_b[score_y-1];
+    next_char--;
+    score_y--;
+  }
+
+  // Gap in B
+  while(score_x > 0)
+  {
+    alignment_a[next_char] = nw->seq_a[score_x-1];
+    alignment_b[next_char] = '-';
+    next_char--;
+    score_x--;
+  }
+
+  // Shift alignment strings back into 0th position in char arrays
+  size_t first_char = next_char+1;
+  size_t alignment_len = longest_alignment - first_char;
+
+  // Use memmove
+  memmove(alignment_a, alignment_a+first_char, alignment_len);
+  memmove(alignment_b, alignment_b+first_char, alignment_len);
+
+  alignment_a[alignment_len] = '\0';
+  alignment_b[alignment_len] = '\0';
+
+  result->length = alignment_len;
+}
+
+// The traceback below, from the traceback bytes of a compact fill. Returns
+// false at a step with no valid predecessor, for the matrices to report
+static bool _nw_follow_trace(const nw_aligner_t *nw, alignment_t *result)
+{
+  const size_t w = nw->score_width;
+  size_t longest_alignment = w-1 + nw->score_height-1;
+  alignment_ensure_capacity(result, longest_alignment);
+  size_t next_char = longest_alignment-1;
+
+  enum Matrix curr_matrix = MATCH;
+  score_t curr_score = nw->final_scores[MATCH];
+  if(nw->final_scores[GAP_B] >= curr_score) {
+    curr_matrix = GAP_B;
+    curr_score = nw->final_scores[GAP_B];
+  }
+  if(nw->final_scores[GAP_A] >= curr_score) {
+    curr_matrix = GAP_A;
+    curr_score = nw->final_scores[GAP_A];
+  }
+  result->score = curr_score;
+
+  size_t score_x = w-1, score_y = nw->score_height-1;
+  for(; score_x > 0 && score_y > 0; next_char--)
+  {
+    result->result_a[next_char] = curr_matrix == GAP_A ? '-' : nw->seq_a[score_x-1];
+    result->result_b[next_char] = curr_matrix == GAP_B ? '-' : nw->seq_b[score_y-1];
+
+    int next = alignment_trace_next(nw, score_y * w + score_x, curr_matrix);
+    if(next == ALN_TRACE_NONE) return false;
+    if(curr_matrix != GAP_A) score_x--;
+    if(curr_matrix != GAP_B) score_y--;
+    curr_matrix = (enum Matrix)next;
+  }
+
+  _nw_finish(nw, result, score_x, score_y, next_char, longest_alignment);
+  return true;
+}
+
 void needleman_wunsch_align2(const char *a, const char *b,
                              size_t len_a, size_t len_b,
                              const scoring_t *scoring,
                              nw_aligner_t *nw, alignment_t *result)
 {
-  aligner_align(nw, a, b, len_a, len_b, scoring, 0);
+  #ifdef SEQ_ALIGN_VERBOSE
+    // The diagnostics below need the score matrices
+    bool compact = nw->compact;
+    nw->compact = false;
+    aligner_align(nw, a, b, len_a, len_b, scoring, 0);
+    nw->compact = compact;
+  #else
+    aligner_align(nw, a, b, len_a, len_b, scoring, 0);
+  #endif
+
+  if(nw->traced) {
+    if(_nw_follow_trace(nw, result)) return;
+    // Fill the matrices, so the traceback below reports the failed step
+    nw->compact = false;
+    aligner_align(nw, a, b, len_a, len_b, scoring, 0);
+    nw->compact = true;
+  }
 
   // work backwards re-tracing optimal alignment, then shift sequences into place
 
@@ -117,34 +211,5 @@ void needleman_wunsch_align2(const char *a, const char *b,
     }
   }
 
-  // Gap in A
-  while(score_y > 0)
-  {
-    alignment_a[next_char] = '-';
-    alignment_b[next_char] = nw->seq_b[score_y-1];
-    next_char--;
-    score_y--;
-  }
-
-  // Gap in B
-  while(score_x > 0)
-  {
-    alignment_a[next_char] = nw->seq_a[score_x-1];
-    alignment_b[next_char] = '-';
-    next_char--;
-    score_x--;
-  }
-
-  // Shift alignment strings back into 0th position in char arrays
-  size_t first_char = next_char+1;
-  size_t alignment_len = longest_alignment - first_char;
-
-  // Use memmove
-  memmove(alignment_a, alignment_a+first_char, alignment_len);
-  memmove(alignment_b, alignment_b+first_char, alignment_len);
-
-  alignment_a[alignment_len] = '\0';
-  alignment_b[alignment_len] = '\0';
-
-  result->length = alignment_len;
+  _nw_finish(nw, result, score_x, score_y, next_char, longest_alignment);
 }

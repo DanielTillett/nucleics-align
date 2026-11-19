@@ -336,6 +336,10 @@ int main(int argc, char* argv[])
 
   // Align!
   sw = smith_waterman_new();
+  // Just the best hit: traceback bytes instead of score matrices
+  smith_waterman_set_compact(sw, cmd->max_hits_per_alignment_set &&
+                                 cmd->max_hits_per_alignment == 1 &&
+                                 !cmd->print_matrices);
   result = alignment_create(256);
 
   if(cmd->seq1 != NULL)

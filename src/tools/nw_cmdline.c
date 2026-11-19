@@ -195,6 +195,8 @@ int main(int argc, char* argv[])
 
   // Align!
   nw = needleman_wunsch_new();
+  // Traceback bytes instead of score matrices, unless they are printed
+  nw->compact = !cmd->print_matrices;
   result = alignment_create(256);
 
   if(cmd->seq1 != NULL)

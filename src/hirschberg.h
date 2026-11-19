@@ -55,6 +55,9 @@ extern size_t hirschberg_banded_passes;
 extern bool hirschberg_check_striped;
 extern size_t hirschberg_striped_mismatches;
 
+// Whether this build and CPU run the SIMD passes (and so banding)
+bool hirschberg_simd_available(void);
+
 // Score of the best global alignment, without the alignment itself: one
 // pass in O(len_b) memory. Same score as needleman_wunsch_align(), and the
 // same unsupported options as hirschberg_align() (returns false)

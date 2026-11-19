@@ -19,7 +19,9 @@ ifdef NATIVE
 endif
 
 CFLAGS ?= -Wall -Wextra
-CFLAGS += -std=c11 $(OPT)
+# -Wno-psabi: GCC notes that 8-lane vectors are passed differently without
+# AVX; the SIMD helpers are always inlined, so no call passes one
+CFLAGS += -std=c11 $(OPT) -Wno-psabi
 OBJFLAGS = -fPIC
 LINKFLAGS = -lalign -lstrbuf -lpthread -lz
 

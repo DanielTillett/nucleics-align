@@ -25,12 +25,6 @@
 
 #ifdef ALN_STRIPED
 
-// 8 lanes with AVX2, otherwise 4 (native width for SSE2 and NEON)
-#ifdef __AVX2__
-#  define ALN_VL 8
-#else
-#  define ALN_VL 4
-#endif
 // Whether the target has a vector max instruction for 32-bit integers.
 // Without one (plain SSE2, the x86-64 baseline) vmax() takes four
 // instructions, which still pays off in the Needleman-Wunsch/Smith-Waterman
@@ -42,7 +36,6 @@
 // x86-64 Linux builds without -mavx2: compile the SIMD kernels for AVX2,
 // SSE4.1 and the baseline, and let the loader pick one for the CPU
 // (GCC/clang function multi-versioning, which needs ifunc support).
-// Lanes stay at ALN_VL, but AVX2/SSE4.1 bring a native vector max
 // Not under ThreadSanitizer: the ifunc resolvers run before it starts and
 // crash the program
 #if defined(__has_feature)
@@ -65,18 +58,38 @@
 #  define ALN_TARGET_CLONES
 #endif
 
+// 8 lanes with AVX2, otherwise 4 (native width for SSE2 and NEON). GCC
+// dispatch builds use 8 in every version: the SSE4.1 and baseline versions
+// run each vector as two halves, which still beats 4 lanes (fewer segments,
+// so the lazy F loop wraps less; 20 kb unrelated score pass, one thread,
+// SSE4.1: 0.21 -> 0.11 s). clang rejects 8-lane vectors in the versions
+// without AVX, so its dispatch builds keep 4
+#ifndef ALN_VL
+#  if defined(__AVX2__) || (defined(ALN_DISPATCH) && !defined(__clang__))
+#    define ALN_VL 8
+#  else
+#    define ALN_VL 4
+#  endif
+#endif
+
 typedef score_t vscore_t __attribute__((vector_size(ALN_VL * sizeof(score_t))));
 
-static inline vscore_t vsplat(score_t x) { return (vscore_t){0} + x; }
+// Helpers that take or return vectors are always inlined, even without
+// optimisation: an 8-lane vector passed between the AVX2 version of a
+// function and a helper compiled for the baseline would be passed in
+// different registers on each side (a crash in DEBUG=1 builds)
+#define ALN_INLINE static inline __attribute__((always_inline))
 
-static inline vscore_t vmax(vscore_t a, vscore_t b)
+ALN_INLINE vscore_t vsplat(score_t x) { return (vscore_t){0} + x; }
+
+ALN_INLINE vscore_t vmax(vscore_t a, vscore_t b)
 {
   vscore_t gt = a > b; // all bits set in lanes where a > b
   return (a & gt) | (b & ~gt);
 }
 
 // Move every lane up by one; lane 0 gets x
-static inline vscore_t vshift(vscore_t v, score_t x)
+ALN_INLINE vscore_t vshift(vscore_t v, score_t x)
 {
 #if ALN_VL == 8
   return __builtin_shufflevector(v, vsplat(x), 8, 0, 1, 2, 3, 4, 5, 6);
@@ -85,7 +98,7 @@ static inline vscore_t vshift(vscore_t v, score_t x)
 #endif
 }
 
-static inline bool vany(vscore_t v)
+ALN_INLINE bool vany(vscore_t v)
 {
   score_t r = 0;
   int l;

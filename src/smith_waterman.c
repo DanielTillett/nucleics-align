@@ -65,6 +65,7 @@ struct sw_aligner_t
   sub_table_t table;
   bool fast_walk;
   score_t min_score; // lowest score a hit may start from, at least 1
+  bool compact; // fill traceback bytes only, until a second hit is fetched
 };
 
 // One step back through the matrices. Gives the same result as
@@ -78,6 +79,41 @@ static inline void _sw_reverse_move(const sw_aligner_t *sw,
                                     size_t *arr_index)
 {
   const aligner_t *aligner = &sw->aligner;
+
+  if(aligner->traced)
+  {
+    // The traceback byte says which matrix the step goes to; the score is
+    // the current one less the penalty of that step
+    const scoring_t *scoring = aligner->scoring;
+    const score_t open = scoring->gap_open + scoring->gap_extend;
+    const score_t ext = scoring->gap_extend;
+    int next = alignment_trace_next(aligner, *arr_index, *curr_matrix);
+    score_t step;
+    if(next == ALN_TRACE_NONE) {
+      fprintf(stderr, "Program error: traceback fail (_sw_reverse_move)\n");
+      exit(EXIT_FAILURE);
+    }
+    if(*curr_matrix == MATCH) {
+      const sub_table_t *t = &sw->table;
+      unsigned char ca = (unsigned char)aligner->seq_a[*score_x-1];
+      unsigned char cb = (unsigned char)aligner->seq_b[*score_y-1];
+      step = t->scores[t->code[cb]*t->n + t->code[ca]];
+      *arr_index -= aligner->score_width + 1;
+    }
+    else if(*curr_matrix == GAP_A) {
+      step = next == GAP_A ? ext : open;
+      *arr_index -= aligner->score_width;
+    }
+    else {
+      step = next == GAP_B ? ext : open;
+      *arr_index -= 1;
+    }
+    if(*curr_matrix != GAP_A) (*score_x)--;
+    if(*curr_matrix != GAP_B) (*score_y)--;
+    *curr_matrix = (enum Matrix)next;
+    *curr_score -= step;
+    return;
+  }
 
   if(!sw->fast_walk || (*curr_matrix != MATCH && *curr_matrix != GAP_A &&
                         *curr_matrix != GAP_B))
@@ -179,17 +215,28 @@ static void _init_history(sw_history_t *hist)
   }
 }
 
-static void _ensure_history_capacity(sw_history_t *hist, size_t arr_size)
+// Room for one bit per cell in the used-cell mask
+static void _ensure_mask_capacity(sw_history_t *hist, size_t arr_size)
+{
+  if(arr_size > hist->match_scores_mask.l &&
+     !bitset_set_length(&hist->match_scores_mask, ROUNDUP2POW(arr_size))) {
+    fprintf(stderr, "%s:%i: Out of memory\n", __FILE__, __LINE__);
+    exit(EXIT_FAILURE);
+  }
+}
+
+// Room for every cell in the sorted index (only needed past the first hit)
+static void _ensure_index_capacity(sw_history_t *hist, size_t arr_size)
 {
   if(arr_size > hist->hits_capacity) {
     hist->hits_capacity = ROUNDUP2POW(arr_size);
     size_t mem = hist->hits_capacity * sizeof(*(hist->sorted_match_indices));
-    hist->sorted_match_indices = realloc(hist->sorted_match_indices, mem);
-    if(!bitset_set_length(&hist->match_scores_mask, hist->hits_capacity) ||
-       !hist->sorted_match_indices) {
+    size_t *indices = realloc(hist->sorted_match_indices, mem);
+    if(indices == NULL) {
       fprintf(stderr, "%s:%i: Out of memory\n", __FILE__, __LINE__);
       exit(EXIT_FAILURE);
     }
+    hist->sorted_match_indices = indices;
   }
 }
 
@@ -219,6 +266,11 @@ void smith_waterman_set_min_score(sw_aligner_t *sw, score_t min_score)
   sw->min_score = MAX2(min_score, 1);
 }
 
+void smith_waterman_set_compact(sw_aligner_t *sw, bool compact)
+{
+  sw->compact = compact;
+}
+
 aligner_t* smith_waterman_get_aligner(sw_aligner_t *sw)
 {
   return &sw->aligner;
@@ -236,6 +288,7 @@ void smith_waterman_align2(const char *a, const char *b,
 {
   aligner_t *aligner = &sw->aligner;
   sw_history_t *hist = &sw->history;
+  aligner->compact = sw->compact;
   aligner_align(aligner, a, b, len_a, len_b, scoring, 1);
 
   sub_table_free(&sw->table);
@@ -246,12 +299,13 @@ void smith_waterman_align2(const char *a, const char *b,
                   !scoring->no_gaps_in_longest;
 
   size_t arr_size = aligner->score_width * aligner->score_height;
-  _ensure_history_capacity(hist, arr_size);
+  _ensure_mask_capacity(hist, arr_size);
 
-  // Clear the visited-cell mask. Size is in bytes: clearing only one byte per
-  // 32-bit word left stale bits that silently dropped hits on reuse
+  // Clear the visited-cell mask for every cell (bits past them are never
+  // read). Size is in bytes: clearing only one byte per 32-bit word left
+  // stale bits that silently dropped hits on reuse
   memset(hist->match_scores_mask.b, 0,
-         hist->match_scores_mask.s * sizeof(hist->match_scores_mask.b[0]));
+         (arr_size + 31) / 32 * sizeof(hist->match_scores_mask.b[0]));
 
   // Set number of hits
   hist->num_of_hits = hist->next_hit = 0;
@@ -264,6 +318,13 @@ void smith_waterman_align2(const char *a, const char *b,
 static bool _best_cell(const sw_aligner_t *sw, size_t *best)
 {
   const aligner_t *aligner = &sw->aligner;
+
+  // A compact fill found it already
+  if(aligner->traced) {
+    *best = aligner->best_index;
+    return aligner->best_score > 0 && aligner->best_score >= sw->min_score;
+  }
+
   const score_t *scores = aligner->match_scores;
   const size_t w = aligner->score_width, h = aligner->score_height;
   size_t x, y, row, bx = w;
@@ -288,6 +349,7 @@ static void _index_hits(sw_aligner_t *sw)
   aligner_t *aligner = &sw->aligner;
   sw_history_t *hist = &sw->history;
   const size_t arr_size = aligner->score_width * aligner->score_height;
+  _ensure_index_capacity(hist, arr_size);
 
   // Hits may start from cells scoring at least lo. Cells scoring less are
   // only reached after every higher one, so leaving them out changes no
@@ -352,7 +414,8 @@ static char _follow_hit(sw_aligner_t* sw, size_t arr_index,
 
   // Local alignments always (start and) end with a match
   enum Matrix curr_matrix = MATCH;
-  score_t curr_score = aligner->match_scores[arr_index];
+  score_t curr_score = aligner->traced ? aligner->best_score // the only hit
+                                       : aligner->match_scores[arr_index];
 
   // Store end arr_index and (x,y) coords for later
   size_t end_arr_index = arr_index;
@@ -458,7 +521,20 @@ int smith_waterman_fetch(sw_aligner_t *sw, alignment_t *result)
   }
 
   // The best cell is first in the index and now used, so it is skipped
-  if(!hist->indexed) { hist->indexed = true; _index_hits(sw); }
+  if(!hist->indexed) {
+    hist->indexed = true;
+    aligner_t *aligner = &sw->aligner;
+    if(aligner->traced) {
+      // Later hits need the score matrices: fill them (the used cells stay
+      // marked)
+      aligner->compact = false;
+      aligner_align(aligner, aligner->seq_a, aligner->seq_b,
+                    aligner->score_width-1, aligner->score_height-1,
+                    aligner->scoring, 1);
+      aligner->compact = true;
+    }
+    _index_hits(sw);
+  }
 
   while(hist->next_hit < hist->num_of_hits)
   {
