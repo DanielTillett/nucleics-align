@@ -18,6 +18,7 @@
 #include "smith_waterman.h"
 #include "alignment_macros.h"
 #include "alignment_alloc.h"
+#include "alignment_testing.h"
 
 typedef struct {
   uint32_t *b; size_t l, s; // l is bits, s in uint32_t
@@ -73,9 +74,18 @@ struct sw_aligner_t
   size_t off_a, off_b, full_best; // full_best: best cell in the whole matrix
   const char *seq_a, *seq_b; // the whole sequences
   size_t len_a, len_b;
+  // Strip alignments (see _sw_strips()): rect is set too, and the aligner
+  // describes the region but holds no traceback bytes; ckpt holds every
+  // strip_rows-th row of its matrices
+  bool strips;
+  score_t *ckpt;
+  size_t strip_rows;
 };
 
 size_t smith_waterman_rect_min_cells = (size_t)1 << 24;
+size_t smith_waterman_strip_min_cells = (size_t)1 << 28;
+size_t smith_waterman_strip_rows = 0;
+size_t smith_waterman_strip_alignments = 0;
 
 // One step back through the matrices. Gives the same result as
 // alignment_reverse_move() (same checks, same order), but uses the
@@ -276,6 +286,7 @@ sw_aligner_t* smith_waterman_new(void)
 
 void smith_waterman_free(sw_aligner_t *sw)
 {
+  free(sw->ckpt);
   aligner_destroy(&(sw->aligner));
   sub_table_free(&sw->table);
   bitset_dealloc(&sw->history.match_scores_mask);
@@ -308,6 +319,145 @@ void smith_waterman_align(const char *a, const char *b,
                           const scoring_t *scoring, sw_aligner_t *sw)
 {
   smith_waterman_align2(a, b, strlen(a), strlen(b), scoring, sw);
+}
+
+// The best hit of the region a[x0 .. x0+rx) against b[y0 .. y0+ry) (of the
+// whole sequences) without its traceback bytes (see
+// smith_waterman_strip_min_cells): one scan finds the best cell, keeping
+// every strip_rows-th row; _follow_strips() walks the hit. want: the best
+// score a rectangle's region must have, at its last cell (0: any). Sets
+// *used where it applies (else nothing is changed); ALN_ERR_NOMEM if out
+// of memory
+static aln_status_t _sw_strips(sw_aligner_t *sw, size_t x0, size_t y0,
+                               size_t rx, size_t ry, const scoring_t *scoring,
+                               score_t want, bool *used)
+{
+  aligner_t *aligner = &sw->aligner;
+  *used = false;
+  // Rows per strip near sqrt(12 x rows): the strip's bytes (k bytes per
+  // column) and the rows kept (12 bytes per column each) then take about
+  // the same memory
+  size_t k = smith_waterman_strip_rows;
+  if(k == 0) {
+    for(k = 16; k * k < 12 * ry; k++) {}
+  }
+  k = MIN2(k, ry);
+  const size_t kept = ry / k + 1;
+  if(rx == 0 || ry == 0 || kept > SIZE_MAX / 3 / sizeof(score_t) / (rx + 1))
+    return ALN_OK;
+  score_t *ckpt = aln_malloc(kept * 3 * (rx + 1) * sizeof(score_t));
+  if(ckpt == NULL) return ALN_ERR_NOMEM;
+  score_t best;
+  size_t bx, by;
+  if(!alignment_sw_rows(sw->seq_a + x0, rx, sw->seq_b + y0, ry, scoring,
+                        &aligner->opts, k, ckpt, &best, &bx, &by) ||
+     (want > 0 && (best != want || bx != rx || by != ry))) {
+    free(ckpt);
+    return ALN_OK;
+  }
+  free(sw->ckpt);
+  sw->ckpt = ckpt;
+  sw->strip_rows = k;
+  aligner->scoring = scoring;
+  aligner->seq_a = sw->seq_a + x0;
+  aligner->seq_b = sw->seq_b + y0;
+  aligner->score_width = rx + 1;
+  aligner->score_height = ry + 1;
+  aligner->traced = true;
+  aligner->trace_banded = false;
+  aligner->best_score = best;
+  aligner->best_index = by * (rx + 1) + bx;
+  sw->strips = sw->rect = true;
+  sw->off_a = x0;
+  sw->off_b = y0;
+  sw->full_best = (y0 + by) * (sw->len_a + 1) + x0 + bx;
+  __atomic_add_fetch(&smith_waterman_strip_alignments, 1, __ATOMIC_RELAXED);
+  *used = true;
+  return ALN_OK;
+}
+
+// Follow the best hit of a strip alignment back from its last cell, as
+// _follow_hit() follows traceback bytes: from the bottom, each strip of
+// rows gets its bytes again (up to the hit's column) when the walk enters
+// it. Returns 1, or -1 if out of memory
+static int _follow_strips(sw_aligner_t *sw, alignment_t *result)
+{
+  const aligner_t *aligner = &sw->aligner;
+  const scoring_t *scoring = aligner->scoring;
+  const sub_table_t *t = &sw->table;
+  const score_t open = scoring->gap_open + scoring->gap_extend;
+  const score_t ext = scoring->gap_extend;
+  const size_t w = aligner->score_width, k = sw->strip_rows;
+  const char *a = aligner->seq_a, *b = aligner->seq_b;
+  const size_t end_x = aligner->best_index % w, end_y = aligner->best_index / w;
+  size_t x = end_x, y = end_y, n = 0, s0 = 0, xs = 0;
+  enum Matrix m = MATCH;
+  score_t score = aligner->best_score;
+
+  uint8_t *ops = aln_malloc(end_x + end_y + 1); // the matrix of each step
+  uint8_t *trace = aln_malloc(k * end_x);
+  if(ops == NULL || trace == NULL) {
+    free(ops);
+    free(trace);
+    return -1;
+  }
+
+  while(score > 0) {
+    if(n == 0 || y < s0) {
+      // The strip holding row y, from the row kept above it
+      const size_t kept = (y - 1) / k;
+      s0 = kept * k + 1;
+      xs = x;
+      if(!alignment_sw_trace_rows(a, w - 1, b, aligner->score_height - 1,
+                                  scoring, &aligner->opts,
+                                  sw->ckpt + kept * 3 * w, s0, y, xs, trace)) {
+        free(ops);
+        free(trace);
+        return -1;
+      }
+    }
+    // As _sw_reverse_move() steps on traceback bytes
+    int next = (trace[(y - s0) * xs + x - 1] >> (2 * (int)m)) & 3;
+    score_t step;
+    if(next == ALN_TRACE_NONE) {
+      fprintf(stderr, "Program error: traceback fail (_follow_strips)\n");
+      exit(EXIT_FAILURE);
+    }
+    if(m == MATCH)
+      step = t->scores[t->code[(unsigned char)b[y-1]] * t->n +
+                       t->code[(unsigned char)a[x-1]]];
+    else if(m == GAP_A) step = next == GAP_A ? ext : open;
+    else step = next == GAP_B ? ext : open;
+    ops[n++] = (uint8_t)m;
+    if(m != GAP_A) x--;
+    if(m != GAP_B) y--;
+    m = (enum Matrix)next;
+    score -= step;
+  }
+  free(trace);
+
+  if(!alignment_reserve(result, n)) {
+    free(ops);
+    return -1;
+  }
+  // From the first cell: the steps in reverse
+  size_t i, xa = x, yb = y;
+  for(i = 0; i < n; i++) {
+    const enum Matrix op = (enum Matrix)ops[n-1-i];
+    if(op != GAP_A) xa++;
+    if(op != GAP_B) yb++;
+    result->result_a[i] = op == GAP_A ? '-' : a[xa-1];
+    result->result_b[i] = op == GAP_B ? '-' : b[yb-1];
+  }
+  free(ops);
+  result->result_a[n] = result->result_b[n] = '\0';
+  result->length = n;
+  result->score = aligner->best_score;
+  result->pos_a = x;
+  result->pos_b = y;
+  result->len_a = end_x - x;
+  result->len_b = end_y - y;
+  return 1;
 }
 
 // Best hit of a large compact alignment in little memory (as SSW finds it,
@@ -383,6 +533,12 @@ static bool _sw_align_rect(sw_aligner_t *sw, const char *a, const char *b,
 
   // Reversed cell (rx, ry) is the start pair (bx-rx+1, by-ry+1)
   const size_t x0 = bx - rx, y0 = by - ry;
+  if((double)rx * (double)ry >= (double)aligner->opts.sw_strip_min_cells) {
+    bool used;
+    if(_sw_strips(sw, x0, y0, rx, ry, scoring, best, &used) != ALN_OK)
+      return false; // the whole fill reports running out of memory
+    if(used) return true;
+  }
   if(aligner_align_checked(aligner, a + x0, b + y0, rx, ry, scoring,
                            1) != ALN_OK ||
      !aligner->traced || aligner->best_score != best ||
@@ -433,7 +589,9 @@ static aln_status_t _sw_align(const char *a, const char *b,
   sw->seq_b = b;
   sw->len_a = len_a;
   sw->len_b = len_b;
-  sw->rect = false;
+  sw->rect = sw->strips = false;
+  free(sw->ckpt);
+  sw->ckpt = NULL;
   _no_hits(hist);
   sub_table_free(&sw->table);
   if(!sub_table_build(&sw->table, scoring, a, len_a, b, len_b))
@@ -446,9 +604,18 @@ static aln_status_t _sw_align(const char *a, const char *b,
      !_sw_align_rect(sw, a, b, len_a, len_b, scoring))
   {
     sw->rect = false;
-    aln_status_t status = aligner_align_checked(aligner, a, b, len_a, len_b,
-                                                scoring, 1);
-    if(status != ALN_OK) return status;
+    bool used = false;
+    if(sw->compact && (double)len_a * (double)len_b >=
+                      (double)aligner->opts.sw_strip_min_cells) {
+      aln_status_t status = _sw_strips(sw, 0, 0, len_a, len_b, scoring, 0,
+                                       &used);
+      if(status != ALN_OK) return status;
+    }
+    if(!used) {
+      aln_status_t status = aligner_align_checked(aligner, a, b, len_a, len_b,
+                                                  scoring, 1);
+      if(status != ALN_OK) return status;
+    }
   }
 
   sw->fast_walk = !scoring->no_start_gap_penalty &&
@@ -456,8 +623,10 @@ static aln_status_t _sw_align(const char *a, const char *b,
                   !scoring->no_gaps_in_a && !scoring->no_gaps_in_b &&
                   !scoring->no_gaps_in_longest;
 
-  // No cell is walked when the scan found no hit
-  size_t arr_size = sw->rect && aligner->best_score < sw->min_score ? 0 :
+  // No cell is walked when the scan found no hit, or (strips) before a
+  // second hit is fetched
+  size_t arr_size = sw->rect && (aligner->best_score < sw->min_score ||
+                                 sw->strips) ? 0 :
                     aligner->score_width * aligner->score_height;
   if(!_ensure_mask_capacity(hist, arr_size)) return ALN_ERR_NOMEM;
 
@@ -706,7 +875,8 @@ static int _sw_fetch(sw_aligner_t *sw, alignment_t *result,
     size_t best = 0;
     if(!_best_cell(sw, &best)) { hist->indexed = true; return 0; }
     // Cannot be refused: no cell is used yet
-    if(_follow_hit(sw, best, result) < 0) {
+    if((sw->strips ? _follow_strips(sw, result)
+                   : _follow_hit(sw, best, result)) < 0) {
       *status = ALN_ERR_NOMEM;
       return 0;
     }
@@ -722,7 +892,9 @@ static int _sw_fetch(sw_aligner_t *sw, alignment_t *result,
     if(sw->rect) {
       // Fill the whole matrices, and walk the first hit again in them to
       // mark the cells it used
-      sw->rect = false;
+      sw->rect = sw->strips = false;
+      free(sw->ckpt);
+      sw->ckpt = NULL;
       aligner->compact = false;
       *status = aligner_align_checked(aligner, sw->seq_a, sw->seq_b,
                                       sw->len_a, sw->len_b,

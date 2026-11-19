@@ -32,7 +32,7 @@
 // Settings for an alignment: threads, and switches and sizes for tuning and
 // tests. None changes a result. alignment_options_default() gives the
 // process-wide defaults (the alignment_*, hirschberg_* and
-// smith_waterman_rect_min_cells variables), which apply to any aligner
+// smith_waterman_*_min_cells variables), which apply to any aligner
 // without options of its own; set options to use others, e.g. different
 // ones on different threads
 typedef struct
@@ -41,6 +41,7 @@ typedef struct
   bool striped, band, narrow, byte;
   size_t block_min_cells, block_min_cols, band_strip_rows, band_min_width;
   size_t sw_rect_min_cells; // see smith_waterman_rect_min_cells
+  size_t sw_strip_min_cells; // see smith_waterman_strip_min_cells
   // Linear space (hirschberg.h)
   int hb_max_threads; // 0: half the CPUs
   bool hb_band;
@@ -240,6 +241,28 @@ bool alignment_sw_scan_short(const char *a, size_t len_a,
                              const scoring_t *scoring,
                              const alignment_options_t *opts,
                              score_t *best, size_t *x, size_t *y);
+// The scan for the best cell (target 0), also keeping every every-th row
+// of the three matrices: row k*every (k = 0, 1, ...) at ckpt + k*3*(len_a +
+// 1) as MATCH, GAP_A then GAP_B scores by column (0 .. len_a). ckpt needs
+// room for len_b/every + 1 rows. For alignment_sw_trace_rows()
+bool alignment_sw_rows(const char *a, size_t len_a,
+                       const char *b, size_t len_b,
+                       const scoring_t *scoring,
+                       const alignment_options_t *opts,
+                       size_t every, score_t *ckpt,
+                       score_t *best, size_t *x, size_t *y);
+// Traceback bytes of rows y0 .. y1 and columns 1 .. xmax of a compact
+// Smith-Waterman fill, from row y0-1 (row: as alignment_sw_rows() keeps
+// it): cell (x, y) at trace[(y - y0) * xmax + x - 1], the same byte as a
+// fill of the whole matrix gives it (cells right of xmax cannot change
+// those up to it). Returns false if out of memory or where the striped
+// fill does not apply
+bool alignment_sw_trace_rows(const char *a, size_t len_a,
+                             const char *b, size_t len_b,
+                             const scoring_t *scoring,
+                             const alignment_options_t *opts,
+                             const score_t *row, size_t y0, size_t y1,
+                             size_t xmax, uint8_t *trace);
 
 // Constructors/Destructors for alignment. alignment_create() and
 // alignment_ensure_capacity() exit if out of memory; alignment_reserve()

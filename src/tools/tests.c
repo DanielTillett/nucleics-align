@@ -1153,6 +1153,83 @@ void simd_test_compact_rect()
   alignment_free(r_rect);
 }
 
+/* Strip alignments (forced here, with short strips): the best hit from
+ * rows kept by the scan and strips filled again, over the rectangle or the
+ * whole matrix, is the same as the full search's, and later hits too */
+void simd_test_strips()
+{
+  size_t min_cells = alignment_block_min_cells;
+  size_t min_cols = alignment_block_min_cols;
+  int max_threads = alignment_max_threads;
+  size_t rect_cells = smith_waterman_rect_min_cells;
+  size_t strip_cells = smith_waterman_strip_min_cells;
+  sw_aligner_t *full = smith_waterman_new(), *strips = smith_waterman_new();
+  alignment_t *r_full = alignment_create(256), *r_strips = alignment_create(256);
+  char core[701], hit[901], seqa[2001], seqb[2001];
+  scoring_t scoring;
+  const unsigned int rates[] = {0, 10, 60, 200};
+  size_t i, h, hits = 0, used = smith_waterman_strip_alignments;
+
+  smith_waterman_set_compact(strips, true);
+  smith_waterman_strip_min_cells = 0;
+  alignment_block_min_cells = 1;
+  alignment_block_min_cols = 8;
+
+  for(i = 0; i < 400; i++)
+  {
+    alignment_max_threads = 1 + (int)(i % 3) * 2;
+    // Over the rectangle, or the whole matrix
+    smith_waterman_rect_min_cells = i % 2 ? 0 : SIZE_MAX;
+    smith_waterman_strip_rows = 1 + hb_rand(20);
+    const char *alpha = i % 2 ? "acgt" : "ac";
+    if(i % 7 == 6) {
+      scoring_system_BLOSUM62(&scoring);
+      alpha = "ARNDCQEGHILKMFPSTWYV";
+    }
+    else scoring_init(&scoring, 1 + (int)hb_rand(4), -(int)hb_rand(8),
+                      -(int)hb_rand(8), -(int)hb_rand(4), false, false,
+                      false, false, false, false);
+    hb_rand_seq(core, 1 + hb_rand(700), alpha);
+    hb_mutate(hit, core, rates[i % 4], alpha);
+    hb_rand_seq(seqa, hb_rand(600), alpha);
+    strcat(seqa, core);
+    hb_rand_seq(seqa + strlen(seqa), hb_rand(600), alpha);
+    hb_rand_seq(seqb, hb_rand(600), alpha);
+    strcat(seqb, hit);
+    hb_rand_seq(seqb + strlen(seqb), hb_rand(600), alpha);
+
+    score_t min_score = 1 + (score_t)hb_rand(3) * (score_t)hb_rand(20);
+    smith_waterman_set_min_score(full, min_score);
+    smith_waterman_set_min_score(strips, min_score);
+    smith_waterman_align(seqa, seqb, &scoring, full);
+    smith_waterman_align(seqa, seqb, &scoring, strips);
+    size_t max_hits = i % 3 == 0 ? 4 : 1;
+    for(h = 0; h < max_hits; h++) {
+      int got_full = smith_waterman_fetch(full, r_full);
+      int got_strips = smith_waterman_fetch(strips, r_strips);
+      ASSERT(got_full == got_strips);
+      if(!got_full || !got_strips) break;
+      ASSERT(alignments_equal(r_full, r_strips));
+      hits++;
+    }
+  }
+#ifdef ALN_STRIPED
+  ASSERT(smith_waterman_strip_alignments - used > 300); // strips were used
+#endif
+  ASSERT(hits > 350);
+
+  smith_waterman_strip_rows = 0;
+  smith_waterman_strip_min_cells = strip_cells;
+  smith_waterman_rect_min_cells = rect_cells;
+  alignment_block_min_cells = min_cells;
+  alignment_block_min_cols = min_cols;
+  alignment_max_threads = max_threads;
+  smith_waterman_free(full);
+  smith_waterman_free(strips);
+  alignment_free(r_full);
+  alignment_free(r_strips);
+}
+
 /* The rectangle's first scan gives up on a hit spanning the sequences, and
  * otherwise finds what the full scan finds */
 void simd_test_scan_short()
@@ -1474,6 +1551,7 @@ void test_simd()
   SUITE_START("Striped SIMD fill");
   simd_test_compact_rect();
   simd_test_scan_short();
+  simd_test_strips();
   simd_test_rect_gap_score();
   simd_test_narrow(16);
   simd_test_narrow(8);
@@ -1779,7 +1857,7 @@ void test_options()
   many.band = many.hb_band = !many.band;
   many.narrow = !many.narrow;
   many.byte = !many.byte;
-  many.sw_rect_min_cells = 0;
+  many.sw_rect_min_cells = many.sw_strip_min_cells = 0;
   alignment_options_default(&plain);
 
   // The aligner's own options are the ones used: 8-bit lanes off there
@@ -1978,7 +2056,7 @@ void test_out_of_memory()
   many.max_threads = many.hb_max_threads = 4;
   many.block_min_cells = many.hb_block_min_cells = 1;
   many.block_min_cols = many.hb_block_min_cols = 8;
-  many.sw_rect_min_cells = 0;
+  many.sw_rect_min_cells = many.sw_strip_min_cells = 0;
   many.band_strip_rows = many.hb_band_strip_rows = 8;
   many.band_min_width = many.hb_band_min_width = 4;
   scoring_t scoring;

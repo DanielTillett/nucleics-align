@@ -170,6 +170,7 @@ void alignment_options_default(alignment_options_t *opts)
   opts->band_strip_rows = alignment_band_strip_rows;
   opts->band_min_width = alignment_band_min_width;
   opts->sw_rect_min_cells = smith_waterman_rect_min_cells;
+  opts->sw_strip_min_cells = smith_waterman_strip_min_cells;
   opts->hb_max_threads = hirschberg_max_threads;
   opts->hb_band = hirschberg_band_enabled;
   opts->hb_block_min_cells = hirschberg_block_min_cells;
@@ -247,6 +248,10 @@ typedef struct {
   double giveup_rate;
   atomic_bool *gave_up;
   bool given_up; // the fill gave up (set by alignment_fill_blocks())
+  // Scans: row k*ckpt_every of the three matrices goes to ckpt (see
+  // alignment_sw_rows()); NULL for none
+  score_t *ckpt;
+  size_t ckpt_every;
   // Fill with 8- or 16-bit lanes (4 or 2 times as many; bits 8 or 16, 0
   // for 32-bit lanes) where alignment_narrow_limit() allows: blocks stop
   // once a row's best match score passes narrow_limit, setting *stop, and
@@ -486,12 +491,13 @@ static bool alignment_fill_blocks(alignment_block_t *tmpl)
 // the highest x and the highest y of cells scoring target (0 if none).
 // Returns false, with nothing found, where the striped fill does not apply
 // or (target > 0) a cell scores more than target, or if out of memory.
-// opts may be NULL (the defaults). short_hit: see alignment_sw_scan_short()
+// opts may be NULL (the defaults). short_hit: see alignment_sw_scan_short();
+// ckpt, every: see alignment_sw_rows()
 static bool alignment_sw_scan_any(const char *a, size_t len_a,
                                   const char *b, size_t len_b,
                                   const scoring_t *scoring, score_t target,
                                   const alignment_options_t *opts,
-                                  bool short_hit,
+                                  bool short_hit, score_t *ckpt, size_t every,
                                   score_t *best, size_t *x, size_t *y)
 {
   aligner_t tmp;
@@ -526,8 +532,12 @@ static bool alignment_sw_scan_any(const char *a, size_t len_a,
     .aligner = &tmp, .table = &table, .min = 0,
     .r0 = {zeros, zeros, zeros}, .lc = {zeros, zeros, zeros}, .lstride = 0,
     .width = len_a, .y0 = 1, .y1 = len_b,
-    .score_only = true, .track_best = target == 0, .target = target};
+    .score_only = true, .track_best = target == 0, .target = target,
+    .ckpt = ckpt, .ckpt_every = every};
   alignment_lanes(&tmpl, &tmp.opts, scoring, len_a);
+  // Row 0 is all 0 in Smith-Waterman (the fill writes the others; column 0
+  // is never read back, see alignment_sw_trace_rows())
+  if(ckpt != NULL) memset(ckpt, 0, 3 * (len_a + 1) * sizeof(score_t));
   if(short_hit) {
     // A hit scoring at least half the best substitution score per row of
     // b it has crossed (see _sw_align_rect() in smith_waterman.c)
@@ -560,7 +570,7 @@ bool alignment_sw_scan(const char *a, size_t len_a, const char *b, size_t len_b,
                        score_t *best, size_t *x, size_t *y)
 {
   return alignment_sw_scan_any(a, len_a, b, len_b, scoring, target, opts,
-                               false, best, x, y);
+                               false, NULL, 0, best, x, y);
 }
 
 bool alignment_sw_scan_short(const char *a, size_t len_a,
@@ -570,7 +580,65 @@ bool alignment_sw_scan_short(const char *a, size_t len_a,
                              score_t *best, size_t *x, size_t *y)
 {
   return alignment_sw_scan_any(a, len_a, b, len_b, scoring, 0, opts, true,
-                               best, x, y);
+                               NULL, 0, best, x, y);
+}
+
+bool alignment_sw_rows(const char *a, size_t len_a,
+                       const char *b, size_t len_b,
+                       const scoring_t *scoring,
+                       const alignment_options_t *opts,
+                       size_t every, score_t *ckpt,
+                       score_t *best, size_t *x, size_t *y)
+{
+  if(every == 0) return false;
+  return alignment_sw_scan_any(a, len_a, b, len_b, scoring, 0, opts, false,
+                               ckpt, every, best, x, y);
+}
+
+bool alignment_sw_trace_rows(const char *a, size_t len_a,
+                             const char *b, size_t len_b,
+                             const scoring_t *scoring,
+                             const alignment_options_t *opts,
+                             const score_t *row, size_t y0, size_t y1,
+                             size_t xmax, uint8_t *trace)
+{
+  aligner_t tmp;
+  aligner_init(&tmp);
+  if(opts != NULL) tmp.opts = *opts;
+  else alignment_options_default(&tmp.opts);
+  if(!tmp.opts.striped || xmax == 0 || xmax > len_a || y0 == 0 ||
+     y0 > y1 || y1 > len_b) return false;
+
+  tmp.scoring = scoring;
+  tmp.seq_a = a;
+  tmp.seq_b = b;
+  tmp.score_width = len_a + 1;
+  tmp.score_height = y1 + 1; // the fill's columns hold rows up to y1
+
+  // Column 0 is all 0 in Smith-Waterman. Cell (x, y) of the strip at
+  // trace[(y - y0) * xmax + x - 1]
+  const size_t w = len_a + 1;
+  score_t zero = 0;
+  ptrdiff_t *trace_rows = aln_malloc((y1 + 1) * sizeof(ptrdiff_t));
+  sub_table_t table;
+  if(trace_rows == NULL ||
+     !sub_table_build(&table, scoring, a, len_a, b, len_b)) {
+    free(trace_rows);
+    return false;
+  }
+  size_t r;
+  for(r = y0; r <= y1; r++)
+    trace_rows[r] = (ptrdiff_t)((r - y0) * xmax) - 1;
+  // 32-bit lanes: row y0-1 may hold any score
+  alignment_block_t tmpl = {
+    .aligner = &tmp, .table = &table, .min = 0,
+    .r0 = {row, row + w, row + 2*w}, .lc = {&zero, &zero, &zero},
+    .lstride = 0, .width = xmax, .y0 = y0, .y1 = y1,
+    .trace = trace, .trace_rows = trace_rows};
+  bool filled = alignment_fill_blocks(&tmpl);
+  sub_table_free(&table);
+  free(trace_rows);
+  return filled;
 }
 
 #else
@@ -593,6 +661,30 @@ bool alignment_sw_scan_short(const char *a, size_t len_a,
                              score_t *best, size_t *x, size_t *y)
 {
   return alignment_sw_scan(a, len_a, b, len_b, scoring, 0, opts, best, x, y);
+}
+
+bool alignment_sw_rows(const char *a, size_t len_a,
+                       const char *b, size_t len_b,
+                       const scoring_t *scoring,
+                       const alignment_options_t *opts,
+                       size_t every, score_t *ckpt,
+                       score_t *best, size_t *x, size_t *y)
+{
+  (void)a; (void)len_a; (void)b; (void)len_b; (void)scoring; (void)opts;
+  (void)every; (void)ckpt; (void)best; (void)x; (void)y;
+  return false;
+}
+
+bool alignment_sw_trace_rows(const char *a, size_t len_a,
+                             const char *b, size_t len_b,
+                             const scoring_t *scoring,
+                             const alignment_options_t *opts,
+                             const score_t *row, size_t y0, size_t y1,
+                             size_t xmax, uint8_t *trace)
+{
+  (void)a; (void)len_a; (void)b; (void)len_b; (void)scoring; (void)opts;
+  (void)row; (void)y0; (void)y1; (void)xmax; (void)trace;
+  return false;
 }
 
 #endif /* ALN_STRIPED */

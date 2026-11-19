@@ -30,6 +30,12 @@ void alignment_byte_counts(size_t *fills, size_t *retries);
 extern bool hirschberg_check_striped;
 extern size_t hirschberg_striped_mismatches, hirschberg_banded_passes;
 
+// Rows per strip of a strip alignment (see smith_waterman_strip_min_cells;
+// 0: automatic)
+extern size_t smith_waterman_strip_rows;
+// Strip alignments made so far (not safe with alignments on other threads)
+extern size_t smith_waterman_strip_alignments;
+
 // Set to n > 0: the nth allocation an alignment makes from then on fails,
 // as if out of memory (on any thread), and the count returns to 0. Creating
 // aligners and results (e.g. alignment_create()) does not count

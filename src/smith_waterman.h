@@ -75,6 +75,17 @@ void smith_waterman_set_options(sw_aligner_t *sw,
 // tests
 extern size_t smith_waterman_rect_min_cells;
 
+// Compact best hits whose region (the rectangle above, or the whole matrix
+// where there is none) has at least this many cells (default 2^28, 256 MB
+// of traceback bytes) keep no traceback bytes for it: the scan for the best
+// cell also keeps every k-th row of the matrices (k about sqrt(12 x rows)),
+// and the hit is followed back strip by strip, each strip's bytes filled
+// again from the row kept above it, only up to the hit's column. The bytes,
+// and so the hit, are those of the whole fill, in O(columns x sqrt(rows))
+// memory (50 kb pairs sharing the whole sequence: 2.9 GB -> MB). A second
+// hit still fills the score matrices. For tuning and tests
+extern size_t smith_waterman_strip_min_cells;
+
 // An alignment to read from, and a pointer to memory to store the result
 // returns 1 if an alignment was read, 0 otherwise
 int smith_waterman_fetch(sw_aligner_t *sw, alignment_t *result);

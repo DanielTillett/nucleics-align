@@ -354,6 +354,17 @@ static void KN(alignment_fill_striped)(alignment_block_t *p)
         }
       }
     }
+    // Every ckpt_every-th row of the three matrices, for alignment_sw_rows()
+    if(p->ckpt != NULL && y % p->ckpt_every == 0) {
+      score_t *ck = p->ckpt + (y / p->ckpt_every) * 3 * w + c0 + 1;
+      for(l = 0; l < ALN_K_VL; l++) {
+        for(k = 0, i = l*seg; k < seg && i < len_i; k++, i++) {
+          ck[i] = cM[k][l];
+          ck[w + i] = cA[k][l];
+          ck[2*w + i] = cB[k][l];
+        }
+      }
+    }
     if(p->done != NULL) atomic_store_explicit(p->done, y, memory_order_release);
 
     tmp = pM; pM = cM; cM = tmp;

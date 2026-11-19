@@ -119,8 +119,10 @@ Link against `src/libalign.a` (and `libs/string_buffer/libstrbuf.a`, `-lz`,
   hit: it is found from traceback bytes, and the score matrices are only
   filled if a second hit is fetched. Above `smith_waterman_rect_min_cells`
   (default 2^24), and where no gap scores above 0, only the rectangle of
-  the best hit gets traceback bytes, unless the hit spans the sequences.
-  The hits are the same either way
+  the best hit gets traceback bytes, unless the hit spans the sequences;
+  above `smith_waterman_strip_min_cells` (default 2^28) the hit is followed
+  back from rows kept every so often instead, in O(n sqrt(m)) memory. The
+  hits are the same either way
 * `hirschberg_align()` (`src/hirschberg.h`): global alignment in O(n) memory;
   same scores as `needleman_wunsch_align()`, but returns false for options it
   does not support (a positive gap open, free end gaps, `no_gaps_in_*`,
@@ -317,6 +319,18 @@ Where the speed comes from:
   of more than 2^24 cells (was 2^30) start with it: 20 kb unrelated
   `smith_waterman --maxhits 1` 0.09 -> 0.01 s and 448 -> 5 MB, with related
   pairs as before
+* Strip alignments: a compact best hit whose region (the rectangle, or the
+  whole matrix where a hit spans the sequences) has more than 2^28 cells
+  keeps no traceback bytes for it. The scan for the best cell also keeps
+  every k-th row of the three matrices (k about sqrt(12 x rows)), and the
+  hit is followed back strip by strip from the bottom, each strip's bytes
+  filled again from the row kept above it and only up to the hit's column.
+  The bytes are those of the whole fill, so the hit is too (a linear-space
+  realignment would give the same score but could pick another of several
+  equal-scoring alignments). 50 kb pairs sharing the whole sequence:
+  1.27 -> 0.62 s and 2.9 GB -> 85 MB; 20 kb: 451 -> 23 MB, and slightly
+  faster. Smaller regions keep the threaded fill of every byte, which is
+  quicker there (10 kb: 0.03 s against 0.05 s)
 * The linear-space aligner's forward and reverse passes share the threads
   rather than taking half the CPUs each, which oversubscribed the cores (50
   kb unrelated `--linear` 0.45 -> 0.33 s and 6.1 -> 2.1 s of CPU)
@@ -425,23 +439,26 @@ Local alignment, best hit only (`smith_waterman --maxhits 1`), 20 kb:
 | Tool | 1% | 10% | Unrelated | Peak memory |
 |---|---|---|---|---|
 | seq-align before this fork | 71.1 s | 61.2 s | 34.5 s | 6.3 - 8.5 GB |
-| Nucleics Align | 0.10 s (1.2 s) | 0.08 s (0.8 s) | 0.01 s (0.14 s) | 5 - 451 MB |
+| Nucleics Align | 0.12 s (0.9 s) | 0.11 s (0.8 s) | 0.01 s (0.14 s) | 5 - 23 MB |
 | parasail | 0.90 s | 0.83 s | 0.72 s | 1.5 GB |
 | SSW | 0.27 s | 0.22 s | 0.03 s | 7 MB |
 
 For the unrelated pair Nucleics Align reports no hit, as the best (score 14) is
-below the default `--minscore`; its row was measured again after the 8-bit
-lanes were added (0.07 s and 448 MB before), as the median of 11 runs. With
-`NATIVE=1` on AVX-512 it takes under 0.005 s. At 50 kb Nucleics Align's best
-hit took 0.84 s and 2.9 GB when it spans both sequences, and 0.06 s and 10
-MB for the unrelated pair (the other tools were not run). At 5 kb every global aligner
+below the default `--minscore`. The Nucleics Align row was measured again
+after the 8-bit lanes and strip alignments were added (best of 5; the
+version before them took 0.13 s, 0.14 s and 0.09 s with 448-451 MB in the
+same session). With `NATIVE=1` on AVX-512 the unrelated pair takes under
+0.005 s. At 50 kb Nucleics Align's best hit takes 0.62 s (6.1 s CPU) and 85
+MB when it spans both sequences (1.27 s and 2.9 GB before strip
+alignments), and 0.06 s and 10 MB for the unrelated pair (the other tools
+were not run). At 5 kb every global aligner
 took 0.07 s or less, except seq-align before this fork (0.53-0.63 s) and
 WFA2 on the unrelated pair (0.65-0.96 s).
 
 In short:
 * Against the code before this fork, the same full-matrix alignment is
-  140-320x faster with 12-240x less memory, and the best local hit 380-650x
-  faster
+  140-320x faster with 12-240x less memory, and the best local hit
+  550-3,400x faster with over 250x less memory
 * For global alignment Nucleics Align has the lowest wall time of the exact
   aligners tested, except WFA2 on near-identical sequences: 0.03-0.07 s for
   the full-matrix aligner at 20 kb against 0.33-0.35 s for ksw2. WFA2's time
@@ -453,10 +470,10 @@ In short:
   banding skips most cells (20 kb at 1%: 0.02 s of CPU)
 * For the best local hit Nucleics Align is now faster than parasail and SSW
   in wall time, on unrelated pairs too (0.01 s and 5 MB against SSW's 0.03 s
-  and 7 MB). SSW still uses about 4x less CPU time on related pairs, and
-  needs only 7 MB where a hit spans the sequences. On one core Nucleics
-  Align's score scan of the unrelated pair takes 0.017 s (0.014 s with
-  `NATIVE=1` on AVX-512)
+  and 7 MB), and needs 23 MB where a 20 kb hit spans the sequences (SSW 7
+  MB, parasail 1.5 GB). SSW still uses about 3x less CPU time on related
+  pairs. On one core Nucleics Align's score scan of the unrelated pair takes
+  0.017 s (0.014 s with `NATIVE=1` on AVX-512)
 
 Examples
 ========
