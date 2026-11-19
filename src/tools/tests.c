@@ -23,6 +23,7 @@
 #include "hirschberg.h"
 #include "alignment_scoring_load.h"
 #include "alignment_simd.h" // ALN_STRIPED
+#include "alignment_testing.h" // counters and checks
 
 //
 // Tests
@@ -1802,6 +1803,157 @@ void test_checked()
   alignment_free(aln);
 }
 
+/* Out of memory: each allocation of an alignment fails in turn */
+
+enum { OOM_NW, OOM_NW_COMPACT, OOM_SW, OOM_SW_COMPACT, OOM_HB, OOM_HB_SCORE,
+       OOM_KINDS };
+
+typedef struct {
+  const char *a, *b;
+  const alignment_options_t *opts;
+  const scoring_t *scoring;
+  nw_aligner_t *nw;
+  sw_aligner_t *sw;
+  alignment_t *aln;
+} oom_case_t;
+
+// Append an alignment's score and strings to sig
+static void oom_sig_add(char *sig, size_t cap, const alignment_t *aln)
+{
+  size_t len = strlen(sig);
+  snprintf(sig + len, cap - len, "%i %s %s;", aln->score, aln->result_a,
+           aln->result_b);
+}
+
+// One alignment of the kind given (Smith-Waterman: its first few hits),
+// described in sig
+static aln_status_t oom_run(oom_case_t *c, int kind, char *sig, size_t cap)
+{
+  const size_t la = strlen(c->a), lb = strlen(c->b);
+  aln_error_t e;
+  aln_status_t status;
+  score_t score = 0;
+  sig[0] = '\0';
+  switch(kind) {
+    case OOM_NW:
+    case OOM_NW_COMPACT:
+      c->nw->options = c->opts;
+      c->nw->compact = kind == OOM_NW_COMPACT;
+      status = needleman_wunsch_align_checked(c->a, c->b, la, lb, c->scoring,
+                                              c->nw, c->aln, &e);
+      if(status == ALN_OK) oom_sig_add(sig, cap, c->aln);
+      break;
+    case OOM_SW:
+    case OOM_SW_COMPACT:
+      smith_waterman_set_options(c->sw, c->opts);
+      smith_waterman_set_compact(c->sw, kind == OOM_SW_COMPACT);
+      status = smith_waterman_align_checked(c->a, c->b, la, lb, c->scoring,
+                                            c->sw, &e);
+      int hits = 0;
+      while(status == ALN_OK && hits++ < 4 &&
+            smith_waterman_fetch_checked(c->sw, c->aln, &e))
+        oom_sig_add(sig, cap, c->aln);
+      if(status == ALN_OK) status = e.status;
+      // After an error: no hits, and no reads of what was not filled
+      if(status != ALN_OK) {
+        aln_error_t e2;
+        ASSERT(!smith_waterman_fetch_checked(c->sw, c->aln, &e2) &&
+               e2.status == ALN_OK);
+      }
+      break;
+    case OOM_HB:
+      status = hirschberg_align_checked(c->a, c->b, la, lb, c->scoring,
+                                        c->opts, c->aln, &e);
+      if(status == ALN_OK) oom_sig_add(sig, cap, c->aln);
+      break;
+    default:
+      status = hirschberg_score_checked(c->a, c->b, la, lb, c->scoring,
+                                        c->opts, &score, &e);
+      if(status == ALN_OK) snprintf(sig, cap, "%i", score);
+  }
+  ASSERT(e.status == status);
+  return status;
+}
+
+void test_out_of_memory()
+{
+  enum { CAP = 1 << 14 };
+  static char a[161], b[321], ref[CAP], sig[CAP];
+  hb_rand_seq(a, 160, "acgt");
+  hb_mutate(b, a, 40, "acgt");
+  // Blocks on several threads, the Smith-Waterman rectangle, and bands
+  // narrow enough to pay on these short sequences
+  alignment_options_t many;
+  alignment_options_default(&many);
+  many.max_threads = many.hb_max_threads = 4;
+  many.block_min_cells = many.hb_block_min_cells = 1;
+  many.block_min_cols = many.hb_block_min_cols = 8;
+  many.sw_rect_min_cells = 0;
+  many.band_strip_rows = many.hb_band_strip_rows = 8;
+  many.band_min_width = many.hb_band_min_width = 4;
+  scoring_t scoring;
+  scoring_system_default(&scoring);
+  oom_case_t c = {a, b, NULL, &scoring, NULL, NULL, NULL};
+  int kind, o;
+  size_t n;
+
+  for(kind = 0; kind < OOM_KINDS; kind++) {
+    for(o = 0; o < 2; o++) {
+      c.opts = o ? &many : NULL;
+      for(n = 0; ; n++) {
+        // New aligners each time, so every allocation is made again
+        c.nw = needleman_wunsch_new();
+        c.sw = smith_waterman_new();
+        c.aln = alignment_create(16);
+        alignment_alloc_fail(n);
+        size_t banded = hirschberg_banded_passes;
+        hirschberg_check_striped = n == 0; // counts banded passes
+        aln_status_t status = oom_run(&c, kind, n ? sig : ref, CAP);
+        hirschberg_check_striped = false;
+        if(n == 0 && o == 1) {
+          // The forced bands are used, so their allocations fail too
+          if(kind == OOM_NW_COMPACT) ASSERT(c.nw->trace_banded);
+          if(kind == OOM_HB && hirschberg_simd_available())
+            ASSERT(hirschberg_banded_passes > banded);
+        }
+        bool failed = n > 0 && alignment_alloc_fail_pending() == 0;
+        alignment_alloc_fail(0);
+        bool done = n > 0 && !failed;
+        if(n == 0) {
+          ASSERT(status == ALN_OK); // the result to match
+        }
+        else if(!failed) {
+          // Fewer than n allocations: the whole alignment ran
+          ASSERT(status == ALN_OK && strcmp(sig, ref) == 0);
+        }
+        else {
+          // A failure that only stops a faster path gives the same result
+          ASSERT(status == ALN_ERR_NOMEM ||
+                 (status == ALN_OK && strcmp(sig, ref) == 0));
+          // and the aligner works as before afterwards
+          ASSERT(oom_run(&c, kind, sig, CAP) == ALN_OK &&
+                 strcmp(sig, ref) == 0);
+        }
+        needleman_wunsch_free(c.nw);
+        smith_waterman_free(c.sw);
+        alignment_free(c.aln);
+        if(done) break;
+      }
+      ASSERT(n > 1); // something was allocated
+    }
+  }
+
+  // The message
+  char *text = NULL;
+  size_t len = 0;
+  FILE *out = open_memstream(&text, &len);
+  aln_error_t e = {ALN_ERR_NOMEM, 0, 0};
+  alignment_fprint_error(out, &e);
+  fclose(out);
+  ASSERT(strcmp(text, "Error: Out of memory\n") == 0);
+  free(text);
+}
+
 /* Rounding sizes up to a power of two never wraps to a smaller size */
 void alignment_test_roundup()
 {
@@ -1825,6 +1977,7 @@ void test_misc()
   test_global_inputs();
   test_options();
   test_checked();
+  test_out_of_memory();
 
   SUITE_END();
 }

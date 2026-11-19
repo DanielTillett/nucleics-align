@@ -18,6 +18,13 @@ ifdef NATIVE
 	OPT += -march=native
 endif
 
+# Force the 32-bit lanes per SIMD vector (4, 8 or 16), to test the widths
+# this CPU would not pick: make LANES=16 test. Not with clang on x86-64
+# Linux, whose dispatch builds take only 4
+ifdef LANES
+	OPT += -DALN_VL=$(LANES)
+endif
+
 CFLAGS ?= -Wall -Wextra
 # -Wno-psabi: GCC notes that 8-lane vectors are passed differently without
 # AVX; the SIMD helpers are always inlined, so no call passes one

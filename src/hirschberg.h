@@ -55,14 +55,6 @@ extern int hirschberg_max_threads;
 // (first band tried, default 64) are for tuning and tests
 extern bool hirschberg_band_enabled;
 extern size_t hirschberg_band_strip_rows, hirschberg_band_min_width;
-// Testing aid: banded passes run so far (each try of a band counts), while
-// hirschberg_check_striped is set; not safe with alignments on other threads
-extern size_t hirschberg_banded_passes;
-
-// Testing aid: when true, each SIMD pass is redone without SIMD and
-// hirschberg_striped_mismatches counts any row that differs
-extern bool hirschberg_check_striped;
-extern size_t hirschberg_striped_mismatches;
 
 // Whether this build and CPU run the SIMD passes (and so banding)
 bool hirschberg_simd_available(void);
@@ -82,9 +74,10 @@ bool hirschberg_score_opts(const char *a, const char *b,
                            const scoring_t *scoring,
                            const alignment_options_t *opts, score_t *score);
 
-// As the *_opts() functions, but an error in the input (see aln_status_t;
-// ALN_ERR_UNSUPPORTED where they return false) is returned, with err set if
-// not NULL, instead of ending the program
+// As the *_opts() functions, but an error (see aln_status_t: in the input,
+// ALN_ERR_UNSUPPORTED where they return false, or ALN_ERR_NOMEM, running out
+// of memory) is returned, with err set if not NULL, instead of ending the
+// program
 aln_status_t hirschberg_align_checked(const char *a, const char *b,
                                       size_t len_a, size_t len_b,
                                       const scoring_t *scoring,

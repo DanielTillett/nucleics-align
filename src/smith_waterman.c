@@ -17,6 +17,7 @@
 
 #include "smith_waterman.h"
 #include "alignment_macros.h"
+#include "alignment_alloc.h"
 
 typedef struct {
   uint32_t *b; size_t l, s; // l is bits, s in uint32_t
@@ -37,7 +38,7 @@ static inline void bitset_dealloc(BitSet *bs) {
 static inline BitSet* bitset_set_length(BitSet *bs, size_t l) {
   size_t ss = l/32 + (l%32 != 0);
   if(ss > bs->s) {
-    uint32_t *b = realloc(bs->b, ss*sizeof(bs->b[0]));
+    uint32_t *b = aln_realloc(bs->b, ss*sizeof(bs->b[0]));
     if(b == NULL) return NULL;
     memset(b+bs->s, 0, (ss-bs->s)*sizeof(b[0])); // zero new memory
     bs->b = b;
@@ -223,32 +224,43 @@ static void _init_history(sw_history_t *hist)
   }
 }
 
-// Room for one bit per cell in the used-cell mask
-static void _ensure_mask_capacity(sw_history_t *hist, size_t arr_size)
+// Room for one bit per cell in the used-cell mask. Returns false if out of
+// memory
+static bool _ensure_mask_capacity(sw_history_t *hist, size_t arr_size)
 {
-  if(arr_size > hist->match_scores_mask.l &&
-     !bitset_set_length(&hist->match_scores_mask, ROUNDUP2POW(arr_size))) {
-    fprintf(stderr, "%s:%i: Out of memory\n", __FILE__, __LINE__);
-    exit(EXIT_FAILURE);
-  }
+  return arr_size <= hist->match_scores_mask.l ||
+         bitset_set_length(&hist->match_scores_mask, ROUNDUP2POW(arr_size));
 }
 
-// Room for every cell in the sorted index (only needed past the first hit)
-static void _ensure_index_capacity(sw_history_t *hist, size_t arr_size)
+// Room for every cell in the sorted index (only needed past the first hit).
+// Returns false if out of memory
+static bool _ensure_index_capacity(sw_history_t *hist, size_t arr_size)
 {
   if(arr_size > hist->hits_capacity) {
-    hist->hits_capacity = ROUNDUP2POW(arr_size);
-    size_t mem = hist->hits_capacity * sizeof(*(hist->sorted_match_indices));
+    size_t capacity = ROUNDUP2POW(arr_size);
+    size_t mem = capacity * sizeof(*(hist->sorted_match_indices));
     size_t *indices = NULL;
-    if(hist->hits_capacity <= SIZE_MAX / sizeof(*(hist->sorted_match_indices)))
-      indices = realloc(hist->sorted_match_indices, mem);
-    if(indices == NULL) {
-      fprintf(stderr, "%s:%i: Out of memory\n", __FILE__, __LINE__);
-      exit(EXIT_FAILURE);
-    }
+    if(capacity <= SIZE_MAX / sizeof(*(hist->sorted_match_indices)))
+      indices = aln_realloc(hist->sorted_match_indices, mem);
+    if(indices == NULL) return false;
     hist->sorted_match_indices = indices;
+    hist->hits_capacity = capacity;
   }
+  return true;
 }
+
+// After an error: no hits to fetch until aligned again
+static void _no_hits(sw_history_t *hist)
+{
+  hist->num_of_hits = hist->next_hit = 0;
+  hist->indexed = hist->first_done = true;
+}
+
+static aln_status_t _sw_align(const char *a, const char *b,
+                              size_t len_a, size_t len_b,
+                              const scoring_t *scoring, sw_aligner_t *sw);
+static int _sw_fetch(sw_aligner_t *sw, alignment_t *result,
+                     aln_status_t *status);
 
 sw_aligner_t* smith_waterman_new(void)
 {
@@ -310,7 +322,8 @@ void smith_waterman_align(const char *a, const char *b,
 // saves memory and time when hits are short against the sequences.
 // That needs every hit to start with a pair: the traceback stops at a score
 // of 0, so a hit can open with a gap only if a gap can score above 0.
-// Returns false where the scans do not apply
+// Returns false where the scans do not apply, or if out of memory (the
+// whole fill then reports it)
 static bool _sw_align_rect(sw_aligner_t *sw, const char *a, const char *b,
                            size_t len_a, size_t len_b,
                            const scoring_t *scoring)
@@ -356,11 +369,8 @@ static bool _sw_align_rect(sw_aligner_t *sw, const char *a, const char *b,
   else
   {
     // Reversed prefixes up to the end of the best hit
-    char *ra = malloc(bx + by);
-    if(ra == NULL) {
-      fprintf(stderr, "%s:%i: Out of memory\n", __FILE__, __LINE__);
-      exit(EXIT_FAILURE);
-    }
+    char *ra = aln_malloc(bx + by);
+    if(ra == NULL) return false;
     char *rb = ra + bx;
     for(i = 0; i < bx; i++) ra[i] = a[bx-1-i];
     for(i = 0; i < by; i++) rb[i] = b[by-1-i];
@@ -372,8 +382,9 @@ static bool _sw_align_rect(sw_aligner_t *sw, const char *a, const char *b,
 
   // Reversed cell (rx, ry) is the start pair (bx-rx+1, by-ry+1)
   const size_t x0 = bx - rx, y0 = by - ry;
-  aligner_align(aligner, a + x0, b + y0, rx, ry, scoring, 1);
-  if(!aligner->traced || aligner->best_score != best ||
+  if(aligner_align_checked(aligner, a + x0, b + y0, rx, ry, scoring,
+                           1) != ALN_OK ||
+     !aligner->traced || aligner->best_score != best ||
      aligner->best_index != ry * (rx + 1) + rx) return false;
 
   sw->rect = true;
@@ -390,14 +401,30 @@ aln_status_t smith_waterman_align_checked(const char *seq_a, const char *seq_b,
 {
   aln_status_t status = alignment_check(scoring, seq_a, len_a, seq_b, len_b,
                                         true, err);
-  if(status == ALN_OK)
-    smith_waterman_align2(seq_a, seq_b, len_a, len_b, scoring, sw);
+  if(status == ALN_OK) {
+    status = _sw_align(seq_a, seq_b, len_a, len_b, scoring, sw);
+    if(err != NULL) err->status = status;
+  }
   return status;
 }
 
 void smith_waterman_align2(const char *a, const char *b,
                            size_t len_a, size_t len_b,
                            const scoring_t *scoring, sw_aligner_t *sw)
+{
+  aln_error_t e = {ALN_OK, 0, 0};
+  e.status = _sw_align(a, b, len_a, len_b, scoring, sw);
+  if(e.status != ALN_OK) {
+    alignment_fprint_error(stderr, &e);
+    exit(EXIT_FAILURE);
+  }
+}
+
+// Returns ALN_ERR_TOO_LONG or ALN_ERR_OVERFLOW (see aligner_align()), or
+// ALN_ERR_NOMEM; after an error there are no hits to fetch
+static aln_status_t _sw_align(const char *a, const char *b,
+                              size_t len_a, size_t len_b,
+                              const scoring_t *scoring, sw_aligner_t *sw)
 {
   aligner_t *aligner = &sw->aligner;
   sw_history_t *hist = &sw->history;
@@ -406,8 +433,10 @@ void smith_waterman_align2(const char *a, const char *b,
   sw->len_a = len_a;
   sw->len_b = len_b;
   sw->rect = false;
+  _no_hits(hist);
   sub_table_free(&sw->table);
-  sub_table_build(&sw->table, scoring, a, len_a, b, len_b);
+  if(!sub_table_build(&sw->table, scoring, a, len_a, b, len_b))
+    return ALN_ERR_NOMEM;
   aligner->compact = sw->compact;
   if(aligner->options != NULL) aligner->opts = *aligner->options;
   else alignment_options_default(&aligner->opts);
@@ -416,7 +445,9 @@ void smith_waterman_align2(const char *a, const char *b,
      !_sw_align_rect(sw, a, b, len_a, len_b, scoring))
   {
     sw->rect = false;
-    aligner_align(aligner, a, b, len_a, len_b, scoring, 1);
+    aln_status_t status = aligner_align_checked(aligner, a, b, len_a, len_b,
+                                                scoring, 1);
+    if(status != ALN_OK) return status;
   }
 
   sw->fast_walk = !scoring->no_start_gap_penalty &&
@@ -427,7 +458,7 @@ void smith_waterman_align2(const char *a, const char *b,
   // No cell is walked when the scan found no hit
   size_t arr_size = sw->rect && aligner->best_score < sw->min_score ? 0 :
                     aligner->score_width * aligner->score_height;
-  _ensure_mask_capacity(hist, arr_size);
+  if(!_ensure_mask_capacity(hist, arr_size)) return ALN_ERR_NOMEM;
 
   // Clear the visited-cell mask for every cell (bits past them are never
   // read). Size is in bytes: clearing only one byte per 32-bit word left
@@ -438,6 +469,7 @@ void smith_waterman_align2(const char *a, const char *b,
   // Set number of hits
   hist->num_of_hits = hist->next_hit = 0;
   hist->indexed = hist->first_done = false;
+  return ALN_OK;
 }
 
 // The first hit in index order: the highest-scoring cell, then lowest
@@ -471,13 +503,14 @@ static bool _best_cell(const sw_aligner_t *sw, size_t *best)
   return true;
 }
 
-// Order every cell scoring at least min_score for smith_waterman_fetch()
-static void _index_hits(sw_aligner_t *sw)
+// Order every cell scoring at least min_score for smith_waterman_fetch().
+// Returns false if out of memory
+static bool _index_hits(sw_aligner_t *sw)
 {
   aligner_t *aligner = &sw->aligner;
   sw_history_t *hist = &sw->history;
   const size_t arr_size = aligner->score_width * aligner->score_height;
-  _ensure_index_capacity(hist, arr_size);
+  if(!_ensure_index_capacity(hist, arr_size)) return false;
 
   // Hits may start from cells scoring at least lo. Cells scoring less are
   // only reached after every higher one, so leaving them out changes no
@@ -499,7 +532,7 @@ static void _index_hits(sw_aligner_t *sw)
   // those is cheaper than the counting sort's column-major pass
   size_t *starts = NULL;
   if(total * 16 >= arr_size && (size_t)max_score <= arr_size)
-    starts = calloc((size_t)max_score + 2, sizeof(size_t));
+    starts = aln_calloc((size_t)max_score + 2, sizeof(size_t));
 
   if(starts == NULL)
   {
@@ -510,7 +543,7 @@ static void _index_hits(sw_aligner_t *sw)
     MatrixSort tmp_struct = {aligner->match_scores, aligner->score_width};
     sort_r(hist->sorted_match_indices, hist->num_of_hits,
            sizeof(size_t), sort_match_indices, &tmp_struct);
-    return;
+    return true;
   }
 
   // starts[s] = number of candidate cells scoring more than s
@@ -527,11 +560,13 @@ static void _index_hits(sw_aligner_t *sw)
         hist->sorted_match_indices[starts[scores[pos]]++] = pos;
 
   free(starts);
+  return true;
 }
 
-// Return 1 if alignment was found, 0 otherwise
-static char _follow_hit(sw_aligner_t* sw, size_t arr_index,
-                        alignment_t* result)
+// Return 1 if alignment was found, 0 otherwise, -1 if out of memory (its
+// cells are then used, and the hit lost)
+static int _follow_hit(sw_aligner_t* sw, size_t arr_index,
+                       alignment_t* result)
 {
   const aligner_t *aligner = &(sw->aligner);
   const sw_history_t *hist = &(sw->history);
@@ -579,9 +614,8 @@ static char _follow_hit(sw_aligner_t* sw, size_t arr_index,
 
   // We got a result!
   // Allocate memory for the result
+  if(!alignment_reserve(result, length)) return -1;
   result->length = length;
-
-  alignment_ensure_capacity(result, length);
 
   // Jump back to the end of the alignment
   arr_index = end_arr_index;
@@ -638,14 +672,43 @@ static char _follow_hit(sw_aligner_t* sw, size_t arr_index,
 
 int smith_waterman_fetch(sw_aligner_t *sw, alignment_t *result)
 {
+  aln_error_t e = {ALN_OK, 0, 0};
+  int found = smith_waterman_fetch_checked(sw, result, &e);
+  if(e.status != ALN_OK) {
+    alignment_fprint_error(stderr, &e);
+    exit(EXIT_FAILURE);
+  }
+  return found;
+}
+
+int smith_waterman_fetch_checked(sw_aligner_t *sw, alignment_t *result,
+                                 aln_error_t *err)
+{
+  aln_status_t status = ALN_OK;
+  int found = _sw_fetch(sw, result, &status);
+  if(status != ALN_OK) _no_hits(&sw->history);
+  if(err != NULL) {
+    err->status = status;
+    err->a = err->b = 0;
+  }
+  return found;
+}
+
+static int _sw_fetch(sw_aligner_t *sw, alignment_t *result,
+                     aln_status_t *status)
+{
   sw_history_t *hist = &(sw->history);
+  int found;
 
   if(!hist->first_done) {
     hist->first_done = true;
     size_t best = 0;
     if(!_best_cell(sw, &best)) { hist->indexed = true; return 0; }
-    // Cannot fail: no cell is used yet
-    _follow_hit(sw, best, result);
+    // Cannot be refused: no cell is used yet
+    if(_follow_hit(sw, best, result) < 0) {
+      *status = ALN_ERR_NOMEM;
+      return 0;
+    }
     result->pos_a += sw->rect ? sw->off_a : 0;
     result->pos_b += sw->rect ? sw->off_b : 0;
     return 1;
@@ -660,27 +723,43 @@ int smith_waterman_fetch(sw_aligner_t *sw, alignment_t *result)
       // mark the cells it used
       sw->rect = false;
       aligner->compact = false;
-      aligner_align(aligner, sw->seq_a, sw->seq_b, sw->len_a, sw->len_b,
-                    aligner->scoring, 1);
+      *status = aligner_align_checked(aligner, sw->seq_a, sw->seq_b,
+                                      sw->len_a, sw->len_b,
+                                      aligner->scoring, 1);
       aligner->compact = true;
+      if(*status != ALN_OK) return 0;
       size_t arr_size = aligner->score_width * aligner->score_height;
-      _ensure_mask_capacity(hist, arr_size);
+      if(!_ensure_mask_capacity(hist, arr_size)) {
+        *status = ALN_ERR_NOMEM;
+        return 0;
+      }
       memset(hist->match_scores_mask.b, 0,
              (arr_size + 31) / 32 * sizeof(hist->match_scores_mask.b[0]));
-      alignment_t *first = alignment_create(256);
-      _follow_hit(sw, sw->full_best, first);
-      alignment_free(first);
+      alignment_t first;
+      memset(&first, 0, sizeof(first));
+      found = _follow_hit(sw, sw->full_best, &first);
+      free(first.result_a);
+      free(first.result_b);
+      if(found < 0) {
+        *status = ALN_ERR_NOMEM;
+        return 0;
+      }
     }
     else if(aligner->traced) {
       // Later hits need the score matrices: fill them (the used cells stay
       // marked)
       aligner->compact = false;
-      aligner_align(aligner, aligner->seq_a, aligner->seq_b,
-                    aligner->score_width-1, aligner->score_height-1,
-                    aligner->scoring, 1);
+      *status = aligner_align_checked(aligner, aligner->seq_a, aligner->seq_b,
+                                      aligner->score_width-1,
+                                      aligner->score_height-1,
+                                      aligner->scoring, 1);
       aligner->compact = true;
+      if(*status != ALN_OK) return 0;
     }
-    _index_hits(sw);
+    if(!_index_hits(sw)) {
+      *status = ALN_ERR_NOMEM;
+      return 0;
+    }
   }
 
   while(hist->next_hit < hist->num_of_hits)
@@ -688,10 +767,13 @@ int smith_waterman_fetch(sw_aligner_t *sw, alignment_t *result)
     size_t arr_index = hist->sorted_match_indices[hist->next_hit++];
     // printf("hit %lu/%lu\n", hist->next_hit, hist->num_of_hits);
 
-    if(!bitset32_get(hist->match_scores_mask.b, arr_index) &&
-       _follow_hit(sw, arr_index, result))
-    {
-      return 1;
+    if(!bitset32_get(hist->match_scores_mask.b, arr_index)) {
+      found = _follow_hit(sw, arr_index, result);
+      if(found < 0) {
+        *status = ALN_ERR_NOMEM;
+        return 0;
+      }
+      if(found) return 1;
     }
   }
 

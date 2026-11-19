@@ -34,8 +34,9 @@ void smith_waterman_align2(const char *seq_a, const char *seq_b,
                            size_t len_a, size_t len_b,
                            const scoring_t *scoring, sw_aligner_t *sw);
 
-// As smith_waterman_align2(), but an error in the input (see aln_status_t) is
-// returned, with err set if not NULL, instead of ending the program
+// As smith_waterman_align2(), but an error (see aln_status_t: in the input,
+// or running out of memory) is returned, with err set if not NULL, instead of
+// ending the program. After an error there are no hits to fetch
 aln_status_t smith_waterman_align_checked(const char *seq_a, const char *seq_b,
                                           size_t len_a, size_t len_b,
                                           const scoring_t *scoring,
@@ -75,6 +76,13 @@ extern size_t smith_waterman_rect_min_cells;
 // An alignment to read from, and a pointer to memory to store the result
 // returns 1 if an alignment was read, 0 otherwise
 int smith_waterman_fetch(sw_aligner_t *sw, alignment_t *result);
+
+// As smith_waterman_fetch(), but if out of memory returns 0 with
+// err->status ALN_ERR_NOMEM (else ALN_OK) instead of ending the program.
+// Fetching a second hit fills the score matrices if a compact alignment
+// has not. After an error there are no more hits to fetch
+int smith_waterman_fetch_checked(sw_aligner_t *sw, alignment_t *result,
+                                 aln_error_t *err);
 
 #ifdef __cplusplus
 }

@@ -37,6 +37,11 @@ void needleman_wunsch_align(const char *a, const char *b,
 
 // Gaps before the first aligned pair, then shift the alignment (written
 // backwards from next_char) to the start of the buffers
+static aln_status_t _nw_align(const char *a, const char *b,
+                              size_t len_a, size_t len_b,
+                              const scoring_t *scoring,
+                              nw_aligner_t *nw, alignment_t *result);
+
 static void _nw_finish(const nw_aligner_t *nw, alignment_t *result,
                        size_t score_x, size_t score_y, size_t next_char,
                        size_t longest_alignment)
@@ -86,7 +91,6 @@ static bool _nw_follow_trace(const nw_aligner_t *nw, alignment_t *result)
 {
   const size_t w = nw->score_width;
   size_t longest_alignment = w-1 + nw->score_height-1;
-  alignment_ensure_capacity(result, longest_alignment);
   size_t next_char = longest_alignment-1;
 
   enum Matrix curr_matrix = MATCH;
@@ -129,8 +133,10 @@ aln_status_t needleman_wunsch_align_checked(const char *a, const char *b,
 {
   aln_status_t status = alignment_check(scoring, a, len_a, b, len_b, false,
                                         err);
-  if(status == ALN_OK)
-    needleman_wunsch_align2(a, b, len_a, len_b, scoring, nw, result);
+  if(status == ALN_OK) {
+    status = _nw_align(a, b, len_a, len_b, scoring, nw, result);
+    if(err != NULL) err->status = status;
+  }
   return status;
 }
 
@@ -139,29 +145,47 @@ void needleman_wunsch_align2(const char *a, const char *b,
                              const scoring_t *scoring,
                              nw_aligner_t *nw, alignment_t *result)
 {
+  aln_error_t e = {ALN_OK, 0, 0};
+  e.status = _nw_align(a, b, len_a, len_b, scoring, nw, result);
+  if(e.status != ALN_OK) {
+    alignment_fprint_error(stderr, &e);
+    exit(EXIT_FAILURE);
+  }
+}
+
+// Returns ALN_ERR_TOO_LONG or ALN_ERR_OVERFLOW (see aligner_align()), or
+// ALN_ERR_NOMEM with no alignment in result
+static aln_status_t _nw_align(const char *a, const char *b,
+                              size_t len_a, size_t len_b,
+                              const scoring_t *scoring,
+                              nw_aligner_t *nw, alignment_t *result)
+{
+  aln_status_t status;
   #ifdef SEQ_ALIGN_VERBOSE
     // The diagnostics below need the score matrices
     bool compact = nw->compact;
     nw->compact = false;
-    aligner_align(nw, a, b, len_a, len_b, scoring, 0);
+    status = aligner_align_checked(nw, a, b, len_a, len_b, scoring, 0);
     nw->compact = compact;
   #else
-    aligner_align(nw, a, b, len_a, len_b, scoring, 0);
+    status = aligner_align_checked(nw, a, b, len_a, len_b, scoring, 0);
   #endif
-
-  if(nw->traced) {
-    if(_nw_follow_trace(nw, result)) return;
-    // Fill the matrices, so the traceback below reports the failed step
-    nw->compact = false;
-    aligner_align(nw, a, b, len_a, len_b, scoring, 0);
-    nw->compact = true;
-  }
-
-  // work backwards re-tracing optimal alignment, then shift sequences into place
+  if(status != ALN_OK) return status;
 
   // note: longest_alignment = strlen(seq_a) + strlen(seq_b)
   size_t longest_alignment = nw->score_width-1 + nw->score_height-1;
-  alignment_ensure_capacity(result, longest_alignment);
+  if(!alignment_reserve(result, longest_alignment)) return ALN_ERR_NOMEM;
+
+  if(nw->traced) {
+    if(_nw_follow_trace(nw, result)) return ALN_OK;
+    // Fill the matrices, so the traceback below reports the failed step
+    nw->compact = false;
+    status = aligner_align_checked(nw, a, b, len_a, len_b, scoring, 0);
+    nw->compact = true;
+    if(status != ALN_OK) return status;
+  }
+
+  // work backwards re-tracing optimal alignment, then shift sequences into place
 
   // Position of next alignment character in buffer (working backwards)
   size_t next_char = longest_alignment-1;
@@ -233,4 +257,5 @@ void needleman_wunsch_align2(const char *a, const char *b,
   }
 
   _nw_finish(nw, result, score_x, score_y, next_char, longest_alignment);
+  return ALN_OK;
 }

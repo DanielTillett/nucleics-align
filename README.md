@@ -53,6 +53,7 @@ Build options:
     $ make SANITIZE=1 test                # tests with ASan and UBSan
     $ make NATIVE=1                       # tune for this CPU (e.g. AVX2)
     $ make DEBUG=1                        # no optimisation, debug symbols
+    $ make LANES=16 test                  # tests with 4, 8 or 16 SIMD lanes
 
 `make test` runs the library's unit tests, then `tests/cli/run.sh`, which
 compares the tools' output, error messages and exit status with the
@@ -79,6 +80,11 @@ use the compiler's target: ARM NEON (e.g. Apple silicon) gets all the SIMD
 code, while x86 builds elsewhere (e.g. macOS on Intel) can add
 `OPT="-O3 -msse4.1"` or `NATIVE=1`. ThreadSanitizer builds skip the run-time
 selection, which it cannot handle.
+
+`LANES=4`, `8` or `16` forces the lane count, so the tests can cover widths
+the CPU would not pick (slower, but the same results). It is not for clang
+on x86-64 Linux, whose run-time selection takes only 4 lanes. The CI runs
+8 and 16 lanes on Arm.
 
 To update:
 
@@ -139,18 +145,24 @@ defaults apply: `alignment_options_default()` reads them from the
 variables, which keep their old meaning (e.g. `alignment_striped_enabled =
 false` switches SIMD off everywhere).
 
-The aligners above end the program on an error in the input. The
-`*_checked()` versions (`needleman_wunsch_align_checked()`,
-`smith_waterman_align_checked()`, `hirschberg_align_checked()`,
-`hirschberg_score_checked()`) return it instead, as an `aln_status_t`, before
-doing any work: a character pair the scoring does not define
-(`ALN_ERR_SCORING`, naming the pair), sequences too long to address
-(`ALN_ERR_TOO_LONG`), scores that could pass `INT_MAX` (`ALN_ERR_OVERFLOW`)
-or, for linear space, options it refuses (`ALN_ERR_UNSUPPORTED`).
-`alignment_fprint_error()` prints the message the aligners would have.
-Scores should lie within plus or minus `SCORE_ABS_MAX` (`INT_MAX / 4`); the
-command line tools and the scoring file loaders refuse others. Running out
-of memory still ends the program.
+The aligners above end the program on an error. The `*_checked()` versions
+(`needleman_wunsch_align_checked()`, `smith_waterman_align_checked()`,
+`smith_waterman_fetch_checked()`, `hirschberg_align_checked()`,
+`hirschberg_score_checked()`) return it instead, as an `aln_status_t`.
+Errors in the input are found before any work: a character pair the scoring
+does not define (`ALN_ERR_SCORING`, naming the pair), sequences too long to
+address (`ALN_ERR_TOO_LONG`), scores that could pass `INT_MAX`
+(`ALN_ERR_OVERFLOW`) or, for linear space, options it refuses
+(`ALN_ERR_UNSUPPORTED`). Running out of memory (`ALN_ERR_NOMEM`) is found as
+it happens, on any of the alignment's threads: what was allocated is freed,
+there is no alignment or hit to read, and the aligner can be used again.
+Fetching a second Smith-Waterman hit can run out of memory too, as it fills
+the score matrices if a compact alignment has not. Creating an aligner or a
+result (`needleman_wunsch_new()`, `alignment_create()` and so on) still ends
+the program if out of memory. `alignment_fprint_error()` prints the message
+the aligners would have. Scores should lie within plus or minus
+`SCORE_ABS_MAX` (`INT_MAX / 4`); the command line tools and the scoring file
+loaders refuse others.
 
 `alignment_colour_fprint_against()` and `alignment_fprint_spacer()` print to
 a given stream instead of stdout. `scoring_make_case_sensitive()` switches a
@@ -724,6 +736,9 @@ bugs:
   alignment
 * The error for sequences too long to address reads `Error: Sequences too
   long to align`, without a source file and line in front
+* Running out of memory while aligning prints `Error: Out of memory`,
+  without a source file and line, and the tools stop the same way as for
+  other errors (in batch mode, after the output of the pairs before)
 
 Development
 ===========

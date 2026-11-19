@@ -19,7 +19,7 @@
 //   ALN_K_S       lane type (score_t, or int16_t)
 //   ALN_K_VL      lanes per vector (a plain number or a sum of them, for #if)
 //   ALN_K_NARROW  1 if lanes are narrower than score_t: rows stop, setting
-//                 *p->overflow, once a row's best match score passes
+//                 *p->stop, once a row's best match score passes
 //                 p->narrow_limit (see alignment_narrow_limit())
 // alignment_block_t, ALN_INLINE and the vector helpers must already be
 // defined. The macros are undefined at the end, ready for the next width
@@ -110,10 +110,12 @@ static void KN(alignment_fill_striped)(alignment_block_t *p)
   // profile[c*seg + k] lane l: score of seq_a[l*seg+k] against character c
   // of seq_b (0 past the end of seq_a; those cells are never read back)
   size_t nvec = (n + 7) * seg;
-  KV *buf = aligned_alloc(sizeof(KV), nvec * sizeof(KV));
+  KV *buf = aln_aligned_alloc(sizeof(KV), nvec * sizeof(KV));
   if(buf == NULL) {
-    fprintf(stderr, "%s:%i: Out of memory\n", __FILE__, __LINE__);
-    exit(EXIT_FAILURE);
+    // The blocks waiting on this one stop too (see alignment_wait_row())
+    atomic_store_explicit(p->nomem, true, memory_order_relaxed);
+    atomic_store_explicit(p->stop, true, memory_order_relaxed);
+    return;
   }
   KV *profile = buf;
   KV *pM = buf + n*seg, *pA = pM + seg, *pB = pA + seg; // previous row
@@ -157,7 +159,7 @@ static void KN(alignment_fill_striped)(alignment_block_t *p)
       (size_t)table->code[(unsigned char)aligner->seq_b[y-1]] * seg;
 
     // Column c0 (initialised, or the left block's) feeds lane 0 at k = 0
-    if(p->left_done != NULL && !alignment_wait_row(p->left_done, y, p->overflow))
+    if(p->left_done != NULL && !alignment_wait_row(p->left_done, y, p->stop))
       break;
     const size_t lp = (y-1-ly0)*ls, lc = (y-ly0)*ls;
     const score_t lm_prev = lcM[lp], la_prev = lcA[lp], lb_prev = lcB[lp];
@@ -264,7 +266,7 @@ static void KN(alignment_fill_striped)(alignment_block_t *p)
            (p->track_best && done_rows * 16 >= rows &&
             (double)MAX2(rmax, p->best_score) * (double)rows >
             (double)p->narrow_limit * (double)done_rows)) {
-          atomic_store_explicit(p->overflow, true, memory_order_relaxed);
+          atomic_store_explicit(p->stop, true, memory_order_relaxed);
           break;
         }
 #endif

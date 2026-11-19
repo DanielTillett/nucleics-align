@@ -30,6 +30,8 @@
 #include "alignment_simd.h"
 #include "hirschberg.h" // defaults for alignment_options_t
 #include "smith_waterman.h"
+#include "alignment_testing.h"
+#include "alignment_alloc.h"
 
 const char align_col_mismatch[] = "\033[92m"; // Mismatch (GREEN)
 const char align_col_indel[] = "\033[91m"; // Insertion / deletion (RED)
@@ -48,7 +50,7 @@ static inline void alignment_no_gaps(const scoring_t *scoring,
                   (scoring->no_gaps_in_longest && len_a < len_b);
 }
 
-void sub_table_build(sub_table_t *t, const scoring_t *scoring,
+bool sub_table_build(sub_table_t *t, const scoring_t *scoring,
                             const char *a, size_t len_a,
                             const char *b, size_t len_b)
 {
@@ -68,11 +70,11 @@ void sub_table_build(sub_table_t *t, const scoring_t *scoring,
   }
 
   size_t cells = t->n * t->n + 1;
-  t->scores = malloc(cells * sizeof(int));
-  t->is_match = malloc(cells * sizeof(bool));
+  t->scores = aln_malloc(cells * sizeof(int));
+  t->is_match = aln_malloc(cells * sizeof(bool));
   if(t->scores == NULL || t->is_match == NULL) {
-    fprintf(stderr, "%s:%i: Out of memory\n", __FILE__, __LINE__);
-    exit(EXIT_FAILURE);
+    sub_table_free(t);
+    return false;
   }
 
   // Only look up pairs that can be aligned (a character of a against one of
@@ -88,12 +90,15 @@ void sub_table_build(sub_table_t *t, const scoring_t *scoring,
       }
     }
   }
+  return true;
 }
 
 void sub_table_free(sub_table_t *t)
 {
   free(t->scores);
   free(t->is_match);
+  t->scores = NULL;
+  t->is_match = NULL;
 }
 
 //
@@ -131,6 +136,19 @@ void alignment_narrow_counts(size_t *fills, size_t *retries)
 {
   *fills = atomic_load(&alignment_narrow_fills);
   *retries = atomic_load(&alignment_narrow_retries);
+}
+
+// Tests: the allocation to fail (see alignment_alloc.h)
+atomic_size_t alignment_alloc_fail_in;
+
+void alignment_alloc_fail(size_t n)
+{
+  atomic_store(&alignment_alloc_fail_in, n);
+}
+
+size_t alignment_alloc_fail_pending(void)
+{
+  return atomic_load(&alignment_alloc_fail_in);
 }
 
 void alignment_options_default(alignment_options_t *opts)
@@ -171,14 +189,14 @@ size_t alignment_band_width(score_t smax, score_t gap_extend,
 #ifdef ALN_STRIPED
 
 // Wait until the block on the left has finished row y. Returns false if a
-// narrow fill overflowed meanwhile (overflow may be NULL)
+// block stopped meanwhile (see alignment_block_t.stop; stop may be NULL)
 static inline bool alignment_wait_row(atomic_size_t *left_done, size_t y,
-                                      atomic_bool *overflow)
+                                      atomic_bool *stop)
 {
   unsigned spins = 0;
   while(atomic_load_explicit(left_done, memory_order_acquire) < y) {
-    if(overflow != NULL &&
-       atomic_load_explicit(overflow, memory_order_relaxed)) return false;
+    if(stop != NULL &&
+       atomic_load_explicit(stop, memory_order_relaxed)) return false;
     if(++spins > 256) { spins = 0; sched_yield(); }
   }
   return true;
@@ -217,10 +235,12 @@ typedef struct {
   size_t tgt_x, tgt_y;
   // Fill with 16-bit lanes (twice as many) where alignment_narrow_limit()
   // allows: blocks stop once a row's best match score passes narrow_limit,
-  // setting *overflow, and the fill is done again with 32-bit lanes
+  // setting *stop, and the fill is done again with 32-bit lanes
   bool narrow;
   score_t narrow_limit;
-  atomic_bool *overflow;
+  // Shared by the blocks of a fill: *stop is set when one stops early (the
+  // others then stop too), and also *nomem if it ran out of memory
+  atomic_bool *stop, *nomem;
 } alignment_block_t;
 
 #define ALN_K_SUFFIX 32
@@ -292,7 +312,8 @@ static size_t alignment_fill_threads(const alignment_options_t *o,
 // their left column from the block before. With trace, the last cell's
 // scores go to final_scores (once its row and column are filled) and the
 // best cell (track_best) to best_score and best_index
-static void alignment_fill_blocks(alignment_block_t *tmpl)
+// Returns false if out of memory, with nothing filled
+static bool alignment_fill_blocks(alignment_block_t *tmpl)
 {
   aligner_t *aligner = tmpl->aligner;
   const size_t w = aligner->score_width, h = aligner->score_height;
@@ -307,19 +328,17 @@ static void alignment_fill_blocks(alignment_block_t *tmpl)
   pthread_t thread_ids[nblocks];
   bool started[nblocks];
 
-  atomic_bool overflow;
-  atomic_init(&overflow, false);
+  atomic_bool stop, nomem;
+  atomic_init(&stop, false);
+  atomic_init(&nomem, false);
   if(tmpl->narrow) atomic_fetch_add(&alignment_narrow_fills, 1);
 
   // With trace, each block's last column goes here for the next block
   score_t *cols = NULL;
   if(tmpl->trace != NULL || tmpl->score_only) {
     if(h > SIZE_MAX / sizeof(score_t) / 3 / nblocks) cols = NULL;
-    else cols = malloc(nblocks * 3 * h * sizeof(score_t));
-    if(cols == NULL) {
-      fprintf(stderr, "%s:%i: Out of memory\n", __FILE__, __LINE__);
-      exit(EXIT_FAILURE);
-    }
+    else cols = aln_malloc(nblocks * 3 * h * sizeof(score_t));
+    if(cols == NULL) return false;
   }
 
   for(i = 0; i < nblocks; i++) {
@@ -332,7 +351,8 @@ static void alignment_fill_blocks(alignment_block_t *tmpl)
     b->done = i + 1 < nblocks ? &done[i] : NULL;
     b->best_score = 0;
     b->best_x = b->best_y = 0;
-    b->overflow = tmpl->narrow ? &overflow : NULL;
+    b->stop = &stop;
+    b->nomem = &nomem;
     for(m = 0; m < 3; m++) {
       if(cols != NULL) {
         b->rc[m] = cols + (i*3 + m) * h; // by row
@@ -353,13 +373,17 @@ static void alignment_fill_blocks(alignment_block_t *tmpl)
     else alignment_block_thread(&args[i]);
   }
 
+  if(atomic_load(&nomem)) {
+    free(cols);
+    return false;
+  }
+
   // Scores grew past 16-bit lanes: all again with 32-bit ones
-  if(tmpl->narrow && atomic_load(&overflow)) {
+  if(tmpl->narrow && atomic_load(&stop)) {
     atomic_fetch_add(&alignment_narrow_retries, 1);
     free(cols);
     tmpl->narrow = false;
-    alignment_fill_blocks(tmpl);
-    return;
+    return alignment_fill_blocks(tmpl);
   }
 
   if(cols != NULL) {
@@ -385,6 +409,7 @@ static void alignment_fill_blocks(alignment_block_t *tmpl)
     }
     free(cols);
   }
+  return true;
 }
 
 // Smith-Waterman scans of a against b in O(len_b) memory, for the best hit
@@ -393,8 +418,8 @@ static void alignment_fill_blocks(alignment_block_t *tmpl)
 // it. With target > 0, for a scan in which no cell scores more than target:
 // the highest x and the highest y of cells scoring target (0 if none).
 // Returns false, with nothing found, where the striped fill does not apply
-// or (target > 0) a cell scores more than target. opts may be NULL (the
-// defaults)
+// or (target > 0) a cell scores more than target, or if out of memory.
+// opts may be NULL (the defaults)
 bool alignment_sw_scan(const char *a, size_t len_a, const char *b, size_t len_b,
                        const scoring_t *scoring, score_t target,
                        const alignment_options_t *opts,
@@ -422,13 +447,12 @@ bool alignment_sw_scan(const char *a, size_t len_a, const char *b, size_t len_b,
   tmp.score_height = len_b + 1;
 
   // Row 0 and column 0 are all 0 in Smith-Waterman
-  score_t *zeros = calloc(len_a + len_b + 2, sizeof(score_t));
-  if(zeros == NULL) {
-    fprintf(stderr, "%s:%i: Out of memory\n", __FILE__, __LINE__);
-    exit(EXIT_FAILURE);
-  }
+  score_t *zeros = aln_calloc(len_a + len_b + 2, sizeof(score_t));
   sub_table_t table;
-  sub_table_build(&table, scoring, a, len_a, b, len_b);
+  if(zeros == NULL || !sub_table_build(&table, scoring, a, len_a, b, len_b)) {
+    free(zeros);
+    return false;
+  }
   alignment_block_t tmpl = {
     .aligner = &tmp, .table = &table, .min = 0,
     .r0 = {zeros, zeros, zeros}, .lc = {zeros, zeros, zeros}, .lstride = 0,
@@ -439,9 +463,10 @@ bool alignment_sw_scan(const char *a, size_t len_a, const char *b, size_t len_b,
                 alignment_narrow_limit(&table, scoring, 0, len_a,
                                        &tmpl.narrow_limit) &&
                 target <= tmpl.narrow_limit;
-  alignment_fill_blocks(&tmpl);
+  bool filled = alignment_fill_blocks(&tmpl);
   sub_table_free(&table);
   free(zeros);
+  if(!filled) return false;
 
   if(target == 0) {
     *best = tmp.best_score;
@@ -485,8 +510,8 @@ static score_t alignment_min_score(const scoring_t *scoring, char is_sw)
   return is_sw ? 0 : SCORE_MIN + abs(worst_penalty);
 }
 
-// Fill in traceback matrix
-static void alignment_fill_matrices(aligner_t *aligner, char is_sw)
+// Fill in traceback matrix. Returns false if out of memory
+static bool alignment_fill_matrices(aligner_t *aligner, char is_sw)
 {
   score_t *match_scores = aligner->match_scores;
   score_t *gap_a_scores = aligner->gap_a_scores;
@@ -508,8 +533,8 @@ static void alignment_fill_matrices(aligner_t *aligner, char is_sw)
   size_t index, index_left, index_up, index_upleft;
 
   sub_table_t table;
-  sub_table_build(&table, scoring, aligner->seq_a, len_i,
-                  aligner->seq_b, len_j);
+  if(!sub_table_build(&table, scoring, aligner->seq_a, len_i,
+                      aligner->seq_b, len_j)) return false;
 
   // [0][0]
   match_scores[0] = 0;
@@ -560,9 +585,9 @@ static void alignment_fill_matrices(aligner_t *aligner, char is_sw)
       .r0 = {match_scores, gap_a_scores, gap_b_scores},
       .lc = {match_scores, gap_a_scores, gap_b_scores},
       .lstride = score_width, .width = len_i, .y0 = 1, .y1 = len_j};
-    alignment_fill_blocks(&tmpl);
+    bool filled = alignment_fill_blocks(&tmpl);
     sub_table_free(&table);
-    return;
+    return filled;
   }
   #endif
 
@@ -656,6 +681,7 @@ static void alignment_fill_matrices(aligner_t *aligner, char is_sw)
   }
 
   sub_table_free(&table);
+  return true;
 }
 
 // Allocate memory for one score matrix. On Linux, large matrices are 2 MB
@@ -668,28 +694,33 @@ static void* alignment_alloc_matrix(size_t mem)
   const size_t huge = (size_t)2 << 20;
   if(mem >= huge) {
     mem = (mem + huge - 1) / huge * huge; // aligned_alloc needs a multiple
-    void *ptr = aligned_alloc(huge, mem);
+    void *ptr = aln_aligned_alloc(huge, mem);
     if(ptr != NULL) madvise(ptr, mem, MADV_HUGEPAGE); // only a hint
     return ptr;
   }
 #endif
-  return malloc(mem);
+  return aln_malloc(mem);
 }
 
 #ifdef ALN_STRIPED
-// Room for the traceback bytes of `cells` cells
-static void alignment_trace_capacity(aligner_t *aligner, size_t cells)
+// Room for the traceback bytes of `cells` cells. Returns false if out of
+// memory
+static bool alignment_trace_capacity(aligner_t *aligner, size_t cells)
 {
   if(aligner->trace_capacity < cells) {
     free(aligner->trace);
     aligner->trace_capacity = ROUNDUP2POW(cells);
     aligner->trace = alignment_alloc_matrix(aligner->trace_capacity);
     if(aligner->trace == NULL) {
-      fprintf(stderr, "%s:%i: Out of memory\n", __FILE__, __LINE__);
-      exit(EXIT_FAILURE);
+      aligner->trace_capacity = 0;
+      return false;
     }
   }
+  return true;
 }
+
+// What a compact fill did
+typedef enum { FILL_SKIPPED, FILL_DONE, FILL_NOMEM } fill_result_t;
 
 // Rows of a band's strip starting at row y0, and the columns c0+1 .. c1 its
 // rows reach on diagonals x - y from dlo to dhi
@@ -715,9 +746,10 @@ static void alignment_strip(size_t y0, size_t strip, size_t len_i,
 // same steps as with every cell filled. Otherwise the band is widened and
 // filled again. Returns false, with nothing done, once a band would not be
 // faster than the whole fill on its threads
-static bool alignment_fill_banded(aligner_t *aligner, const sub_table_t *table,
-                                  score_t min, score_t *const row0[3],
-                                  score_t *const col0[3])
+static fill_result_t alignment_fill_banded(aligner_t *aligner,
+                                           const sub_table_t *table,
+                                           score_t min, score_t *const row0[3],
+                                           score_t *const col0[3])
 {
   const scoring_t *scoring = aligner->scoring;
   const size_t w = aligner->score_width, h = aligner->score_height;
@@ -729,16 +761,16 @@ static bool alignment_fill_banded(aligner_t *aligner, const sub_table_t *table,
   size_t i, m, y0, y1, c0, c1;
 
   if(!aligner->opts.band || scoring->gap_open > 0 ||
-     scoring->gap_extend > 0) return false;
+     scoring->gap_extend > 0) return FILL_SKIPPED;
 
   score_t smax = 0;
   for(i = 0; i < table->n * table->n; i++) smax = MAX2(smax, table->scores[i]);
 
   size_t bw = aligner->opts.band_min_width;
   score_t *top = NULL, *lcol = NULL;
-  bool done = false;
+  fill_result_t done = FILL_SKIPPED;
 
-  while(!done)
+  while(done == FILL_SKIPPED)
   {
     // Columns per row, plus the strip height the window grows by
     if(bw >= len_i) break;
@@ -760,17 +792,15 @@ static bool alignment_fill_banded(aligner_t *aligner, const sub_table_t *table,
     // Each row keeps the bytes of its strip's columns
     if(aligner->trace_rows_capacity < h) {
       free(aligner->trace_rows);
-      aligner->trace_rows_capacity = h;
-      aligner->trace_rows = malloc(h * sizeof(ptrdiff_t));
+      aligner->trace_rows = aln_malloc(h * sizeof(ptrdiff_t));
+      aligner->trace_rows_capacity = aligner->trace_rows != NULL ? h : 0;
     }
-    if(top == NULL) {
-      top = malloc(3 * w * sizeof(score_t));
-      lcol = malloc(3 * (strip + 1) * sizeof(score_t));
-    }
-    else lcol = realloc(lcol, 3 * (strip + 1) * sizeof(score_t));
-    if(aligner->trace_rows == NULL || top == NULL || lcol == NULL) {
-      fprintf(stderr, "%s:%i: Out of memory\n", __FILE__, __LINE__);
-      exit(EXIT_FAILURE);
+    if(top == NULL) top = aln_malloc(3 * w * sizeof(score_t));
+    score_t *lc = aln_realloc(lcol, 3 * (strip + 1) * sizeof(score_t));
+    if(lc != NULL) lcol = lc;
+    if(aligner->trace_rows == NULL || top == NULL || lc == NULL) {
+      done = FILL_NOMEM;
+      break;
     }
     size_t cells = 0;
     for(y0 = 1; y0 <= len_j; y0 = y1 + 1) {
@@ -778,7 +808,10 @@ static bool alignment_fill_banded(aligner_t *aligner, const sub_table_t *table,
       for(i = y0; i <= y1; i++, cells += c1 - c0)
         aligner->trace_rows[i] = (ptrdiff_t)cells - (ptrdiff_t)(c0 + 1);
     }
-    alignment_trace_capacity(aligner, cells);
+    if(!alignment_trace_capacity(aligner, cells)) {
+      done = FILL_NOMEM;
+      break;
+    }
 
     // Row 0, then each strip's last row for the next
     score_t *topm[3] = {top, top + w, top + 2*w}, *lcm[3];
@@ -813,7 +846,11 @@ static bool alignment_fill_banded(aligner_t *aligner, const sub_table_t *table,
           tmpl.ly0 = y0 - 1;
         }
       }
-      alignment_fill_blocks(&tmpl);
+      if(!alignment_fill_blocks(&tmpl)) break;
+    }
+    if(y0 <= len_j) {
+      done = FILL_NOMEM;
+      break;
     }
 
     score_t best = MAX3(aligner->final_scores[MATCH],
@@ -821,13 +858,13 @@ static bool alignment_fill_banded(aligner_t *aligner, const sub_table_t *table,
                         aligner->final_scores[GAP_B]);
     size_t need = alignment_band_width(smax, scoring->gap_extend,
                                        len_i, len_j, best);
-    if(need <= bw) done = true;
+    if(need <= bw) done = FILL_DONE;
     else bw = MAX2(need, 2*bw);
   }
 
   free(top);
   free(lcol);
-  aligner->trace_banded = done;
+  aligner->trace_banded = done == FILL_DONE;
   return done;
 }
 #endif
@@ -838,8 +875,8 @@ static bool alignment_fill_banded(aligner_t *aligner, const sub_table_t *table,
 // penalties along the first row and column), or where the first row and
 // column fall below min: working out the traceback bytes adds a penalty to
 // each predecessor, which could then overflow (the fill adds it only to the
-// best one)
-static bool alignment_fill_trace(aligner_t *aligner, char is_sw)
+// best one). FILL_NOMEM: out of memory, with no trace
+static fill_result_t alignment_fill_trace(aligner_t *aligner, char is_sw)
 {
 #ifdef ALN_STRIPED
   const scoring_t *scoring = aligner->scoring;
@@ -854,7 +891,7 @@ static bool alignment_fill_trace(aligner_t *aligner, char is_sw)
      w + h > SIZE_MAX / (3 * sizeof(score_t)) ||
      scoring->no_start_gap_penalty ||
      scoring->no_end_gap_penalty || scoring->no_mismatches ||
-     no_gaps_in_a || no_gaps_in_b) return false;
+     no_gaps_in_a || no_gaps_in_b) return FILL_SKIPPED;
 
   const score_t min = alignment_min_score(scoring, is_sw);
   if(!is_sw) {
@@ -862,15 +899,13 @@ static bool alignment_fill_trace(aligner_t *aligner, char is_sw)
     long long edge1 = (long long)scoring->gap_open + scoring->gap_extend;
     long long edgen = (long long)scoring->gap_open +
                       (long long)MAX2(len_i, len_j) * scoring->gap_extend;
-    if(MIN2(edge1, edgen) < min || MAX2(edge1, edgen) > INT_MAX) return false;
+    if(MIN2(edge1, edgen) < min || MAX2(edge1, edgen) > INT_MAX)
+      return FILL_SKIPPED;
   }
 
   // Row 0 and column 0, as alignment_fill_matrices() sets them
-  score_t *edges = malloc(3 * (w + h) * sizeof(score_t));
-  if(edges == NULL) {
-    fprintf(stderr, "%s:%i: Out of memory\n", __FILE__, __LINE__);
-    exit(EXIT_FAILURE);
-  }
+  score_t *edges = aln_malloc(3 * (w + h) * sizeof(score_t));
+  if(edges == NULL) return FILL_NOMEM;
   score_t *row0[3], *col0[3];
   for(m = 0; m < 3; m++) {
     row0[m] = edges + m * w;
@@ -887,11 +922,18 @@ static bool alignment_fill_trace(aligner_t *aligner, char is_sw)
   }
 
   sub_table_t table;
-  sub_table_build(&table, scoring, aligner->seq_a, len_i, aligner->seq_b, len_j);
+  if(!sub_table_build(&table, scoring, aligner->seq_a, len_i,
+                      aligner->seq_b, len_j)) {
+    free(edges);
+    return FILL_NOMEM;
+  }
   aligner->trace_banded = false;
-  if(is_sw || !alignment_fill_banded(aligner, &table, min, row0, col0))
+  fill_result_t done = FILL_SKIPPED;
+  if(!is_sw) done = alignment_fill_banded(aligner, &table, min, row0, col0);
+  if(done == FILL_SKIPPED && !alignment_trace_capacity(aligner, w * h))
+    done = FILL_NOMEM;
+  else if(done == FILL_SKIPPED)
   {
-    alignment_trace_capacity(aligner, w * h);
     alignment_block_t tmpl = {
       .aligner = aligner, .table = &table, .min = min,
       .r0 = {row0[MATCH], row0[GAP_A], row0[GAP_B]},
@@ -901,14 +943,14 @@ static bool alignment_fill_trace(aligner_t *aligner, char is_sw)
     tmpl.narrow = is_sw && aligner->opts.narrow &&
                   alignment_narrow_limit(&table, scoring, min, len_i,
                                          &tmpl.narrow_limit);
-    alignment_fill_blocks(&tmpl);
+    done = alignment_fill_blocks(&tmpl) ? FILL_DONE : FILL_NOMEM;
   }
   sub_table_free(&table);
   free(edges);
-  return true;
+  return done;
 #else
   (void)aligner; (void)is_sw;
-  return false;
+  return FILL_SKIPPED;
 #endif
 }
 
@@ -1034,6 +1076,9 @@ void alignment_fprint_error(FILE *out, const aln_error_t *err)
       fprintf(out, "Error: linear space does not support these scoring "
                    "options (or penalties this large)\n");
       break;
+    case ALN_ERR_NOMEM:
+      fprintf(out, "Error: Out of memory\n");
+      break;
   }
 }
 
@@ -1041,6 +1086,20 @@ void aligner_align(aligner_t *aligner,
                    const char *seq_a, const char *seq_b,
                    size_t len_a, size_t len_b,
                    const scoring_t *scoring, char is_sw)
+{
+  aln_error_t e = {ALN_OK, 0, 0};
+  e.status = aligner_align_checked(aligner, seq_a, seq_b, len_a, len_b,
+                                   scoring, is_sw);
+  if(e.status != ALN_OK) {
+    alignment_fprint_error(stderr, &e);
+    exit(EXIT_FAILURE);
+  }
+}
+
+aln_status_t aligner_align_checked(aligner_t *aligner,
+                                   const char *seq_a, const char *seq_b,
+                                   size_t len_a, size_t len_b,
+                                   const scoring_t *scoring, char is_sw)
 {
   aligner->scoring = scoring;
   if(aligner->options != NULL) aligner->opts = *aligner->options;
@@ -1050,18 +1109,18 @@ void aligner_align(aligner_t *aligner,
   aligner->score_width = len_a+1;
   aligner->score_height = len_b+1;
 
-  // The same checks and messages as the *_checked() aligners
-  aln_error_t e = {ALN_OK, 0, 0};
-  if(alignment_too_long(len_a, len_b)) e.status = ALN_ERR_TOO_LONG;
-  else if(alignment_scores_may_overflow(scoring, seq_a, len_a, seq_b, len_b,
-                                        is_sw)) e.status = ALN_ERR_OVERFLOW;
-  if(e.status != ALN_OK) {
-    alignment_fprint_error(stderr, &e);
-    exit(EXIT_FAILURE);
-  }
+  // The same checks as the *_checked() aligners
+  aligner->traced = false;
+  if(alignment_too_long(len_a, len_b)) return ALN_ERR_TOO_LONG;
+  if(alignment_scores_may_overflow(scoring, seq_a, len_a, seq_b, len_b,
+                                   is_sw)) return ALN_ERR_OVERFLOW;
 
-  aligner->traced = aligner->compact && alignment_fill_trace(aligner, is_sw);
-  if(aligner->traced) return;
+  if(aligner->compact) {
+    fill_result_t done = alignment_fill_trace(aligner, is_sw);
+    if(done == FILL_NOMEM) return ALN_ERR_NOMEM;
+    aligner->traced = done == FILL_DONE;
+    if(aligner->traced) return ALN_OK;
+  }
 
   size_t new_capacity = aligner->score_width * aligner->score_height;
 
@@ -1080,12 +1139,17 @@ void aligner_align(aligner_t *aligner,
     aligner->gap_a_scores = alignment_alloc_matrix(mem);
     aligner->gap_b_scores = alignment_alloc_matrix(mem);
     if(!aligner->match_scores || !aligner->gap_a_scores || !aligner->gap_b_scores) {
-      fprintf(stderr, "%s:%i: Out of memory\n", __FILE__, __LINE__);
-      exit(EXIT_FAILURE);
+      free(aligner->match_scores);
+      free(aligner->gap_a_scores);
+      free(aligner->gap_b_scores);
+      aligner->match_scores = NULL;
+      aligner->gap_a_scores = aligner->gap_b_scores = NULL;
+      aligner->capacity = 0;
+      return ALN_ERR_NOMEM;
     }
   }
 
-  alignment_fill_matrices(aligner, is_sw);
+  return alignment_fill_matrices(aligner, is_sw) ? ALN_OK : ALN_ERR_NOMEM;
 }
 
 void aligner_destroy(aligner_t *aligner)
@@ -1124,18 +1188,28 @@ alignment_t* alignment_create(size_t capacity)
 
 void alignment_ensure_capacity(alignment_t* result, size_t strlength)
 {
+  if(!alignment_reserve(result, strlength)) {
+    fprintf(stderr, "%s:%i: Out of memory\n", __FILE__, __LINE__);
+    exit(EXIT_FAILURE);
+  }
+}
+
+bool alignment_reserve(alignment_t* result, size_t strlength)
+{
   size_t capacity = strlength+1;
   if(result->capacity < capacity)
   {
     capacity = ROUNDUP2POW(capacity);
-    result->result_a = realloc(result->result_a, sizeof(char)*capacity);
-    result->result_b = realloc(result->result_b, sizeof(char)*capacity);
+    // Each string keeps its contents if the other cannot grow
+    char *a = aln_realloc(result->result_a, sizeof(char)*capacity);
+    if(a == NULL) return false;
+    result->result_a = a;
+    char *b = aln_realloc(result->result_b, sizeof(char)*capacity);
+    if(b == NULL) return false;
+    result->result_b = b;
     result->capacity = capacity;
-    if(result->result_a == NULL || result->result_b == NULL) {
-      fprintf(stderr, "%s:%i: Out of memory\n", __FILE__, __LINE__);
-      exit(EXIT_FAILURE);
-    }
   }
+  return true;
 }
 
 void alignment_free(alignment_t* result)

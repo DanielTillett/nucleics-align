@@ -59,8 +59,8 @@ static void nw_worker_free(void *ptr)
   free(wk);
 }
 
-// Write an error in the input as the library would before exiting, or
-// --linear's own message. Returns 0 for none, else EXIT_FAILURE
+// Write an error as the library would before exiting, or --linear's own
+// message. Returns 0 for none, else EXIT_FAILURE
 static int nw_error(const aln_error_t *e, FILE *err)
 {
   if(e->status == ALN_OK) return 0;

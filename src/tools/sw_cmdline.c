@@ -257,7 +257,8 @@ static int align(sw_worker_t *wk, const char *seq_a, const char *seq_b,
   while(get_next_hit() &&
         (!cmd->max_hits_per_alignment_set ||
          hit_index < cmd->max_hits_per_alignment) &&
-        smith_waterman_fetch(sw, result) && result->score >= min_score)
+        smith_waterman_fetch_checked(sw, result, &e) &&
+        result->score >= min_score)
   {
     fprintf(out, "hit %zu.%zu score: %i\n", index, hit_index++, result->score);
 
@@ -348,6 +349,13 @@ static int align(sw_worker_t *wk, const char *seq_a, const char *seq_b,
 
     // Flush output here
     fflush(out);
+  }
+
+  // Out of memory fetching a hit: the hits before it are printed
+  if(e.status != ALN_OK) {
+    alignment_fprint_error(err, &e);
+    fflush(err);
+    return EXIT_FAILURE;
   }
 
   fputs("==\n", out);

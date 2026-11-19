@@ -24,6 +24,8 @@
 #include "alignment_macros.h"
 #include "alignment_simd.h"
 #include "hirschberg.h"
+#include "alignment_testing.h"
+#include "alignment_alloc.h"
 
 // SIMD passes only where the CPU has a native vector max: without one
 // (plain SSE2, the x86-64 baseline) the scalar loops are faster here.
@@ -47,6 +49,7 @@ typedef struct
   size_t pos; // next position to write in out_a, out_b
   uint8_t *ops; // step at each position (MATCH, GAP_A, GAP_B), for the score
   bool in_range; // no score or sum of two can overflow, see hb_state_init()
+  bool nomem; // an allocation failed: the rows are not usable (hb_nomem())
   alignment_options_t opts; // settings in effect
 #ifdef HB_STRIPED
   void *vbuf; // striped rows and score profile, see hb_pass_striped()
@@ -98,6 +101,13 @@ int hirschberg_max_threads = 0; // see hirschberg.h; 0: half the CPUs
 
 // No score known for a sub-problem yet, see hb_diff()
 #define HB_NO_BOUND SCORE_MIN
+
+// An allocation failed, perhaps on one of two threads running passes at
+// once; read after they are joined
+static inline void hb_nomem(hb_state_t *st)
+{
+  __atomic_store_n(&st->nomem, true, __ATOMIC_RELAXED);
+}
 
 // Banded passes (see hb_diff()). Tests lower the last two
 bool hirschberg_band_enabled = true;
@@ -321,11 +331,13 @@ static void hb_pass_striped(hb_state_t *st, const char *a, ptrdiff_t astep,
   hb_boundary_t bounds[nblocks-1];
   pthread_t thread_ids[nblocks];
   bool started[nblocks];
-  void *bufs = aligned_alloc(sizeof(vscore_t), bufsize * nblocks);
-  score_t *edges = malloc(2 * (nblocks-1) * (rows+1) * sizeof(score_t));
+  void *bufs = aln_aligned_alloc(sizeof(vscore_t), bufsize * nblocks);
+  score_t *edges = aln_malloc(2 * (nblocks-1) * (rows+1) * sizeof(score_t));
   if(bufs == NULL || edges == NULL) {
-    fprintf(stderr, "%s:%i: Out of memory\n", __FILE__, __LINE__);
-    exit(EXIT_FAILURE);
+    free(bufs);
+    free(edges);
+    hb_nomem(st);
+    return;
   }
 
   for(i = 0; i + 1 < nblocks; i++) {
@@ -377,11 +389,12 @@ static void hb_pass_banded(hb_state_t *st, const char *a, ptrdiff_t astep,
   if(strip == 0) strip = MAX2(256, (size_t)(dhi - dlo + 1) / 4);
 
   // Last row of the strip above, by column; the first strip starts at row 0
-  score_t *top_h = malloc(2 * (n+1) * sizeof(score_t)), *top_d = top_h + n+1;
+  score_t *top_h = aln_malloc(2 * (n+1) * sizeof(score_t));
   if(top_h == NULL) {
-    fprintf(stderr, "%s:%i: Out of memory\n", __FILE__, __LINE__);
-    exit(EXIT_FAILURE);
+    hb_nomem(st);
+    return;
   }
+  score_t *top_d = top_h + n+1;
   size_t i0, j, hs, c0 = 0, jr = n, jr_prev = n;
   top_h[0] = top_d[0] = 0;
   for(j = 1; j <= n; j++) {
@@ -674,6 +687,7 @@ static bool hb_passes_banded(hb_state_t *st, const char *a, const char *b,
   {
     hb_passes_striped(st, a, b, m, n, imid, tb, te,
                       MIN2(0, D) - (ptrdiff_t)w, MAX2(0, D) + (ptrdiff_t)w);
+    if(st->nomem) return true; // hb_diff() stops
     if(hirschberg_check_striped)
       __atomic_add_fetch(&hirschberg_banded_passes, 1, __ATOMIC_RELAXED);
     size_t need = hb_band(st, m, n, hb_midpoint(st, n, &midj, &type));
@@ -689,7 +703,8 @@ static bool hb_passes_banded(hb_state_t *st, const char *a, const char *b,
 #endif
 
 // Forward and reverse passes of hb_diff(), into cc, dd (row imid from the
-// top) and rr, ss (from the bottom). lower: see hb_diff()
+// top) and rr, ss (from the bottom), unless out of memory (st->nomem).
+// lower: see hb_diff()
 static void hb_passes(hb_state_t *st, const char *a, const char *b,
                       size_t m, size_t n, size_t imid,
                       score_t tb, score_t te, score_t lower)
@@ -709,7 +724,8 @@ static void hb_passes(hb_state_t *st, const char *a, const char *b,
   hb_passes_scalar(st, a, b, m, n, imid, tb, te);
 }
 
-// Align a[0..m) with b[0..n), appending to the output.
+// Align a[0..m) with b[0..n), appending to the output; stops, with the
+// output incomplete, if out of memory (st->nomem).
 // tb / te: score of opening a deletion that touches the start / end of this
 // sub-problem; 0 if it continues a deletion already paid for by the caller.
 // lower: a score some alignment of this sub-problem reaches (from the
@@ -761,6 +777,7 @@ static void hb_diff(hb_state_t *st, const char *a, const char *b,
   int type;
 
   hb_passes(st, a, b, m, n, imid, tb, te, lower);
+  if(st->nomem) return;
   hb_midpoint(st, n, &midj, &type);
 
   // The best score of each half is known now: a bound for its own band
@@ -768,6 +785,7 @@ static void hb_diff(hb_state_t *st, const char *a, const char *b,
   {
     score_t left = cc[midj], right = rr[midj];
     hb_diff(st, a, b, imid, midj, tb, g, left);
+    if(st->nomem) return;
     hb_diff(st, a+imid, b+midj, m-imid, n-midj, g, te, right);
   }
   else
@@ -776,6 +794,7 @@ static void hb_diff(hb_state_t *st, const char *a, const char *b,
     // deletion's end free
     score_t left = dd[midj] - g - h, right = ss[midj] - g - h;
     hb_diff(st, a, b, imid-1, midj, tb, 0, left);
+    if(st->nomem) return;
     hb_emit_del(st, a+imid-1, 2);
     hb_diff(st, a+imid+1, b+midj, m-imid-1, n-midj, 0, te, right);
   }
@@ -848,28 +867,26 @@ static bool hb_unsupported(const scoring_t *scoring)
          scoring->no_gaps_in_longest || scoring->no_mismatches;
 }
 
-static void hb_state_init(hb_state_t *st, const char *a, const char *b,
+static void hb_state_free(hb_state_t *st);
+
+// Returns false if out of memory, with nothing to free
+static bool hb_state_init(hb_state_t *st, const char *a, const char *b,
                           size_t len_a, size_t len_b, const scoring_t *scoring,
                           const alignment_options_t *opts)
 {
+  memset(st, 0, sizeof(*st));
   st->scoring = scoring;
   if(opts != NULL) st->opts = *opts;
   else alignment_options_default(&st->opts);
-  st->out_a = st->out_b = NULL;
-  st->ops = NULL;
-  st->pos = 0;
 
-  score_t *rows = malloc(4 * (len_b+1) * sizeof(score_t));
-  if(rows == NULL) {
-    fprintf(stderr, "%s:%i: Out of memory\n", __FILE__, __LINE__);
-    exit(EXIT_FAILURE);
-  }
-  sub_table_build(&st->table, scoring, a, len_a, b, len_b);
+  score_t *rows = aln_malloc(4 * (len_b+1) * sizeof(score_t));
+  st->cc = rows;
   st->b = b;
-  st->row_b = malloc((len_b+1) * sizeof(size_t));
-  if(st->row_b == NULL) {
-    fprintf(stderr, "%s:%i: Out of memory\n", __FILE__, __LINE__);
-    exit(EXIT_FAILURE);
+  st->row_b = aln_malloc((len_b+1) * sizeof(size_t));
+  if(rows == NULL || st->row_b == NULL ||
+     !sub_table_build(&st->table, scoring, a, len_a, b, len_b)) {
+    hb_state_free(st);
+    return false;
   }
   size_t j;
   for(j = 0; j < len_b; j++)
@@ -919,20 +936,20 @@ static void hb_state_init(hb_state_t *st, const char *a, const char *b,
     st->pass_threads = cpus > 1 ? (int)(cpus / 2) : 1;
   }
 
-  st->vbuf = aligned_alloc(sizeof(vscore_t),
-                           (3 + st->table.n) * seg * sizeof(vscore_t));
-  st->vbuf2 = aligned_alloc(sizeof(vscore_t),
-                            (3 + st->table.n) * seg * sizeof(vscore_t));
+  st->vbuf = aln_aligned_alloc(sizeof(vscore_t),
+                               (3 + st->table.n) * seg * sizeof(vscore_t));
+  st->vbuf2 = aln_aligned_alloc(sizeof(vscore_t),
+                                (3 + st->table.n) * seg * sizeof(vscore_t));
   if(st->vbuf == NULL || st->vbuf2 == NULL) {
-    fprintf(stderr, "%s:%i: Out of memory\n", __FILE__, __LINE__);
-    exit(EXIT_FAILURE);
+    hb_state_free(st);
+    return false;
   }
 #endif
 
-  st->cc = rows;
   st->dd = rows + (len_b+1);
   st->rr = rows + 2*(len_b+1);
   st->ss = rows + 3*(len_b+1);
+  return true;
 }
 
 static void hb_state_free(hb_state_t *st)
@@ -953,30 +970,50 @@ bool hirschberg_align2(const char *a, const char *b,
   return hirschberg_align_opts(a, b, len_a, len_b, scoring, NULL, result);
 }
 
-bool hirschberg_align_opts(const char *a, const char *b,
-                           size_t len_a, size_t len_b,
-                           const scoring_t *scoring,
-                           const alignment_options_t *opts,
-                           alignment_t *result)
+// Exits if out of memory (ALN_ERR_NOMEM)
+static bool hb_exit_nomem(aln_status_t status)
 {
-  if(hb_unsupported(scoring)) return false;
-
-  hb_state_t st;
-  hb_state_init(&st, a, b, len_a, len_b, scoring, opts);
-  if(!st.in_range) { hb_state_free(&st); return false; }
-
-  alignment_ensure_capacity(result, len_a + len_b);
-  st.out_a = result->result_a;
-  st.out_b = result->result_b;
-  st.ops = malloc(len_a + len_b + 1);
-  if(st.ops == NULL) {
-    fprintf(stderr, "%s:%i: Out of memory\n", __FILE__, __LINE__);
+  if(status == ALN_ERR_NOMEM) {
+    aln_error_t e = {status, 0, 0};
+    alignment_fprint_error(stderr, &e);
     exit(EXIT_FAILURE);
   }
+  return status == ALN_OK;
+}
+
+// hirschberg_align_opts(), returning ALN_ERR_UNSUPPORTED where it returns
+// false, or ALN_ERR_NOMEM with no alignment in result
+static aln_status_t hb_align(const char *a, const char *b,
+                             size_t len_a, size_t len_b,
+                             const scoring_t *scoring,
+                             const alignment_options_t *opts,
+                             alignment_t *result)
+{
+  if(hb_unsupported(scoring)) return ALN_ERR_UNSUPPORTED;
+
+  hb_state_t st;
+  if(!hb_state_init(&st, a, b, len_a, len_b, scoring, opts))
+    return ALN_ERR_NOMEM;
+  if(!st.in_range) { hb_state_free(&st); return ALN_ERR_UNSUPPORTED; }
+
+  st.ops = aln_malloc(len_a + len_b + 1);
+  if(st.ops == NULL || !alignment_reserve(result, len_a + len_b)) {
+    free(st.ops);
+    hb_state_free(&st);
+    return ALN_ERR_NOMEM;
+  }
+  st.out_a = result->result_a;
+  st.out_b = result->result_b;
 
   hb_diff(&st, a, b, len_a, len_b, scoring->gap_open, scoring->gap_open,
           HB_NO_BOUND);
   hb_state_free(&st);
+  if(st.nomem) {
+    free(st.ops);
+    result->result_a[0] = result->result_b[0] = '\0';
+    result->length = 0;
+    return ALN_ERR_NOMEM;
+  }
 
   result->result_a[st.pos] = '\0';
   result->result_b[st.pos] = '\0';
@@ -986,7 +1023,16 @@ bool hirschberg_align_opts(const char *a, const char *b,
   result->pos_a = result->pos_b = 0;
   result->len_a = len_a;
   result->len_b = len_b;
-  return true;
+  return ALN_OK;
+}
+
+bool hirschberg_align_opts(const char *a, const char *b,
+                           size_t len_a, size_t len_b,
+                           const scoring_t *scoring,
+                           const alignment_options_t *opts,
+                           alignment_t *result)
+{
+  return hb_exit_nomem(hb_align(a, b, len_a, len_b, scoring, opts, result));
 }
 
 bool hirschberg_score(const char *a, const char *b,
@@ -994,6 +1040,11 @@ bool hirschberg_score(const char *a, const char *b,
 {
   return hirschberg_score2(a, b, strlen(a), strlen(b), scoring, score);
 }
+
+static aln_status_t hb_score(const char *a, const char *b,
+                             size_t len_a, size_t len_b,
+                             const scoring_t *scoring,
+                             const alignment_options_t *opts, score_t *score);
 
 // The checks the aligner makes before it would stop the program, in its
 // order: options it refuses (and sizes it could not hold), then the
@@ -1020,9 +1071,9 @@ aln_status_t hirschberg_align_checked(const char *a, const char *b,
                                       alignment_t *result, aln_error_t *err)
 {
   aln_status_t status = hb_checked(a, b, len_a, len_b, scoring, err);
-  if(status == ALN_OK &&
-     !hirschberg_align_opts(a, b, len_a, len_b, scoring, opts, result)) {
-    status = ALN_ERR_UNSUPPORTED; // penalties too large
+  if(status == ALN_OK) {
+    // ALN_ERR_UNSUPPORTED: penalties too large
+    status = hb_align(a, b, len_a, len_b, scoring, opts, result);
     if(err != NULL) err->status = status;
   }
   return status;
@@ -1035,9 +1086,8 @@ aln_status_t hirschberg_score_checked(const char *a, const char *b,
                                       score_t *score, aln_error_t *err)
 {
   aln_status_t status = hb_checked(a, b, len_a, len_b, scoring, err);
-  if(status == ALN_OK &&
-     !hirschberg_score_opts(a, b, len_a, len_b, scoring, opts, score)) {
-    status = ALN_ERR_UNSUPPORTED;
+  if(status == ALN_OK) {
+    status = hb_score(a, b, len_a, len_b, scoring, opts, score);
     if(err != NULL) err->status = status;
   }
   return status;
@@ -1055,11 +1105,22 @@ bool hirschberg_score_opts(const char *a, const char *b,
                            const scoring_t *scoring,
                            const alignment_options_t *opts, score_t *score)
 {
-  if(hb_unsupported(scoring)) return false;
+  return hb_exit_nomem(hb_score(a, b, len_a, len_b, scoring, opts, score));
+}
+
+// hirschberg_score_opts(), returning ALN_ERR_UNSUPPORTED where it returns
+// false, or ALN_ERR_NOMEM with score unset
+static aln_status_t hb_score(const char *a, const char *b,
+                             size_t len_a, size_t len_b,
+                             const scoring_t *scoring,
+                             const alignment_options_t *opts, score_t *score)
+{
+  if(hb_unsupported(scoring)) return ALN_ERR_UNSUPPORTED;
 
   hb_state_t st;
-  hb_state_init(&st, a, b, len_a, len_b, scoring, opts);
-  if(!st.in_range) { hb_state_free(&st); return false; }
+  if(!hb_state_init(&st, a, b, len_a, len_b, scoring, opts))
+    return ALN_ERR_NOMEM;
+  if(!st.in_range) { hb_state_free(&st); return ALN_ERR_UNSUPPORTED; }
   const score_t g = scoring->gap_open;
 
   size_t midj;
@@ -1072,7 +1133,7 @@ bool hirschberg_score_opts(const char *a, const char *b,
   if(hb_simd_ok(&st, len_a, len_b) &&
      hb_passes_banded(&st, a, b, len_a, len_b, len_a / 2, g, g, HB_NO_BOUND))
   {
-    *score = hb_midpoint(&st, len_b, &midj, &type);
+    if(!st.nomem) *score = hb_midpoint(&st, len_b, &midj, &type);
   }
   // Otherwise one forward pass over every row of a: cc[len_b] is the best
   // score, ending in any state
@@ -1080,7 +1141,7 @@ bool hirschberg_score_opts(const char *a, const char *b,
   {
     hb_pass_striped(&st, a, 1, len_a, b, 1, 0, len_b, g, st.cc, st.dd, 1,
                     st.vbuf, NULL, st.pass_threads);
-    *score = st.cc[len_b];
+    if(!st.nomem) *score = st.cc[len_b];
   }
   else
   #endif
@@ -1092,5 +1153,5 @@ bool hirschberg_score_opts(const char *a, const char *b,
   (void)midj; (void)type;
 
   hb_state_free(&st);
-  return true;
+  return st.nomem ? ALN_ERR_NOMEM : ALN_OK;
 }

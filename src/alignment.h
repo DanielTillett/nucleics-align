@@ -134,15 +134,16 @@ void aligner_align(aligner_t *aligner,
                    const scoring_t *scoring, char is_sw);
 void aligner_destroy(aligner_t *aligner);
 
-// Errors in the input that would otherwise end the program. The *_checked()
-// aligners (needleman_wunsch.h, smith_waterman.h, hirschberg.h) report them
-// instead, before any work
+// Errors that would otherwise end the program. The *_checked() aligners
+// (needleman_wunsch.h, smith_waterman.h, hirschberg.h) report them instead:
+// errors in the input before any work, running out of memory as it happens
 typedef enum {
   ALN_OK = 0,
   ALN_ERR_SCORING,     // a character pair has no score: err->a, err->b
   ALN_ERR_TOO_LONG,    // the score matrices would not fit in memory addresses
   ALN_ERR_OVERFLOW,    // scores could pass INT_MAX (see SCORE_ABS_MAX)
-  ALN_ERR_UNSUPPORTED  // linear space refuses these options or penalties
+  ALN_ERR_UNSUPPORTED, // linear space refuses these options or penalties
+  ALN_ERR_NOMEM        // out of memory; nothing to fetch until aligned again
 } aln_status_t;
 
 typedef struct {
@@ -174,7 +175,15 @@ aln_status_t alignment_check(const scoring_t *scoring,
 // The message for an error, as the aligners print it before exiting
 void alignment_fprint_error(FILE *out, const aln_error_t *err);
 
-void sub_table_build(sub_table_t *t, const scoring_t *scoring,
+// As aligner_align(), but returns ALN_ERR_TOO_LONG, ALN_ERR_OVERFLOW or
+// ALN_ERR_NOMEM (with no matrices or trace to read) rather than exiting
+aln_status_t aligner_align_checked(aligner_t *aligner,
+                                   const char *seq_a, const char *seq_b,
+                                   size_t len_a, size_t len_b,
+                                   const scoring_t *scoring, char is_sw);
+
+// Returns false if out of memory, with nothing to free
+bool sub_table_build(sub_table_t *t, const scoring_t *scoring,
                      const char *a, size_t len_a,
                      const char *b, size_t len_b);
 void sub_table_free(sub_table_t *t);
@@ -202,10 +211,6 @@ extern size_t alignment_band_strip_rows, alignment_band_min_width;
 // result). alignment_narrow_enabled (default true) turns that off, for tests
 extern bool alignment_narrow_enabled;
 
-// Fills started with 16-bit lanes, and those started again with 32-bit ones,
-// since the program began (for tests)
-void alignment_narrow_counts(size_t *fills, size_t *retries);
-
 // The default settings, from the variables above (and their hirschberg_*
 // and smith_waterman_* counterparts) as they are now
 void alignment_options_default(alignment_options_t *opts);
@@ -224,9 +229,12 @@ bool alignment_sw_scan(const char *a, size_t len_a, const char *b, size_t len_b,
                        const alignment_options_t *opts,
                        score_t *best, size_t *x, size_t *y);
 
-// Constructors/Destructors for alignment
+// Constructors/Destructors for alignment. alignment_create() and
+// alignment_ensure_capacity() exit if out of memory; alignment_reserve()
+// returns false, leaving the result as it was
 alignment_t* alignment_create(size_t capacity);
 void alignment_ensure_capacity(alignment_t* result, size_t strlength);
+bool alignment_reserve(alignment_t* result, size_t strlength);
 void alignment_free(alignment_t* result);
 
 void alignment_reverse_move(enum Matrix *curr_matrix, score_t *curr_score,
