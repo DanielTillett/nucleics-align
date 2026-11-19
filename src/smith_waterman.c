@@ -75,7 +75,7 @@ struct sw_aligner_t
   size_t len_a, len_b;
 };
 
-size_t smith_waterman_rect_min_cells = (size_t)1 << 30;
+size_t smith_waterman_rect_min_cells = (size_t)1 << 24;
 
 // One step back through the matrices. Gives the same result as
 // alignment_reverse_move() (same checks, same order), but uses the
@@ -338,8 +338,9 @@ static bool _sw_align_rect(sw_aligner_t *sw, const char *a, const char *b,
      len_b+1 > SIZE_MAX / (len_a+1) / sizeof(score_t))
     return false;
 
-  if(!alignment_sw_scan(a, len_a, b, len_b, scoring, 0, &aligner->opts,
-                        &best, &bx, &by))
+  // Gives up on a hit that spans the sequences: the whole fill is quicker
+  if(!alignment_sw_scan_short(a, len_a, b, len_b, scoring, &aligner->opts,
+                              &best, &bx, &by))
     return false;
 
   if(best < sw->min_score) {

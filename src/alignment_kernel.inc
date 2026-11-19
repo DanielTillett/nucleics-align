@@ -16,11 +16,13 @@
 //                  (track_best) or the cells with score target (target > 0)
 // Before including, define:
 //   ALN_K_SUFFIX  appended to the names defined here (e.g. 32)
-//   ALN_K_S       lane type (score_t, or int16_t)
+//   ALN_K_S       lane type (score_t, int16_t or int8_t)
 //   ALN_K_VL      lanes per vector (a plain number or a sum of them, for #if)
 //   ALN_K_NARROW  1 if lanes are narrower than score_t: rows stop, setting
 //                 *p->stop, once a row's best match score passes
 //                 p->narrow_limit (see alignment_narrow_limit())
+//   ALN_K_BYTE    1 for 8-bit lanes, which cannot hold a segment number: the
+//                 best cell of a row is found by searching its lane
 // alignment_block_t, ALN_INLINE and the vector helpers must already be
 // defined. The macros are undefined at the end, ready for the next width
 
@@ -49,7 +51,14 @@ ALN_INLINE KV KN(ksel)(KV mask, KV a, KV b)
 // Move every lane up by one; lane 0 gets x
 ALN_INLINE KV KN(kshift)(KV v, KS x)
 {
-#if ALN_K_VL == 32
+#if ALN_K_VL == 64
+  return __builtin_shufflevector(v, KN(ksplat)(x), 64, 0, 1, 2, 3, 4, 5, 6,
+                                 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
+                                 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29,
+                                 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40,
+                                 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51,
+                                 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62);
+#elif ALN_K_VL == 32
   return __builtin_shufflevector(v, KN(ksplat)(x), 32, 0, 1, 2, 3, 4, 5, 6,
                                  7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
                                  19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29,
@@ -146,11 +155,19 @@ static void KN(alignment_fill_striped)(alignment_block_t *p)
   if(!full)
     for(c = 0; c < 3; c++) p->rc[c][p->y0-1] = p->r0[c][c0+len_i];
 
+#if ALN_K_BYTE
+  // Rows filled and the best so far at the last checkpoint (mark) and the
+  // one before (base), for the rate the best rises at (see the range check
+  // below)
+  size_t mark_rows = 0, base_rows = 0;
+  score_t mark_best = 0, base_best = 0;
+#else
   // Segments of each lane that are real cells (lanes past the end of seq_a
   // are left out when looking for the best cell)
   KV vlim;
   for(l = 0; l < ALN_K_VL; l++)
     vlim[l] = (KS)(l*seg >= len_i ? 0 : MIN2(seg, len_i - l*seg));
+#endif
 
   for(y = p->y0; y <= p->y1; y++)
   {
@@ -178,7 +195,10 @@ static void KN(alignment_fill_striped)(alignment_block_t *p)
                           h0_prev);
     KV vx = KN(kshift)(vmin, x0);
     KV vb = KN(kshift)(vmin, b0);
-    KV vbest = vmin, vbk = KN(ksplat)(0);
+    KV vbest = vmin;
+#if !ALN_K_BYTE
+    KV vbk = KN(ksplat)(0);
+#endif
     for(k = 0; k < seg; k++) {
       cM[k] = KN(kmax)(vdiag + prof[k], vmin);
       cA[k] = KN(kmax)(KN(kmax)(KN(kmax)(pM[k], pB[k]) + vopen, pA[k] + vext),
@@ -188,10 +208,18 @@ static void KN(alignment_fill_striped)(alignment_block_t *p)
       vx = KN(kmax)(cM[k], cA[k]);
       vb = cB[k];
       if(track) {
+#if ALN_K_BYTE
+        // Cells past the end of seq_a count too: each takes a value from
+        // the row above (its profile score is 0), so it never passes the
+        // best of the rows so far, and a tie with it moves no best cell, as
+        // its column comes later
+        vbest = KN(kmax)(vbest, cM[k]);
+#else
         const KV vk = KN(ksplat)((KS)k);
         const KV gt = (cM[k] > vbest) & (vk < vlim);
         vbest = KN(ksel)(gt, cM[k], vbest);
         vbk = KN(ksel)(gt, vk, vbk);
+#endif
       }
     }
 
@@ -262,10 +290,26 @@ static void KN(alignment_fill_striped)(alignment_block_t *p)
         // steadily along a hit spanning the sequences), checking from a
         // sixteenth of the rows on: an early wrong guess only costs time
         const size_t rows = p->y1 - p->y0 + 1, done_rows = y - p->y0 + 1;
-        if(rmax > p->narrow_limit ||
-           (p->track_best && done_rows * 16 >= rows &&
-            (double)MAX2(rmax, p->best_score) * (double)rows >
-            (double)p->narrow_limit * (double)done_rows)) {
+        const score_t best = MAX2(rmax, p->best_score);
+#if ALN_K_BYTE
+        // 8 bits leave little room, and between unrelated sequences the best
+        // rises ever more slowly: project from how fast it rose over the
+        // last half or more of the rows (checkpoints are set each time the
+        // rows filled double)
+        const bool past = p->track_best && done_rows * 16 >= rows &&
+          (double)best + (double)(best - base_best) *
+            (double)(rows - done_rows) / (double)(done_rows - base_rows) >
+          (double)p->narrow_limit;
+        if(done_rows >= 2 * mark_rows) {
+          base_rows = mark_rows; base_best = mark_best;
+          mark_rows = done_rows; mark_best = best;
+        }
+#else
+        const bool past = p->track_best && done_rows * 16 >= rows &&
+          (double)best * (double)rows >
+          (double)p->narrow_limit * (double)done_rows;
+#endif
+        if(rmax > p->narrow_limit || past) {
           atomic_store_explicit(p->stop, true, memory_order_relaxed);
           break;
         }
@@ -274,10 +318,24 @@ static void KN(alignment_fill_striped)(alignment_block_t *p)
           // Lowest column in this row with that score: the first lane whose
           // best has it, at that lane's first cell with it
           for(l = 0; (score_t)vbest[l] != rmax; l++) {}
+#if ALN_K_BYTE
+          for(k = 0; (score_t)cM[k][l] != rmax; k++) {}
+          i = l*seg + k;
+#else
           i = l*seg + (size_t)vbk[l];
+#endif
           if(rmax > p->best_score || c0+1+i < p->best_x) {
             p->best_score = rmax; p->best_x = c0+1+i; p->best_y = y;
           }
+        }
+        // A scan for a short hit gives up once the best rises fast enough
+        // to span the sequences (see alignment_sw_scan_short())
+        if(p->giveup_rate > 0 &&
+           (y - p->y0 + 1) * 16 >= p->y1 - p->y0 + 1 &&
+           (double)p->best_score >= p->giveup_rate * (double)(y - p->y0 + 1)) {
+          atomic_store_explicit(p->gave_up, true, memory_order_relaxed);
+          atomic_store_explicit(p->stop, true, memory_order_relaxed);
+          break;
         }
         if(p->target > 0 && rmax >= p->target) {
           // Highest column in this row with the target score (none score
@@ -326,3 +384,4 @@ static void KN(alignment_fill_striped)(alignment_block_t *p)
 #undef ALN_K_S
 #undef ALN_K_VL
 #undef ALN_K_NARROW
+#undef ALN_K_BYTE

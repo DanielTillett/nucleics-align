@@ -118,8 +118,9 @@ Link against `src/libalign.a` (and `libs/string_buffer/libstrbuf.a`, `-lz`,
   `smith_waterman_set_compact()` suits callers that mostly want the best
   hit: it is found from traceback bytes, and the score matrices are only
   filled if a second hit is fetched. Above `smith_waterman_rect_min_cells`
-  (default 2^30), and where no gap scores above 0, only the rectangle of
-  the best hit gets traceback bytes. The hits are the same either way
+  (default 2^24), and where no gap scores above 0, only the rectangle of
+  the best hit gets traceback bytes, unless the hit spans the sequences.
+  The hits are the same either way
 * `hirschberg_align()` (`src/hirschberg.h`): global alignment in O(n) memory;
   same scores as `needleman_wunsch_align()`, but returns false for options it
   does not support (a positive gap open, free end gaps, `no_gaps_in_*`,
@@ -135,7 +136,7 @@ Link against `src/libalign.a` (and `libs/string_buffer/libstrbuf.a`, `-lz`,
   (`src/alignment_scoring.h`): set up a scoring system
 
 Settings that change speed but never a result (threads, SIMD, banding,
-16-bit lanes, block sizes) are in an `alignment_options_t`
+8- and 16-bit lanes, block sizes) are in an `alignment_options_t`
 (`src/alignment.h`). Give an aligner its own with its `options` field
 (Needleman-Wunsch) or `smith_waterman_set_options()`, and pass them to
 `hirschberg_align_opts()`/`hirschberg_score_opts()`; threads with different
@@ -283,14 +284,15 @@ Where the speed comes from:
   traceback takes the same steps. Only the band's bytes are kept. 50 kb at
   1% divergence: 0.40 -> 0.15 s, 6.0 -> 0.14 s of CPU, 2.4 GB -> 92 MB.
   A band is used only where it beats the whole fill on its threads
-* For a compact Smith-Waterman best hit of more than 2^30 cells, a
+* For a compact Smith-Waterman best hit of more than 2^24 cells, a
   score-only scan finds the best score and where it ends, and a scan of the
   reversed sequences up to there finds where every best path starts. Only
   that rectangle gets traceback bytes (as SSW does, but with the same hit
   as the full search). 100 kb sequences sharing a 2 kb region: 3.1 -> 0.34
   s and 11.6 GB -> 22 MB; 300 kb ones take 3.3 s and 66 MB (they did not fit
-  in 40 GB before). Hits spanning both sequences take about 50% longer, so
-  smaller alignments fill every cell's byte. Not used where a gap scores
+  in 40 GB before). The first scan gives up once the best rises at half the
+  top substitution score per row from near the start: such a hit spans the
+  sequences, and the whole fill is quicker. Not used where a gap scores
   above 0, as a hit can then start with a gap
 * Smith-Waterman fills and scans use 16-bit lanes, twice as many per
   vector, where the scores allow (every cell lies between 0 and the best
@@ -302,6 +304,19 @@ Where the speed comes from:
   and 0.29 -> 0.14 s (1%), the best hit with traceback bytes 0.33 -> 0.22 s
   and 0.49 -> 0.29 s; with `NATIVE=1` on AVX-512 the unrelated scan takes
   0.025 s (16 Gcells/s). 3,000 local best hits: 0.50 -> 0.33 s
+* Smith-Waterman starts with 8-bit lanes, 4 times as many as 32-bit ones
+  (as SSW does, but signed and with the same results), where every
+  substitution score and gap penalty fits in a byte: then 16-bit lanes,
+  then 32-bit, as the best grows. Lanes cannot hold a segment number here,
+  so a row that reaches the best finds its first cell by searching the lane
+  that holds it. Between unrelated sequences the best rises ever more
+  slowly, so the check for a best that will outgrow the lanes projects from
+  its rise over the last half of the rows, not from the start. One thread,
+  20 kb unrelated: the score scan 0.057 -> 0.017 s (24 Gcells/s; 0.014 s
+  with `NATIVE=1` on AVX-512). With the scan this cheap, compact best hits
+  of more than 2^24 cells (was 2^30) start with it: 20 kb unrelated
+  `smith_waterman --maxhits 1` 0.09 -> 0.01 s and 448 -> 5 MB, with related
+  pairs as before
 * The linear-space aligner's forward and reverse passes share the threads
   rather than taking half the CPUs each, which oversubscribed the cores (50
   kb unrelated `--linear` 0.45 -> 0.33 s and 6.1 -> 2.1 s of CPU)
@@ -410,14 +425,16 @@ Local alignment, best hit only (`smith_waterman --maxhits 1`), 20 kb:
 | Tool | 1% | 10% | Unrelated | Peak memory |
 |---|---|---|---|---|
 | seq-align before this fork | 71.1 s | 61.2 s | 34.5 s | 6.3 - 8.5 GB |
-| Nucleics Align | 0.10 s (1.2 s) | 0.08 s (0.8 s) | 0.07 s (0.7 s) | 448 MB |
+| Nucleics Align | 0.10 s (1.2 s) | 0.08 s (0.8 s) | 0.01 s (0.14 s) | 5 - 451 MB |
 | parasail | 0.90 s | 0.83 s | 0.72 s | 1.5 GB |
 | SSW | 0.27 s | 0.22 s | 0.03 s | 7 MB |
 
 For the unrelated pair Nucleics Align reports no hit, as the best (score 14) is
-below the default `--minscore`. At 50 kb Nucleics Align's best hit took 0.84
-s and 2.9 GB when it spans both sequences, and 0.06 s and 10 MB for the
-unrelated pair (the other tools were not run). At 5 kb every global aligner
+below the default `--minscore`; its row was measured again after the 8-bit
+lanes were added (0.07 s and 448 MB before), as the median of 11 runs. With
+`NATIVE=1` on AVX-512 it takes under 0.005 s. At 50 kb Nucleics Align's best
+hit took 0.84 s and 2.9 GB when it spans both sequences, and 0.06 s and 10
+MB for the unrelated pair (the other tools were not run). At 5 kb every global aligner
 took 0.07 s or less, except seq-align before this fork (0.53-0.63 s) and
 WFA2 on the unrelated pair (0.65-0.96 s).
 
@@ -434,11 +451,12 @@ In short:
   0.7-0.8 s at 20 kb for the full-matrix aligner against ksw2's 0.33 s. Its
   lead in wall time there comes from threads. On similar pairs
   banding skips most cells (20 kb at 1%: 0.02 s of CPU)
-* For the best local hit Nucleics Align is now faster than parasail, and than SSW
-  on related pairs, in wall time. SSW is still faster on unrelated pairs
-  (0.03 s against 0.07 s), uses about 4x less CPU time on related pairs and
-  needs only 7 MB. On one core Nucleics Align's score scan of the unrelated
-  pair takes 0.056 s (0.025 s with `NATIVE=1` on AVX-512)
+* For the best local hit Nucleics Align is now faster than parasail and SSW
+  in wall time, on unrelated pairs too (0.01 s and 5 MB against SSW's 0.03 s
+  and 7 MB). SSW still uses about 4x less CPU time on related pairs, and
+  needs only 7 MB where a hit spans the sequences. On one core Nucleics
+  Align's score scan of the unrelated pair takes 0.017 s (0.014 s with
+  `NATIVE=1` on AVX-512)
 
 Examples
 ========

@@ -8,8 +8,9 @@ endif
 
 # Build with sanitizers: make SANITIZE=1 test
 ifdef SANITIZE
-	OPT = -O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined
-	TGTFLAGS += -fsanitize=address,undefined
+	OPT = -O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined \
+	      -fno-sanitize-recover=all
+	TGTFLAGS += -fsanitize=address,undefined -fno-sanitize-recover=all
 endif
 
 # Tune for this machine's CPU (e.g. 8-lane AVX2 for the SIMD fill):

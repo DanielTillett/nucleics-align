@@ -62,12 +62,14 @@ void smith_waterman_set_compact(sw_aligner_t *sw, bool compact);
 void smith_waterman_set_options(sw_aligner_t *sw,
                                 const alignment_options_t *opts);
 
-// Compact alignments of at least this many cells (default 2^30, 1 GB of
+// Compact alignments of at least this many cells (default 2^24, 16 MB of
 // traceback bytes) find the best hit with O(len_b)-memory scans and then
 // fill just the rectangle of the best hits: much less memory and time when
 // the hit is short against the sequences (50 kb pairs sharing 2 kb: 0.55 ->
-// 0.09 s, 2.9 GB -> 10 MB), but about 50% more time when it spans them.
-// Same hits. Not used where a gap scores above 0 (a hit can then start with
+// 0.09 s, 2.9 GB -> 10 MB; 20 kb unrelated: 0.08 -> 0.01 s, 450 -> 5 MB).
+// The first scan gives up once the hit is seen to span the sequences (see
+// alignment_sw_scan_short()), so those cost about the same as before. Same
+// hits. Not used where a gap scores above 0 (a hit can then start with
 // one). Until a second hit is fetched, the aligner describes the rectangle,
 // or the whole sequences if no hit reaches the minimum score. For tuning and
 // tests

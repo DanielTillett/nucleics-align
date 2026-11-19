@@ -38,7 +38,7 @@
 typedef struct
 {
   int max_threads; // full-matrix fills (0: half the CPUs)
-  bool striped, band, narrow;
+  bool striped, band, narrow, byte;
   size_t block_min_cells, block_min_cols, band_strip_rows, band_min_width;
   size_t sw_rect_min_cells; // see smith_waterman_rect_min_cells
   // Linear space (hirschberg.h)
@@ -206,10 +206,12 @@ extern int alignment_max_threads;
 extern bool alignment_band_enabled;
 extern size_t alignment_band_strip_rows, alignment_band_min_width;
 
-// Smith-Waterman fills and scans use 16-bit lanes, twice as many, where the
-// scores allow, and start again with 32-bit lanes if they grow too big (same
-// result). alignment_narrow_enabled (default true) turns that off, for tests
-extern bool alignment_narrow_enabled;
+// Smith-Waterman fills and scans use 8-bit lanes (4 times as many) or
+// 16-bit lanes (twice as many) where the scores allow, and start again
+// with wider lanes if they grow too big (same result): 8, then 16, then 32
+// bits. alignment_byte_enabled and alignment_narrow_enabled (default true)
+// turn off the 8- and 16-bit lanes, for tests
+extern bool alignment_narrow_enabled, alignment_byte_enabled;
 
 // The default settings, from the variables above (and their hirschberg_*
 // and smith_waterman_* counterparts) as they are now
@@ -228,6 +230,16 @@ bool alignment_sw_scan(const char *a, size_t len_a, const char *b, size_t len_b,
                        const scoring_t *scoring, score_t target,
                        const alignment_options_t *opts,
                        score_t *best, size_t *x, size_t *y);
+// The scan for the best cell (target 0), but giving up (returning false)
+// once the best so far reaches half the best substitution score per row
+// filled, from a sixteenth of the rows on: a hit that rises that fast from
+// near the start spans most of the sequences, so finding where it starts
+// would not pay
+bool alignment_sw_scan_short(const char *a, size_t len_a,
+                             const char *b, size_t len_b,
+                             const scoring_t *scoring,
+                             const alignment_options_t *opts,
+                             score_t *best, size_t *x, size_t *y);
 
 // Constructors/Destructors for alignment. alignment_create() and
 // alignment_ensure_capacity() exit if out of memory; alignment_reserve()

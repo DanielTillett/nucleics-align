@@ -19,8 +19,10 @@ extern "C" {
 #endif
 
 // Fills started with 16-bit lanes, and those started again with 32-bit ones,
-// since the program began
+// since the program began; and the same for 8-bit lanes (started again with
+// 16- or 32-bit ones)
 void alignment_narrow_counts(size_t *fills, size_t *retries);
+void alignment_byte_counts(size_t *fills, size_t *retries);
 
 // When true, each SIMD pass of hirschberg.c is redone without SIMD and
 // hirschberg_striped_mismatches counts any row that differs. While it is

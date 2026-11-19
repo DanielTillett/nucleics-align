@@ -1134,9 +1134,10 @@ void simd_test_compact_rect()
     }
   }
   // Rectangles smaller than the matrix were used (they need the striped
-  // fill)
+  // fill). Hits that start in the top half of the rows so far are filled
+  // whole (see alignment_sw_scan_short()): about 220 of the 600 use one
 #ifdef ALN_STRIPED
-  ASSERT(rects > 300);
+  ASSERT(rects > 150);
 #else
   ASSERT(rects == 0);
 #endif
@@ -1152,11 +1153,39 @@ void simd_test_compact_rect()
   alignment_free(r_rect);
 }
 
-/* Smith-Waterman fills and scans with 16-bit lanes give the same results as
- * 32-bit ones and the score matrices, including when scores grow past the
- * 16-bit range part-way (the fill starts again with 32-bit lanes), on one
- * thread and on column blocks */
-void simd_test_narrow()
+/* The rectangle's first scan gives up on a hit spanning the sequences, and
+ * otherwise finds what the full scan finds */
+void simd_test_scan_short()
+{
+  static char a[3001], b[3001];
+  scoring_t scoring;
+  score_t best, best_s;
+  size_t x, y, xs, ys, i;
+  scoring_init(&scoring, 1, -2, -4, -1, false, false, false, false, false,
+               false);
+  for(i = 0; i < 20; i++) {
+    // A shared sequence (a hit from start to end), then unrelated ones
+    hb_rand_seq(a, 1000 + hb_rand(2000), "acgt");
+    if(i % 2) hb_rand_seq(b, 1000 + hb_rand(2000), "acgt");
+    else hb_mutate(b, a, 20, "acgt");
+    const size_t la = strlen(a), lb = strlen(b);
+    bool ok = alignment_sw_scan(a, la, b, lb, &scoring, 0, NULL, &best, &x, &y);
+    bool ok_s = alignment_sw_scan_short(a, la, b, lb, &scoring, NULL,
+                                        &best_s, &xs, &ys);
+#ifdef ALN_STRIPED
+    ASSERT(ok);
+    ASSERT(ok_s == (i % 2 == 1)); // gives up only on the shared one
+#endif
+    if(ok && ok_s) ASSERT(best == best_s && x == xs && y == ys);
+  }
+}
+
+/* Smith-Waterman fills and scans with 8- or 16-bit lanes (bits) give the
+ * same results as 32-bit ones and the score matrices, including when
+ * scores grow past the lanes' range part-way (the fill starts again with
+ * wider lanes: 8-bit fills with 16-bit lanes, or with 32-bit ones in some
+ * pairs), on one thread and on column blocks */
+void simd_test_narrow(int bits)
 {
   size_t min_cells = alignment_block_min_cells;
   size_t min_cols = alignment_block_min_cols;
@@ -1166,21 +1195,33 @@ void simd_test_narrow()
   char seqa[1201], seqb[2001], core[1001];
   scoring_t scoring;
   const unsigned int rates[] = {0, 10, 60, 300};
+  const int top = bits == 8 ? INT8_MAX : INT16_MAX;
   size_t i, past = 0, within = 0;
   size_t fills0, retries0, fills1, retries1;
 
   smith_waterman_set_compact(compact, true);
   alignment_block_min_cells = 1;
   alignment_block_min_cols = 8;
-  alignment_narrow_counts(&fills0, &retries0);
+  if(bits == 8) alignment_byte_counts(&fills0, &retries0);
+  else alignment_narrow_counts(&fills0, &retries0);
 
   for(i = 0; i < 400; i++)
   {
     alignment_max_threads = 1 + (int)(i % 4);
-    // Large scores in some, so the best passes 32767 - (highest score)
-    int match = i % 2 ? 1 + (int)hb_rand(400) : 1 + (int)hb_rand(5);
+    // The lanes under test; 8-bit fills that pass their range go on with
+    // 32-bit lanes in some pairs
+    alignment_byte_enabled = bits == 8;
+    alignment_narrow_enabled = bits == 16 || i % 3 != 0;
+    // Large scores in some, so the best passes the range less the highest
+    // score (with 8 bits, scores small enough for the lanes in most)
+    int match = bits == 8 ? (i % 5 ? 1 + (int)hb_rand(4) : 1 + (int)hb_rand(60))
+                          : (i % 2 ? 1 + (int)hb_rand(400) : 1 + (int)hb_rand(5));
+    // With 8 bits, penalties past the lanes' range in some (16-bit lanes
+    // then, or 32-bit ones)
+    int pen = bits == 8 && i % 7 != 0 ? 40 : 300;
     scoring_init(&scoring, match, -(int)hb_rand((unsigned int)match * 2 + 2),
-                 -(int)hb_rand(300), -(int)hb_rand(100), false, false,
+                 -(int)hb_rand((unsigned int)pen),
+                 -(int)hb_rand((unsigned int)pen / 3), false, false,
                  false, false, false, false);
     hb_rand_seq(core, hb_rand(1000), i % 3 ? "acgt" : "ac");
     hb_rand_seq(seqa, hb_rand(100), "acgt");
@@ -1197,43 +1238,89 @@ void simd_test_narrow()
     ASSERT(got_full == got_compact);
     if(got_full && got_compact) {
       ASSERT(alignments_equal(r_full, r_compact));
-      if(r_full->score > INT16_MAX - match) past++;
+      if(r_full->score > top - match) past++;
       else within++;
     }
 
-    // Scans: the best cell, then the highest cells with that score
-    score_t best16, best32, t16, t32;
-    size_t x16, y16, x32, y32, tx16, ty16, tx32, ty32;
+    // Scans: the best cell, then the highest cells with that score, with
+    // the narrow lanes and with 32-bit ones only
+    score_t bestn, best32, tn, t32;
+    size_t xn, yn, x32, y32, txn, tyn, tx32, ty32;
     size_t la = strlen(seqa), lb = strlen(seqb);
-    bool ok16 = alignment_sw_scan(seqa, la, seqb, lb, &scoring, 0, NULL,
-                                  &best16, &x16, &y16);
-    alignment_narrow_enabled = false;
+    bool narrow = alignment_narrow_enabled;
+    bool okn = alignment_sw_scan(seqa, la, seqb, lb, &scoring, 0, NULL,
+                                 &bestn, &xn, &yn);
+    alignment_narrow_enabled = alignment_byte_enabled = false;
     bool ok32 = alignment_sw_scan(seqa, la, seqb, lb, &scoring, 0, NULL,
                                   &best32, &x32, &y32);
 #ifdef ALN_STRIPED
-    ASSERT(ok16 == (la > 0 && lb > 0));
+    ASSERT(okn == (la > 0 && lb > 0));
 #endif
-    ASSERT(ok16 == ok32);
-    if(ok16 && ok32) {
-      ASSERT(best16 == best32 && x16 == x32 && y16 == y32);
+    ASSERT(okn == ok32);
+    if(okn && ok32) {
+      ASSERT(bestn == best32 && xn == x32 && yn == y32);
       if(best32 > 0) {
         ok32 = alignment_sw_scan(seqa, la, seqb, lb, &scoring, best32, NULL,
                                  &t32, &tx32, &ty32);
-        alignment_narrow_enabled = true;
-        ok16 = alignment_sw_scan(seqa, la, seqb, lb, &scoring, best32, NULL,
-                                 &t16, &tx16, &ty16);
-        ASSERT(ok16 == ok32);
-        ASSERT(!ok16 || (t16 == t32 && tx16 == tx32 && ty16 == ty32));
+        alignment_byte_enabled = bits == 8;
+        alignment_narrow_enabled = narrow;
+        okn = alignment_sw_scan(seqa, la, seqb, lb, &scoring, best32, NULL,
+                                &tn, &txn, &tyn);
+        ASSERT(okn == ok32);
+        ASSERT(!okn || (tn == t32 && txn == tx32 && tyn == ty32));
       }
     }
-    alignment_narrow_enabled = true;
   }
-  // Both sides of the 16-bit range were tested
+  alignment_narrow_enabled = alignment_byte_enabled = true;
+
+  // Edges of the 8-bit range. Identical sequences whose cells are all
+  // multiples of 32 step from 96 (just over the limit of 95) straight to
+  // 128, past 127, so the range must be checked at the right row; other
+  // match scores near the limit. Then penalties beyond -128 (8-bit lanes
+  // would read -300 as -44), which need wider lanes: on short sequences, so
+  // the best stays in the 8-bit range and no retry would hide a wrong score
+  // (b: a with its 21st base deleted, or changed)
+  static const int edges[][5] = {{32, -128, -32, -32, 0},
+                                 {43, -50, -50, -25, 0},
+                                 {61, -50, -50, -25, 0},
+                                 {3, -2, -299, -1, 1}, {3, -2, -2, -300, 1},
+                                 {3, -300, -50, -50, 2}};
+  // One thread: on narrow column blocks the best can jump where a hit
+  // enters a block, which starts the fill again with 16-bit lanes and
+  // would hide a wrong 8-bit score
+  alignment_max_threads = 1;
+  for(i = 0; bits == 8 && i < sizeof(edges) / sizeof(edges[0]); i++) {
+    scoring_init(&scoring, edges[i][0], edges[i][1], edges[i][2], edges[i][3],
+                 false, false, false, false, false, false);
+    hb_rand_seq(seqa, edges[i][4] ? 40 : 400, "acgt");
+    strcpy(seqb, seqa);
+    if(edges[i][4] == 1) memmove(seqb + 20, seqb + 21, strlen(seqb + 20));
+    if(edges[i][4] == 2) seqb[20] = seqa[20] == 'a' ? 'c' : 'a';
+    smith_waterman_align(seqa, seqb, &scoring, full);
+    smith_waterman_align(seqa, seqb, &scoring, compact);
+    ASSERT(smith_waterman_fetch(full, r_full) &&
+           smith_waterman_fetch(compact, r_compact) &&
+           alignments_equal(r_full, r_compact));
+    score_t bestn, best32;
+    size_t xn, yn, x32, y32;
+    size_t la = strlen(seqa), lb = strlen(seqb);
+    bool okn = alignment_sw_scan(seqa, la, seqb, lb, &scoring, 0, NULL,
+                                 &bestn, &xn, &yn);
+    alignment_byte_enabled = alignment_narrow_enabled = false;
+    bool ok32 = alignment_sw_scan(seqa, la, seqb, lb, &scoring, 0, NULL,
+                                  &best32, &x32, &y32);
+    alignment_byte_enabled = alignment_narrow_enabled = true;
+    ASSERT(okn == ok32 &&
+           (!okn || (bestn == best32 && xn == x32 && yn == y32)));
+  }
+
+  // Both sides of the range were tested
   ASSERT(past > 50);
   ASSERT(within > 50);
-  // The 16-bit fills ran, and every best hit past the range was filled
-  // again with 32-bit lanes (the scans may stop earlier)
-  alignment_narrow_counts(&fills1, &retries1);
+  // The narrow fills ran, and every best hit past the range was filled
+  // again with wider lanes (the scans may stop earlier)
+  if(bits == 8) alignment_byte_counts(&fills1, &retries1);
+  else alignment_narrow_counts(&fills1, &retries1);
 #ifdef ALN_STRIPED
   ASSERT(fills1 - fills0 > 600); // a fill and a scan for most pairs
   ASSERT(retries1 - retries0 >= past);
@@ -1386,8 +1473,10 @@ void test_simd()
 {
   SUITE_START("Striped SIMD fill");
   simd_test_compact_rect();
+  simd_test_scan_short();
   simd_test_rect_gap_score();
-  simd_test_narrow();
+  simd_test_narrow(16);
+  simd_test_narrow(8);
   simd_test_compact_band();
   simd_test_compact();
   simd_test_tiny_blocks();
@@ -1689,11 +1778,12 @@ void test_options()
   many.block_min_cols = many.hb_block_min_cols = 8;
   many.band = many.hb_band = !many.band;
   many.narrow = !many.narrow;
+  many.byte = !many.byte;
   many.sw_rect_min_cells = 0;
   alignment_options_default(&plain);
 
-  // The aligner's own options are the ones used: 16-bit lanes off there
-  // start no 16-bit fill, while the defaults do
+  // The aligner's own options are the ones used: 8-bit lanes off there
+  // start no 8-bit fill, while the defaults do
   {
     sw_aligner_t *sw = smith_waterman_new();
     alignment_options_t off;
@@ -1702,14 +1792,14 @@ void test_options()
     scoring_system_default(&scoring);
     smith_waterman_set_compact(sw, true);
     alignment_options_default(&off);
-    off.narrow = false;
-    alignment_narrow_counts(&fills0, &retries);
+    off.byte = false;
+    alignment_byte_counts(&fills0, &retries);
     smith_waterman_set_options(sw, &off);
     smith_waterman_align(a[0], b[0], &scoring, sw);
-    alignment_narrow_counts(&fills1, &retries);
+    alignment_byte_counts(&fills1, &retries);
     smith_waterman_set_options(sw, NULL);
     smith_waterman_align(a[0], b[0], &scoring, sw);
-    alignment_narrow_counts(&fills2, &retries);
+    alignment_byte_counts(&fills2, &retries);
     ASSERT(fills1 == fills0);
 #ifdef ALN_STRIPED
     ASSERT(fills2 > fills1);
