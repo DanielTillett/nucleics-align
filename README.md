@@ -50,9 +50,17 @@ Build
 Build options:
 
     $ make test                           # run the tests
-    $ make clean && make SANITIZE=1 test  # tests with ASan and UBSan
+    $ make SANITIZE=1 test                # tests with ASan and UBSan
     $ make NATIVE=1                       # tune for this CPU (e.g. AVX2)
     $ make DEBUG=1                        # no optimisation, debug symbols
+
+`make test` runs the library's unit tests, then `tests/cli/run.sh`, which
+compares the tools' output, error messages and exit status with the
+expected files in `tests/cli/expected`, running each batch case on one
+thread and on four. The unit tests print their random seed; set
+`SEQ_ALIGN_TEST_SEED` to repeat a run. Changing the compiler, flags or any
+header rebuilds what depends on it, so a build never mixes objects compiled
+different ways. `benchmarks/` has the scripts behind the timings below.
 
 `NATIVE=1` adds `-march=native`, which lets the SIMD code use 16-lane
 AVX-512 or 8-lane AVX2 on x86 (4 lanes otherwise). Binaries built this way
@@ -120,13 +128,34 @@ Link against `src/libalign.a` (and `libs/string_buffer/libstrbuf.a`, `-lz`,
 * `scoring_init()` and the `scoring_system_*()` functions
   (`src/alignment_scoring.h`): set up a scoring system
 
-`alignment_striped_enabled` (`src/alignment.h`, default true) switches SIMD
-off in both the matrix fill and the linear-space aligner, for testing or
-comparison; results are exactly the same either way. Large full-matrix fills
-are split into column blocks on several threads, tunable with
-`alignment_block_min_cells`, `alignment_block_min_cols` and
-`alignment_max_threads`. `alignment_colour_fprint_against()` and
-`alignment_fprint_spacer()` print to a given stream instead of stdout.
+Settings that change speed but never a result (threads, SIMD, banding,
+16-bit lanes, block sizes) are in an `alignment_options_t`
+(`src/alignment.h`). Give an aligner its own with its `options` field
+(Needleman-Wunsch) or `smith_waterman_set_options()`, and pass them to
+`hirschberg_align_opts()`/`hirschberg_score_opts()`; threads with different
+options can then align at the same time. Without options, the process-wide
+defaults apply: `alignment_options_default()` reads them from the
+`alignment_*`, `hirschberg_*` and `smith_waterman_rect_min_cells`
+variables, which keep their old meaning (e.g. `alignment_striped_enabled =
+false` switches SIMD off everywhere).
+
+The aligners above end the program on an error in the input. The
+`*_checked()` versions (`needleman_wunsch_align_checked()`,
+`smith_waterman_align_checked()`, `hirschberg_align_checked()`,
+`hirschberg_score_checked()`) return it instead, as an `aln_status_t`, before
+doing any work: a character pair the scoring does not define
+(`ALN_ERR_SCORING`, naming the pair), sequences too long to address
+(`ALN_ERR_TOO_LONG`), scores that could pass `INT_MAX` (`ALN_ERR_OVERFLOW`)
+or, for linear space, options it refuses (`ALN_ERR_UNSUPPORTED`).
+`alignment_fprint_error()` prints the message the aligners would have.
+Scores should lie within plus or minus `SCORE_ABS_MAX` (`INT_MAX / 4`); the
+command line tools and the scoring file loaders refuse others. Running out
+of memory still ends the program.
+
+`alignment_colour_fprint_against()` and `alignment_fprint_spacer()` print to
+a given stream instead of stdout. `scoring_make_case_sensitive()` switches a
+scoring system to case-sensitive comparison, keeping its scores for upper
+case too.
 
 See `examples/` for complete C and C++ programs.
 
@@ -134,9 +163,10 @@ The command line tools use half the CPUs by default (`--threads <n>` to
 change it). Pairs read from a file are aligned several at a time, on
 separate threads, and printed in input order, so the output is the same as
 one at a time. Each pair is printed as soon as those before it are. A pair
-of more than 4 million cells runs on its own with all the threads, as does
-one that would end the program (a character pair the scoring does not
-define, or scores big enough to overflow), after the output before it.
+of more than 4 million cells runs on its own with all the threads. An error
+in a pair (a character pair the scoring does not define, or scores big
+enough to overflow) is reported after the output of the pairs before it,
+and stops the program as before.
 
 Performance
 -----------
@@ -250,6 +280,16 @@ Where the speed comes from:
   in 40 GB before). Hits spanning both sequences take about 50% longer, so
   smaller alignments fill every cell's byte. Not used where a gap scores
   above 0, as a hit can then start with a gap
+* Smith-Waterman fills and scans use 16-bit lanes, twice as many per
+  vector, where the scores allow (every cell lies between 0 and the best
+  score so far), and fill each row in one pass: match, both gaps and the
+  row's best cell together, with the lazy F loop adding what each lane
+  passes to the next. A row whose best comes near the 16-bit limit, or a
+  best rising fast enough to reach it, starts the fill again with 32-bit
+  lanes. One thread, 20 kb: the score scan 0.125 -> 0.056 s (unrelated)
+  and 0.29 -> 0.14 s (1%), the best hit with traceback bytes 0.33 -> 0.22 s
+  and 0.49 -> 0.29 s; with `NATIVE=1` on AVX-512 the unrelated scan takes
+  0.025 s (16 Gcells/s). 3,000 local best hits: 0.50 -> 0.33 s
 * The linear-space aligner's forward and reverse passes share the threads
   rather than taking half the CPUs each, which oversubscribed the cores (50
   kb unrelated `--linear` 0.45 -> 0.33 s and 6.1 -> 2.1 s of CPU)
@@ -358,13 +398,13 @@ Local alignment, best hit only (`smith_waterman --maxhits 1`), 20 kb:
 | Tool | 1% | 10% | Unrelated | Peak memory |
 |---|---|---|---|---|
 | seq-align before this fork | 71.1 s | 61.2 s | 34.5 s | 6.3 - 8.5 GB |
-| Nucleics Align | 0.11 s (1.3 s) | 0.09 s (1.0 s) | 0.09 s (1.0 s) | 448 MB |
+| Nucleics Align | 0.10 s (1.2 s) | 0.08 s (0.8 s) | 0.07 s (0.7 s) | 448 MB |
 | parasail | 0.90 s | 0.83 s | 0.72 s | 1.5 GB |
 | SSW | 0.27 s | 0.22 s | 0.03 s | 7 MB |
 
 For the unrelated pair Nucleics Align reports no hit, as the best (score 14) is
-below the default `--minscore`. At 50 kb Nucleics Align's best hit took 0.80-0.85
-s and 2.9 GB when it spans both sequences, and 0.09 s and 10 MB for the
+below the default `--minscore`. At 50 kb Nucleics Align's best hit took 0.84
+s and 2.9 GB when it spans both sequences, and 0.06 s and 10 MB for the
 unrelated pair (the other tools were not run). At 5 kb every global aligner
 took 0.07 s or less, except seq-align before this fork (0.53-0.63 s) and
 WFA2 on the unrelated pair (0.65-0.96 s).
@@ -383,9 +423,10 @@ In short:
   lead in wall time there comes from threads. On similar pairs
   banding skips most cells (20 kb at 1%: 0.02 s of CPU)
 * For the best local hit Nucleics Align is now faster than parasail, and than SSW
-  on related pairs, in wall time. SSW is still faster on unrelated pairs,
-  uses about 5x less CPU time on related pairs (30x on unrelated) and needs
-  only 7 MB
+  on related pairs, in wall time. SSW is still faster on unrelated pairs
+  (0.03 s against 0.07 s), uses about 4x less CPU time on related pairs and
+  needs only 7 MB. On one core Nucleics Align's score scan of the unrelated
+  pair takes 0.056 s (0.025 s with `NATIVE=1` on AVX-512)
 
 Examples
 ========
@@ -661,6 +702,28 @@ into the public domain (Unlicense). The bundled libraries in `libs/` keep
 their own licences. The substitution matrices in `scoring/` come from NCBI
 (ftp://ftp.ncbi.nih.gov/blast/matrices/).
 
+
+Changes that affect output
+==========================
+
+Output is otherwise the same as earlier versions, byte for byte. These fix
+bugs:
+
+* `--case_sensitive` now makes comparisons case sensitive with
+  match/mismatch scoring and with substitution files. It used to change only
+  how substitution files were loaded, so their upper-case entries were
+  never found. Built-in scoring systems (`--scoring`) keep their scores for
+  both cases; only a character against the other case of itself changes
+* `--linear` scores sequences containing `-` or `\0` as the full-matrix
+  aligner does (it used to read a `-` in the alignment as a gap)
+* Empty number arguments (e.g. `--match ""`, once read as 0), scores beyond
+  plus or minus 536870911, and alignments whose scores could overflow are
+  refused with an error, instead of giving wrong scores
+* Global alignments set the result's `pos_a`, `pos_b`, `len_a` and `len_b`
+  (to the whole sequences), where they kept the values of an earlier local
+  alignment
+* The error for sequences too long to address reads `Error: Sequences too
+  long to align`, without a source file and line in front
 
 Development
 ===========

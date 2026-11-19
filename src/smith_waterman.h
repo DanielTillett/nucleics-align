@@ -34,6 +34,13 @@ void smith_waterman_align2(const char *seq_a, const char *seq_b,
                            size_t len_a, size_t len_b,
                            const scoring_t *scoring, sw_aligner_t *sw);
 
+// As smith_waterman_align2(), but an error in the input (see aln_status_t) is
+// returned, with err set if not NULL, instead of ending the program
+aln_status_t smith_waterman_align_checked(const char *seq_a, const char *seq_b,
+                                          size_t len_a, size_t len_b,
+                                          const scoring_t *scoring,
+                                          sw_aligner_t *sw, aln_error_t *err);
+
 // Only consider local alignments scoring at least min_score (default 1) in
 // later calls to smith_waterman_align(). Hits come out best first, so the
 // hits returned are exactly those of a full search up to the first one
@@ -47,6 +54,12 @@ void smith_waterman_set_min_score(sw_aligner_t *sw, score_t min_score);
 // matrices then; until it does, the aligner from smith_waterman_get_aligner()
 // has no score matrices if its traced flag is set
 void smith_waterman_set_compact(sw_aligner_t *sw, bool compact);
+
+// Settings for later alignments (opts must stay valid while they run; NULL:
+// the defaults, see alignment_options_t). For Needleman-Wunsch set the
+// aligner's options field
+void smith_waterman_set_options(sw_aligner_t *sw,
+                                const alignment_options_t *opts);
 
 // Compact alignments of at least this many cells (default 2^30, 1 GB of
 // traceback bytes) find the best hit with O(len_b)-memory scans and then

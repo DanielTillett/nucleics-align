@@ -15,6 +15,7 @@
 #include <string.h>
 #include <time.h> // needed for rand()
 #include <unistd.h>  // need for getpid() for getting setting rand number
+#include <pthread.h>
 
 
 #include "needleman_wunsch.h"
@@ -1150,6 +1151,104 @@ void simd_test_compact_rect()
   alignment_free(r_rect);
 }
 
+/* Smith-Waterman fills and scans with 16-bit lanes give the same results as
+ * 32-bit ones and the score matrices, including when scores grow past the
+ * 16-bit range part-way (the fill starts again with 32-bit lanes), on one
+ * thread and on column blocks */
+void simd_test_narrow()
+{
+  size_t min_cells = alignment_block_min_cells;
+  size_t min_cols = alignment_block_min_cols;
+  int max_threads = alignment_max_threads;
+  sw_aligner_t *full = smith_waterman_new(), *compact = smith_waterman_new();
+  alignment_t *r_full = alignment_create(256), *r_compact = alignment_create(256);
+  char seqa[1201], seqb[2001], core[1001];
+  scoring_t scoring;
+  const unsigned int rates[] = {0, 10, 60, 300};
+  size_t i, past = 0, within = 0;
+  size_t fills0, retries0, fills1, retries1;
+
+  smith_waterman_set_compact(compact, true);
+  alignment_block_min_cells = 1;
+  alignment_block_min_cols = 8;
+  alignment_narrow_counts(&fills0, &retries0);
+
+  for(i = 0; i < 400; i++)
+  {
+    alignment_max_threads = 1 + (int)(i % 4);
+    // Large scores in some, so the best passes 32767 - (highest score)
+    int match = i % 2 ? 1 + (int)hb_rand(400) : 1 + (int)hb_rand(5);
+    scoring_init(&scoring, match, -(int)hb_rand((unsigned int)match * 2 + 2),
+                 -(int)hb_rand(300), -(int)hb_rand(100), false, false,
+                 false, false, false, false);
+    hb_rand_seq(core, hb_rand(1000), i % 3 ? "acgt" : "ac");
+    hb_rand_seq(seqa, hb_rand(100), "acgt");
+    strcat(seqa, core);
+    hb_mutate(seqb, core, rates[i % 4], "acgt");
+    hb_rand_seq(seqb + strlen(seqb), hb_rand(100), "acgt");
+
+    smith_waterman_set_min_score(full, 1);
+    smith_waterman_set_min_score(compact, 1);
+    smith_waterman_align(seqa, seqb, &scoring, full);
+    smith_waterman_align(seqa, seqb, &scoring, compact);
+    int got_full = smith_waterman_fetch(full, r_full);
+    int got_compact = smith_waterman_fetch(compact, r_compact);
+    ASSERT(got_full == got_compact);
+    if(got_full && got_compact) {
+      ASSERT(alignments_equal(r_full, r_compact));
+      if(r_full->score > INT16_MAX - match) past++;
+      else within++;
+    }
+
+    // Scans: the best cell, then the highest cells with that score
+    score_t best16, best32, t16, t32;
+    size_t x16, y16, x32, y32, tx16, ty16, tx32, ty32;
+    size_t la = strlen(seqa), lb = strlen(seqb);
+    bool ok16 = alignment_sw_scan(seqa, la, seqb, lb, &scoring, 0, NULL,
+                                  &best16, &x16, &y16);
+    alignment_narrow_enabled = false;
+    bool ok32 = alignment_sw_scan(seqa, la, seqb, lb, &scoring, 0, NULL,
+                                  &best32, &x32, &y32);
+#ifdef ALN_STRIPED
+    ASSERT(ok16 == (la > 0 && lb > 0));
+#endif
+    ASSERT(ok16 == ok32);
+    if(ok16 && ok32) {
+      ASSERT(best16 == best32 && x16 == x32 && y16 == y32);
+      if(best32 > 0) {
+        ok32 = alignment_sw_scan(seqa, la, seqb, lb, &scoring, best32, NULL,
+                                 &t32, &tx32, &ty32);
+        alignment_narrow_enabled = true;
+        ok16 = alignment_sw_scan(seqa, la, seqb, lb, &scoring, best32, NULL,
+                                 &t16, &tx16, &ty16);
+        ASSERT(ok16 == ok32);
+        ASSERT(!ok16 || (t16 == t32 && tx16 == tx32 && ty16 == ty32));
+      }
+    }
+    alignment_narrow_enabled = true;
+  }
+  // Both sides of the 16-bit range were tested
+  ASSERT(past > 50);
+  ASSERT(within > 50);
+  // The 16-bit fills ran, and every best hit past the range was filled
+  // again with 32-bit lanes (the scans may stop earlier)
+  alignment_narrow_counts(&fills1, &retries1);
+#ifdef ALN_STRIPED
+  ASSERT(fills1 - fills0 > 600); // a fill and a scan for most pairs
+  ASSERT(retries1 - retries0 >= past);
+#else
+  ASSERT(fills1 == fills0 && retries1 == retries0);
+#endif
+
+  alignment_block_min_cells = min_cells;
+  alignment_block_min_cols = min_cols;
+  alignment_max_threads = max_threads;
+  smith_waterman_free(full);
+  smith_waterman_free(compact);
+  alignment_free(r_full);
+  alignment_free(r_compact);
+}
+
 /* A gap scoring above 0 can open a local hit, which the rectangle's
  * reverse scan would miss: the compact aligner gives the same hit */
 void simd_test_rect_gap_score()
@@ -1287,6 +1386,7 @@ void test_simd()
   SUITE_START("Striped SIMD fill");
   simd_test_compact_rect();
   simd_test_rect_gap_score();
+  simd_test_narrow();
   simd_test_compact_band();
   simd_test_compact();
   simd_test_tiny_blocks();
@@ -1459,12 +1559,272 @@ void scoring_test_load_matrix()
   ASSERT(score == 7);
 }
 
+/* Linear space scores literal '-' and '\0' characters as Needleman-Wunsch
+ * does, and both global aligners describe the whole sequences in a result
+ * that last held a Smith-Waterman hit */
+void test_global_inputs()
+{
+  nw_aligner_t *nw = needleman_wunsch_new();
+  sw_aligner_t *sw = smith_waterman_new();
+  alignment_t *nw_aln = alignment_create(8), *hb_aln = alignment_create(8);
+  scoring_t scoring;
+  scoring_system_default(&scoring);
+  const char *pairs[][2] = {{"-", "-"}, {"A-C", "AC"}, {"--", "A"},
+                            {"AC-GT", "AC-GT"}};
+  size_t i;
+
+  for(i = 0; i < sizeof(pairs)/sizeof(pairs[0]); i++) {
+    needleman_wunsch_align(pairs[i][0], pairs[i][1], &scoring, nw, nw_aln);
+    ASSERT(hirschberg_align(pairs[i][0], pairs[i][1], &scoring, hb_aln));
+    ASSERT(nw_aln->score == hb_aln->score);
+  }
+
+  // Embedded '\0' (lengths given)
+  const char a[] = {'A', '\0', 'T'};
+  needleman_wunsch_align2(a, a, 3, 3, &scoring, nw, nw_aln);
+  ASSERT(hirschberg_align2(a, a, 3, 3, &scoring, hb_aln));
+  ASSERT(nw_aln->score == 3 && hb_aln->score == 3);
+
+  // Reused after a local hit
+  smith_waterman_set_min_score(sw, 1);
+  smith_waterman_align("TTTTACGT", "ACGT", &scoring, sw);
+  ASSERT(smith_waterman_fetch(sw, nw_aln) && nw_aln->pos_a == 4);
+  needleman_wunsch_align("TTTTACGT", "ACGT", &scoring, nw, nw_aln);
+  ASSERT(nw_aln->pos_a == 0 && nw_aln->pos_b == 0);
+  ASSERT(nw_aln->len_a == 8 && nw_aln->len_b == 4);
+  hb_aln->pos_a = hb_aln->pos_b = 7;
+  ASSERT(hirschberg_align("TTTTACGT", "ACGT", &scoring, hb_aln));
+  ASSERT(hb_aln->pos_a == 0 && hb_aln->pos_b == 0);
+  ASSERT(hb_aln->len_a == 8 && hb_aln->len_b == 4);
+
+  needleman_wunsch_free(nw);
+  smith_waterman_free(sw);
+  alignment_free(nw_aln);
+  alignment_free(hb_aln);
+}
+
+/* scoring_make_case_sensitive() keeps scores already set, for upper-case
+ * characters too, and tells a character from its other case */
+void scoring_test_case_sensitive()
+{
+  scoring_t scoring;
+  int s1, s2;
+  bool m1, m2;
+
+  scoring_system_BLOSUM62(&scoring);
+  scoring_lookup(&scoring, 'w', 'r', &s1, &m1);
+  scoring_make_case_sensitive(&scoring);
+  scoring_lookup(&scoring, 'W', 'R', &s2, &m2);
+  ASSERT(s1 == s2 && m1 == m2);
+  scoring_lookup(&scoring, 'w', 'r', &s2, &m2);
+  ASSERT(s1 == s2 && m1 == m2);
+  scoring_lookup(&scoring, 'W', 'r', &s2, &m2);
+  ASSERT(s1 == s2 && m1 == m2);
+  scoring_lookup(&scoring, 'w', 'R', &s2, &m2);
+  ASSERT(s1 == s2 && m1 == m2);
+  scoring_lookup(&scoring, 'W', 'w', &s2, &m2); // match/mismatch
+  ASSERT(s2 == scoring.mismatch && !m2);
+
+  scoring_system_default(&scoring);
+  scoring_add_wildcard(&scoring, 'n', 0);
+  scoring_make_case_sensitive(&scoring);
+  scoring_lookup(&scoring, 'A', 'a', &s1, &m1);
+  ASSERT(s1 == scoring.mismatch && !m1);
+  scoring_lookup(&scoring, 'N', 'C', &s1, &m1);
+  ASSERT(s1 == 0 && m1);
+}
+
+/* Aligners with options of their own give the same results as the defaults,
+ * also on two threads at once with different options (no shared settings) */
+#define OPT_PAIRS 40
+typedef struct {
+  const alignment_options_t *opts;
+  char (*a)[401], (*b)[701];
+  score_t nw[OPT_PAIRS], sw[OPT_PAIRS], hb[OPT_PAIRS];
+} opt_run_t;
+
+static void* opt_run(void *ptr)
+{
+  opt_run_t *r = ptr;
+  nw_aligner_t *nw = needleman_wunsch_new();
+  sw_aligner_t *sw = smith_waterman_new();
+  alignment_t *aln = alignment_create(256);
+  scoring_t scoring;
+  size_t i;
+  scoring_system_default(&scoring);
+  nw->options = r->opts;
+  nw->compact = true;
+  smith_waterman_set_options(sw, r->opts);
+  smith_waterman_set_compact(sw, true);
+  smith_waterman_set_min_score(sw, 1);
+  for(i = 0; i < OPT_PAIRS; i++) {
+    needleman_wunsch_align(r->a[i], r->b[i], &scoring, nw, aln);
+    r->nw[i] = aln->score;
+    smith_waterman_align(r->a[i], r->b[i], &scoring, sw);
+    r->sw[i] = smith_waterman_fetch(sw, aln) ? aln->score : -1;
+    r->hb[i] = hirschberg_align_opts(r->a[i], r->b[i], strlen(r->a[i]),
+                                     strlen(r->b[i]), &scoring, r->opts, aln)
+               ? aln->score : -1;
+  }
+  needleman_wunsch_free(nw);
+  smith_waterman_free(sw);
+  alignment_free(aln);
+  return NULL;
+}
+
+void test_options()
+{
+  static char a[OPT_PAIRS][401], b[OPT_PAIRS][701];
+  alignment_options_t many, plain;
+  size_t i;
+  for(i = 0; i < OPT_PAIRS; i++) {
+    hb_rand_seq(a[i], 50 + hb_rand(350), "acgt");
+    hb_mutate(b[i], a[i], i % 2 ? 50 : 300, "acgt");
+  }
+  // Every switch the other way, and blocks on several threads
+  alignment_options_default(&many);
+  many.max_threads = many.hb_max_threads = 4;
+  many.block_min_cells = many.hb_block_min_cells = 1;
+  many.block_min_cols = many.hb_block_min_cols = 8;
+  many.band = many.hb_band = !many.band;
+  many.narrow = !many.narrow;
+  many.sw_rect_min_cells = 0;
+  alignment_options_default(&plain);
+
+  // The aligner's own options are the ones used: 16-bit lanes off there
+  // start no 16-bit fill, while the defaults do
+  {
+    sw_aligner_t *sw = smith_waterman_new();
+    alignment_options_t off;
+    scoring_t scoring;
+    size_t fills0, fills1, fills2, retries;
+    scoring_system_default(&scoring);
+    smith_waterman_set_compact(sw, true);
+    alignment_options_default(&off);
+    off.narrow = false;
+    alignment_narrow_counts(&fills0, &retries);
+    smith_waterman_set_options(sw, &off);
+    smith_waterman_align(a[0], b[0], &scoring, sw);
+    alignment_narrow_counts(&fills1, &retries);
+    smith_waterman_set_options(sw, NULL);
+    smith_waterman_align(a[0], b[0], &scoring, sw);
+    alignment_narrow_counts(&fills2, &retries);
+    ASSERT(fills1 == fills0);
+#ifdef ALN_STRIPED
+    ASSERT(fills2 > fills1);
+#endif
+    smith_waterman_free(sw);
+  }
+
+  opt_run_t base = {NULL, a, b, {0}, {0}, {0}};
+  opt_run_t r1 = {&many, a, b, {0}, {0}, {0}};
+  opt_run_t r2 = {&plain, a, b, {0}, {0}, {0}};
+  opt_run(&base);
+  pthread_t t1, t2;
+  ASSERT(pthread_create(&t1, NULL, opt_run, &r1) == 0);
+  ASSERT(pthread_create(&t2, NULL, opt_run, &r2) == 0);
+  pthread_join(t1, NULL);
+  pthread_join(t2, NULL);
+  for(i = 0; i < OPT_PAIRS; i++) {
+    ASSERT(r1.nw[i] == base.nw[i] && r2.nw[i] == base.nw[i]);
+    ASSERT(r1.sw[i] == base.sw[i] && r2.sw[i] == base.sw[i]);
+    ASSERT(r1.hb[i] == base.hb[i] && r2.hb[i] == base.hb[i]);
+    ASSERT(base.hb[i] == base.nw[i]);
+  }
+}
+
+/* The checked aligners return errors in the input, naming the pair
+ * scoring_lookup() would stop at, rather than ending the program */
+void test_checked()
+{
+  nw_aligner_t *nw = needleman_wunsch_new();
+  sw_aligner_t *sw = smith_waterman_new();
+  alignment_t *aln = alignment_create(16);
+  scoring_t scoring;
+  aln_error_t e;
+  score_t score;
+
+  // Pairs: only a/c defined (lower case), no match/mismatch
+  scoring_init(&scoring, 1, -1, -2, -1, false, false, false, false, false,
+               false);
+  scoring.use_match_mismatch = false;
+  scoring_add_mutation(&scoring, 'a', 'a', 1);
+  scoring_add_mutation(&scoring, 'a', 'c', -1);
+  scoring_add_mutation(&scoring, 'c', 'a', -1);
+  scoring_add_mutation(&scoring, 'c', 'c', 1);
+
+  ASSERT(needleman_wunsch_align_checked("ACCA", "ACA", 4, 3, &scoring, nw,
+                                        aln, &e) == ALN_OK);
+  ASSERT(aln->score == 0 && e.status == ALN_OK); // ACCA / AC-A
+  // As sub_table_build() looks them up: by character of b, then of a
+  ASSERT(needleman_wunsch_align_checked("AGT", "CA", 3, 2, &scoring, nw,
+                                        aln, &e) == ALN_ERR_SCORING);
+  ASSERT(e.a == 'g' && e.b == 'a');
+  ASSERT(smith_waterman_align_checked("ACT", "AC", 3, 2, &scoring, sw,
+                                      &e) == ALN_ERR_SCORING);
+  ASSERT(e.a == 't' && e.b == 'a');
+  ASSERT(hirschberg_align_checked("CA", "AT", 2, 2, &scoring, NULL, aln,
+                                  &e) == ALN_ERR_SCORING);
+  ASSERT(e.a == 'a' && e.b == 't');
+  ASSERT(hirschberg_score_checked("CA", "AC", 2, 2, &scoring, NULL, &score,
+                                  NULL) == ALN_OK && score == -2);
+
+  // Scores that could overflow; options linear space refuses
+  scoring_init(&scoring, 300000000, -1, -2, -1, false, false, false, false,
+               false, false);
+  ASSERT(needleman_wunsch_align_checked("ACGT", "ACGT", 4, 4, &scoring, nw,
+                                        aln, &e) == ALN_ERR_OVERFLOW);
+  ASSERT(smith_waterman_align_checked("ACGT", "ACGT", 4, 4, &scoring, sw,
+                                      &e) == ALN_ERR_OVERFLOW);
+  // The score-only scan refuses them too (a scan reports scores as found)
+  score_t best;
+  size_t bx, by;
+  ASSERT(!alignment_sw_scan("AAAAA", 5, "AAAAA", 5, &scoring, 0, NULL, &best,
+                            &bx, &by));
+  scoring_init(&scoring, 1, -1, 2, -1, false, false, false, false, false,
+               false);
+  ASSERT(hirschberg_align_checked("AC", "AC", 2, 2, &scoring, NULL, aln,
+                                  &e) == ALN_ERR_UNSUPPORTED);
+
+  // The messages, as the aligners print them before exiting
+  char *text = NULL;
+  size_t len = 0;
+  FILE *out = open_memstream(&text, &len);
+  e.status = ALN_ERR_SCORING; e.a = 'g'; e.b = 'a';
+  alignment_fprint_error(out, &e);
+  fclose(out);
+  ASSERT(strcmp(text, "Error: Unknown character pair (g,a) and "
+                      "match/mismatch have not been set\n") == 0);
+  free(text);
+
+  needleman_wunsch_free(nw);
+  smith_waterman_free(sw);
+  alignment_free(aln);
+}
+
+/* Rounding sizes up to a power of two never wraps to a smaller size */
+void alignment_test_roundup()
+{
+  ASSERT(ROUNDUP2POW(0) == 1);
+  ASSERT(ROUNDUP2POW(5) == 8);
+  ASSERT(ROUNDUP2POW(((size_t)1 << 20) + 1) == (size_t)1 << 21);
+  size_t top = (SIZE_MAX >> 1) + 1; // the highest power of two
+  ASSERT(ROUNDUP2POW(top) == top);
+  ASSERT(ROUNDUP2POW(top + 1) == top + 1);
+  ASSERT(ROUNDUP2POW(SIZE_MAX) == SIZE_MAX);
+}
+
 void test_misc()
 {
   SUITE_START("Alignment buffers and scoring files");
 
   alignment_test_create_zero();
+  alignment_test_roundup();
   scoring_test_load_matrix();
+  scoring_test_case_sensitive();
+  test_global_inputs();
+  test_options();
+  test_checked();
 
   SUITE_END();
 }
@@ -1478,8 +1838,13 @@ int main(int argc, char **argv)
     exit(EXIT_FAILURE);
   }
 
-  // Initialise random number generator
-  srand((unsigned int)time(NULL) + getpid());
+  // Initialise random number generator: SEQ_ALIGN_TEST_SEED repeats a run
+  const char *seed_env = getenv("SEQ_ALIGN_TEST_SEED");
+  unsigned int seed = seed_env != NULL
+                      ? (unsigned int)strtoul(seed_env, NULL, 10)
+                      : (unsigned int)time(NULL) + (unsigned int)getpid();
+  srand(seed);
+  printf("  Random seed: %u (set SEQ_ALIGN_TEST_SEED to repeat)\n", seed);
 
   printf("  Test Nucleics Align C library:\n\n");
 

@@ -23,7 +23,7 @@ typedef struct {
 } BitSet;
 
 static inline BitSet* bitset_alloc(BitSet *bs, size_t l) {
-  bs->s = (l+31)/32;
+  bs->s = l/32 + (l%32 != 0); // not (l+31)/32, which wraps for huge l
   bs->l = l;
   bs->b = calloc(bs->s, sizeof(bs->b[0]));
   return bs->b ? bs : NULL;
@@ -35,7 +35,7 @@ static inline void bitset_dealloc(BitSet *bs) {
 }
 
 static inline BitSet* bitset_set_length(BitSet *bs, size_t l) {
-  size_t ss = (l+31)/32;
+  size_t ss = l/32 + (l%32 != 0);
   if(ss > bs->s) {
     uint32_t *b = realloc(bs->b, ss*sizeof(bs->b[0]));
     if(b == NULL) return NULL;
@@ -239,7 +239,9 @@ static void _ensure_index_capacity(sw_history_t *hist, size_t arr_size)
   if(arr_size > hist->hits_capacity) {
     hist->hits_capacity = ROUNDUP2POW(arr_size);
     size_t mem = hist->hits_capacity * sizeof(*(hist->sorted_match_indices));
-    size_t *indices = realloc(hist->sorted_match_indices, mem);
+    size_t *indices = NULL;
+    if(hist->hits_capacity <= SIZE_MAX / sizeof(*(hist->sorted_match_indices)))
+      indices = realloc(hist->sorted_match_indices, mem);
     if(indices == NULL) {
       fprintf(stderr, "%s:%i: Out of memory\n", __FILE__, __LINE__);
       exit(EXIT_FAILURE);
@@ -277,6 +279,12 @@ void smith_waterman_set_min_score(sw_aligner_t *sw, score_t min_score)
 void smith_waterman_set_compact(sw_aligner_t *sw, bool compact)
 {
   sw->compact = compact;
+}
+
+void smith_waterman_set_options(sw_aligner_t *sw,
+                                const alignment_options_t *opts)
+{
+  sw->aligner.options = opts;
 }
 
 aligner_t* smith_waterman_get_aligner(sw_aligner_t *sw)
@@ -317,7 +325,8 @@ static bool _sw_align_rect(sw_aligner_t *sw, const char *a, const char *b,
      len_b+1 > SIZE_MAX / (len_a+1) / sizeof(score_t))
     return false;
 
-  if(!alignment_sw_scan(a, len_a, b, len_b, scoring, 0, &best, &bx, &by))
+  if(!alignment_sw_scan(a, len_a, b, len_b, scoring, 0, &aligner->opts,
+                        &best, &bx, &by))
     return false;
 
   if(best < sw->min_score) {
@@ -355,8 +364,8 @@ static bool _sw_align_rect(sw_aligner_t *sw, const char *a, const char *b,
     char *rb = ra + bx;
     for(i = 0; i < bx; i++) ra[i] = a[bx-1-i];
     for(i = 0; i < by; i++) rb[i] = b[by-1-i];
-    bool ok = alignment_sw_scan(ra, bx, rb, by, scoring, best, &best2,
-                                &rx, &ry);
+    bool ok = alignment_sw_scan(ra, bx, rb, by, scoring, best, &aligner->opts,
+                                &best2, &rx, &ry);
     free(ra);
     if(!ok || rx == 0 || ry == 0) return false;
   }
@@ -374,6 +383,18 @@ static bool _sw_align_rect(sw_aligner_t *sw, const char *a, const char *b,
   return true;
 }
 
+aln_status_t smith_waterman_align_checked(const char *seq_a, const char *seq_b,
+                                          size_t len_a, size_t len_b,
+                                          const scoring_t *scoring,
+                                          sw_aligner_t *sw, aln_error_t *err)
+{
+  aln_status_t status = alignment_check(scoring, seq_a, len_a, seq_b, len_b,
+                                        true, err);
+  if(status == ALN_OK)
+    smith_waterman_align2(seq_a, seq_b, len_a, len_b, scoring, sw);
+  return status;
+}
+
 void smith_waterman_align2(const char *a, const char *b,
                            size_t len_a, size_t len_b,
                            const scoring_t *scoring, sw_aligner_t *sw)
@@ -388,8 +409,10 @@ void smith_waterman_align2(const char *a, const char *b,
   sub_table_free(&sw->table);
   sub_table_build(&sw->table, scoring, a, len_a, b, len_b);
   aligner->compact = sw->compact;
+  if(aligner->options != NULL) aligner->opts = *aligner->options;
+  else alignment_options_default(&aligner->opts);
   if(!sw->compact ||
-     (double)len_a * (double)len_b < (double)smith_waterman_rect_min_cells ||
+     (double)len_a * (double)len_b < (double)aligner->opts.sw_rect_min_cells ||
      !_sw_align_rect(sw, a, b, len_a, len_b, scoring))
   {
     sw->rect = false;

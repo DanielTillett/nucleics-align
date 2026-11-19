@@ -32,27 +32,47 @@ LINK=-lalign -lstrbuf -lpthread -lz
 # Compile and bundle all non-main files into library
 SRCS=$(wildcard src/*.c)
 OBJS=$(SRCS:.c=.o)
+HDRS=$(wildcard src/*.h)
 
 all: bin/needleman_wunsch bin/smith_waterman bin/lcs src/libalign.a examples
+
+# Rebuild everything when the compiler or flags change (e.g. SANITIZE=1
+# after a plain build), rather than mixing objects built different ways
+FLAGS_STAMP = src/.build-flags
+BUILD_FLAGS = $(CC) $(CFLAGS) $(OBJFLAGS) $(TGTFLAGS)
+# Updated as the Makefile is read (not by a dry run, make -n), and written
+# again by the rule below if a target such as clean removes it
+ifeq (,$(findstring n,$(firstword -$(MAKEFLAGS))))
+ifneq ($(BUILD_FLAGS),$(shell cat $(FLAGS_STAMP) 2>/dev/null))
+$(shell echo '$(BUILD_FLAGS)' > $(FLAGS_STAMP))
+endif
+endif
+$(FLAGS_STAMP):
+	echo '$(BUILD_FLAGS)' > $@
 
 # Build libraries only if they're downloaded
 src/libalign.a: $(OBJS)
 	[ -d libs/string_buffer ] && cd libs && $(MAKE)
-	ar -csru src/libalign.a $(OBJS)
+	rm -f $@
+	ar -csr $@ $(OBJS)
 
-%.o: %.c
-	$(CC) $(CFLAGS) $(OBJFLAGS) $(INCS) -c $< -o $@
+# -MMD -MP: each object also depends on the headers it includes (src/*.d)
+%.o: %.c $(FLAGS_STAMP)
+	$(CC) $(CFLAGS) $(OBJFLAGS) $(INCS) -MMD -MP -c $< -o $@
 
-bin/needleman_wunsch: src/tools/nw_cmdline.c src/libalign.a | bin
-	$(CC) -o bin/needleman_wunsch $(SRCS) $(CFLAGS) $(TGTFLAGS) $(INCS) $(LIBS) src/tools/nw_cmdline.c $(LINKFLAGS)
+-include $(OBJS:.o=.d)
 
-bin/smith_waterman: src/tools/sw_cmdline.c src/libalign.a | bin
-	$(CC) -o bin/smith_waterman $(SRCS) $(CFLAGS) $(TGTFLAGS) $(INCS) $(LIBS) src/tools/sw_cmdline.c $(LINKFLAGS)
+# The tools and tests link the same library the tests check
+bin/needleman_wunsch: src/tools/nw_cmdline.c src/libalign.a $(HDRS) | bin
+	$(CC) -o $@ $< $(CFLAGS) $(TGTFLAGS) $(INCS) $(LIBS) $(LINKFLAGS)
 
-bin/lcs: src/tools/lcs_cmdline.c src/libalign.a | bin
-	$(CC) -o bin/lcs $(SRCS) $(CFLAGS) $(TGTFLAGS) $(INCS) $(LIBS) src/tools/lcs_cmdline.c $(LINKFLAGS)
+bin/smith_waterman: src/tools/sw_cmdline.c src/libalign.a $(HDRS) | bin
+	$(CC) -o $@ $< $(CFLAGS) $(TGTFLAGS) $(INCS) $(LIBS) $(LINKFLAGS)
 
-bin/seq_align_tests: src/tools/tests.c src/libalign.a | bin
+bin/lcs: src/tools/lcs_cmdline.c src/libalign.a $(HDRS) | bin
+	$(CC) -o $@ $< $(CFLAGS) $(TGTFLAGS) $(INCS) $(LIBS) $(LINKFLAGS)
+
+bin/seq_align_tests: src/tools/tests.c src/libalign.a $(HDRS) | bin
 	$(CC) -o $@ $< $(CFLAGS) $(TGTFLAGS) $(INCS) $(LIBS) $(LINK)
 
 examples: src/libalign.a
@@ -62,10 +82,11 @@ bin:
 	mkdir -p bin
 
 clean:
-	rm -rf bin src/*.o src/libalign.a
+	rm -rf bin src/*.o src/*.d src/libalign.a src/.build-flags
 	cd examples && $(MAKE) clean
 
-test: bin/seq_align_tests
+test: bin/seq_align_tests bin/needleman_wunsch bin/smith_waterman bin/lcs
 	./bin/seq_align_tests
+	sh tests/cli/run.sh
 
 .PHONY: all clean examples test

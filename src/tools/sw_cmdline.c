@@ -151,7 +151,7 @@ static char get_next_hit(void)
 
 // Align two sequences against each other to find local alignments between
 // them, and print them to out (errors to err) as alignment number index
-static void align(sw_worker_t *wk, const char *seq_a, const char *seq_b,
+static int align(sw_worker_t *wk, const char *seq_a, const char *seq_b,
                   const char *seq_a_name, const char *seq_b_name,
                   size_t index, FILE *out, FILE *err)
 {
@@ -179,7 +179,7 @@ static void align(sw_worker_t *wk, const char *seq_a, const char *seq_b,
 
     fflush(err);
 
-    return;
+    return 0;
   }
 
   size_t len_a = strlen(seq_a), len_b = strlen(seq_b);
@@ -196,7 +196,13 @@ static void align(sw_worker_t *wk, const char *seq_a, const char *seq_b,
 
   // Hits below min_score are never printed, so do not index them
   smith_waterman_set_min_score(sw, min_score);
-  smith_waterman_align2(seq_a, seq_b, len_a, len_b, &scoring, sw);
+  aln_error_t e;
+  if(smith_waterman_align_checked(seq_a, seq_b, len_a, len_b, &scoring, sw,
+                                  &e) != ALN_OK) {
+    alignment_fprint_error(err, &e);
+    fflush(err);
+    return EXIT_FAILURE;
+  }
 
   aligner_t *aligner = smith_waterman_get_aligner(sw);
 
@@ -346,6 +352,7 @@ static void align(sw_worker_t *wk, const char *seq_a, const char *seq_b,
 
   fputs("==\n", out);
   fflush(out);
+  return 0;
 }
 
 // The number of the next alignment: pairs that align() rejects as empty
@@ -357,21 +364,26 @@ static size_t number_pair(read_t *read1, read_t *read2)
 }
 
 static int align_pair_run(void *wk, read_t *read1, read_t *read2,
-                          size_t number, FILE *out, FILE *err)
+                          size_t number, const alignment_options_t *opts,
+                          FILE *out, FILE *err)
 {
-  align(wk, read1->seq.b, read2->seq.b,
-        (read1->name.end == 0 ? NULL : read1->name.b),
-        (read2->name.end == 0 ? NULL : read2->name.b), number, out, err);
-  return 0;
+  smith_waterman_set_options(((sw_worker_t*)wk)->sw, opts);
+  return align(wk, read1->seq.b, read2->seq.b,
+               (read1->name.end == 0 ? NULL : read1->name.b),
+               (read2->name.end == 0 ? NULL : read2->name.b), number,
+               out, err);
 }
 
 // One pair at a time, on this thread
 static sw_worker_t *main_worker;
+static alignment_options_t main_opts;
 
 static void align_pair_from_file(read_t *read1, read_t *read2)
 {
-  align_pair_run(main_worker, read1, read2, number_pair(read1, read2),
-                 stdout, stderr);
+  int status = align_pair_run(main_worker, read1, read2,
+                              number_pair(read1, read2), &main_opts,
+                              stdout, stderr);
+  if(status != 0) exit(status);
 }
 
 int main(int argc, char* argv[])
@@ -385,18 +397,21 @@ int main(int argc, char* argv[])
 
   // Threads within an alignment, and for pairs from files at once
   unsigned int threads = cmdline_threads(cmd);
-  alignment_max_threads = hirschberg_max_threads = (int)threads;
+  alignment_options_default(&main_opts);
+  main_opts.max_threads = main_opts.hb_max_threads = (int)threads;
 
   // Align!
   main_worker = sw_worker_new();
+  smith_waterman_set_options(main_worker->sw, &main_opts);
 
   if(cmd->seq1 != NULL)
   {
     // Align seq1 and seq2
     size_t index = cmd->seq1[0] == '\0' || cmd->seq2[0] == '\0'
                    ? 0 : alignment_index++;
-    align(main_worker, cmd->seq1, cmd->seq2, NULL, NULL, index,
-          stdout, stderr);
+    int status = align(main_worker, cmd->seq1, cmd->seq2, NULL, NULL, index,
+                       stdout, stderr);
+    if(status != 0) exit(status);
   }
 
   // Align from files
@@ -413,8 +428,8 @@ int main(int argc, char* argv[])
     if(threads > 1 && !wait_on_keystroke && !cmd->interactive &&
        !cmd->print_matrices)
       align_from_file_threaded(file1, file2, !cmd->interactive, threads,
-                               &scoring,
-                               number_pair, align_pair_run, sw_worker_new,
+                               number_pair, &main_opts,
+                               align_pair_run, sw_worker_new,
                                sw_worker_free);
     else
       align_from_file(file1, file2, &align_pair_from_file, !cmd->interactive);

@@ -1,0 +1,4 @@
+# Fixtures are compared byte for byte: keep Unix line endings
+tests/cli/** text eol=lf
+# Shell scripts run under Linux shells even from a Windows checkout
+*.sh text eol=lf

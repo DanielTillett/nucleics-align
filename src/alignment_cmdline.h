@@ -86,19 +86,23 @@ unsigned int cmdline_threads(const cmdline_t *cmd);
 // Like align_from_file(), but aligns several pairs at once on up to
 // `threads` threads. For each pair, in input order on this thread, number()
 // gives a number for it (may be NULL: the pair's position); then run()
-// aligns it on a worker thread with that worker's state (from new_worker()),
+// aligns it on a worker thread with that worker's state (from new_worker())
+// and the settings to use (opts, with its thread counts set: one beside
+// other pairs, `threads` alone; opts may be NULL for the defaults),
 // writing to out and err instead of stdout and stderr, and returns 0 or a
-// status to exit with. Each pair's output is written as soon as the pairs
-// before it are, so it is the same as one at a time. A pair of more than
-// alignment_block_min_cells cells runs on its own with all the threads, as
-// does one that would make scoring_lookup() with `scoring` exit, so the
-// output before the error is the same too
+// status to exit with. No global setting is changed. Each pair's output is
+// written as soon as the pairs before it are, so it is the same as one at a
+// time. A pair of more than opts->block_min_cells cells runs on its own
+// with all the threads. run() should return errors in the input (see the
+// *_checked() aligners) rather than exit, so the pairs before are written
 void align_from_file_threaded(const char *path1, const char *path2,
                               bool use_zlib, unsigned int threads,
-                              const scoring_t *scoring,
                               size_t (*number)(read_t *r1, read_t *r2),
+                              const alignment_options_t *opts,
                               int (*run)(void *worker, read_t *r1, read_t *r2,
-                                         size_t number, FILE *out, FILE *err),
+                                         size_t number,
+                                         const alignment_options_t *opts,
+                                         FILE *out, FILE *err),
                               void* (*new_worker)(void),
                               void (*free_worker)(void *worker));
 

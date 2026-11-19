@@ -33,6 +33,13 @@ bool hirschberg_align2(const char *a, const char *b,
                        size_t len_a, size_t len_b,
                        const scoring_t *scoring, alignment_t *result);
 
+// With settings of its own (opts; NULL: the defaults, see alignment_options_t)
+bool hirschberg_align_opts(const char *a, const char *b,
+                           size_t len_a, size_t len_b,
+                           const scoring_t *scoring,
+                           const alignment_options_t *opts,
+                           alignment_t *result);
+
 // Tuning (and testing) of column-block threading in large passes: a pass of
 // at least hirschberg_block_min_cells cells is split into blocks of at least
 // hirschberg_block_min_cols columns, one thread each, up to
@@ -70,7 +77,29 @@ bool hirschberg_score2(const char *a, const char *b,
                        size_t len_a, size_t len_b,
                        const scoring_t *scoring, score_t *score);
 
-// Score an alignment as needleman_wunsch_align() would
+bool hirschberg_score_opts(const char *a, const char *b,
+                           size_t len_a, size_t len_b,
+                           const scoring_t *scoring,
+                           const alignment_options_t *opts, score_t *score);
+
+// As the *_opts() functions, but an error in the input (see aln_status_t;
+// ALN_ERR_UNSUPPORTED where they return false) is returned, with err set if
+// not NULL, instead of ending the program
+aln_status_t hirschberg_align_checked(const char *a, const char *b,
+                                      size_t len_a, size_t len_b,
+                                      const scoring_t *scoring,
+                                      const alignment_options_t *opts,
+                                      alignment_t *result, aln_error_t *err);
+
+aln_status_t hirschberg_score_checked(const char *a, const char *b,
+                                      size_t len_a, size_t len_b,
+                                      const scoring_t *scoring,
+                                      const alignment_options_t *opts,
+                                      score_t *score, aln_error_t *err);
+
+// Score an alignment as needleman_wunsch_align() would. A '-' in either string is
+// read as a gap and the strings end at '\0': hirschberg_align() scores its
+// alignments from the steps taken instead
 score_t hirschberg_score_alignment(const char *result_a, const char *result_b,
                                    const scoring_t *scoring);
 

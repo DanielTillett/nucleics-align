@@ -1,0 +1,35 @@
+== Alignment 0 lengths (58, 67):
+acgtttgacgtacgtagctagctgatcgtagctagctagctgatcgatcgtagctagc
+ttttttacgtttgacgtacgtagcccccgctgatcgtagctagctagctgatcgatcgtaggggggg
+
+hit 0.0 score: 94
+      acgtttgacgtacgtagcta--gctgatcgtagctagctagctgatcgatcgtagctag  [pos: 0; len: 53]
+      ||||||||||||||||||**  |||||||||||||||||||||||||||||||||....
+  ttttacgtttgacgtacgtagcccccgctgatcgtagctagctagctgatcgatcgtaggggg  [pos: 6; len: 55]
+
+hit 0.1 score: 35
+  cgtttga-cgtacg-tagctagctgatcgtagc  [pos: 5; len: 23]
+  ....||| |||| | ||||||||||||||....
+  ccgctgatcgta-gctagctagctgatcgatcg  [pos: 30; len: 24]
+
+==
+== Alignment 1 lengths (30, 42):
+AAAAAAAAAACCCCCCCCCCAAAAAAAAAA
+GGGAAAAAAAAAAGGGCCCCCCCCCCGGGAAAAAAAAAAGGG
+
+hit 1.0 score: 50
+     AAAAAAAAAA---CCCCCCCCCC---AAAAAAAAAA     [pos: 0; len: 30]
+     ||||||||||   ||||||||||   ||||||||||   
+  GGGAAAAAAAAAAGGGCCCCCCCCCCGGGAAAAAAAAAAGGG  [pos: 3; len: 36]
+
+hit 1.1 score: 20
+      AAAAAAAAAACCCC  [pos: 0; len: 10]
+      ||||||||||... 
+  CGGGAAAAAAAAAAGGG   [pos: 29; len: 10]
+
+hit 1.2 score: 20
+  CCCCAAAAAAAAAA      [pos: 20; len: 10]
+   ...||||||||||    
+   GGGAAAAAAAAAAGGGC  [pos: 3; len: 10]
+
+==

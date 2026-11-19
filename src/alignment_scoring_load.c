@@ -144,13 +144,16 @@ void align_scoring_load_matrix(gzFile file, const char* file_path,
         }
 
         char* strtol_last_char_ptr = score_txt;
-        score = (int)strtol(strtol_last_char_ptr, &strtol_last_char_ptr, 10);
+        long num = strtol(strtol_last_char_ptr, &strtol_last_char_ptr, 10);
 
         // If pointer to end of number string hasn't moved -> error
         if(strtol_last_char_ptr == score_txt)
         {
           _loading_error("Missing number value on line", file_path, line_num, 1);
         }
+        if(num < -SCORE_ABS_MAX || num > SCORE_ABS_MAX)
+          _loading_error("Score out of range", file_path, line_num, 1);
+        score = (int)num;
 
         scoring_add_mutation(scoring, from_char, to_char, score);
 
@@ -224,13 +227,16 @@ void align_scoring_load_matrix(gzFile file, const char* file_path,
         str_pos++;
 
         char* after_num_str = str_pos;
-        score = (int)strtol(str_pos, &after_num_str, 10);
+        long num = strtol(str_pos, &after_num_str, 10);
 
         // If pointer to end of number string hasn't moved -> error
         if(str_pos == after_num_str)
         {
           _loading_error("Missing number value on line", file_path, line_num, 1);
         }
+        if(num < -SCORE_ABS_MAX || num > SCORE_ABS_MAX)
+          _loading_error("Score out of range", file_path, line_num, 1);
+        score = (int)num;
 
         scoring_add_mutation(scoring, from_char, to_char, score);
 
@@ -313,6 +319,9 @@ void align_scoring_load_pairwise(gzFile file, const char* file_path,
           _loading_error("Invalid number", file_path, line_num, 0);
         }
       }
+
+      if(score < -SCORE_ABS_MAX || score > SCORE_ABS_MAX)
+        _loading_error("Score out of range", file_path, line_num, 0);
 
       scoring_add_mutation(scoring, lc(a, case_sensitive), lc(b, case_sensitive),
                            score);

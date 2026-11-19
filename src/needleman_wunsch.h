@@ -31,6 +31,15 @@ void needleman_wunsch_align2(const char *a, const char *b,
                              const scoring_t *scoring,
                              nw_aligner_t *nw, alignment_t *result);
 
+// As needleman_wunsch_align2(), but an error in the input (see aln_status_t)
+// is returned, with err set if not NULL, instead of ending the program
+aln_status_t needleman_wunsch_align_checked(const char *a, const char *b,
+                                            size_t len_a, size_t len_b,
+                                            const scoring_t *scoring,
+                                            nw_aligner_t *nw,
+                                            alignment_t *result,
+                                            aln_error_t *err);
+
 #ifdef __cplusplus
 }
 #endif

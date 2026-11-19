@@ -28,6 +28,8 @@
 #include "alignment.h"
 #include "alignment_macros.h"
 #include "alignment_simd.h"
+#include "hirschberg.h" // defaults for alignment_options_t
+#include "smith_waterman.h"
 
 const char align_col_mismatch[] = "\033[92m"; // Mismatch (GREEN)
 const char align_col_indel[] = "\033[91m"; // Insertion / deletion (RED)
@@ -121,6 +123,35 @@ bool alignment_band_enabled = true;
 size_t alignment_band_strip_rows = 0; // 0: automatic
 size_t alignment_band_min_width = 64;
 
+// 16-bit lanes for Smith-Waterman fills (see alignment_narrow_limit())
+bool alignment_narrow_enabled = true;
+static atomic_size_t alignment_narrow_fills, alignment_narrow_retries;
+
+void alignment_narrow_counts(size_t *fills, size_t *retries)
+{
+  *fills = atomic_load(&alignment_narrow_fills);
+  *retries = atomic_load(&alignment_narrow_retries);
+}
+
+void alignment_options_default(alignment_options_t *opts)
+{
+  opts->max_threads = alignment_max_threads;
+  opts->striped = alignment_striped_enabled;
+  opts->band = alignment_band_enabled;
+  opts->narrow = alignment_narrow_enabled;
+  opts->block_min_cells = alignment_block_min_cells;
+  opts->block_min_cols = alignment_block_min_cols;
+  opts->band_strip_rows = alignment_band_strip_rows;
+  opts->band_min_width = alignment_band_min_width;
+  opts->sw_rect_min_cells = smith_waterman_rect_min_cells;
+  opts->hb_max_threads = hirschberg_max_threads;
+  opts->hb_band = hirschberg_band_enabled;
+  opts->hb_block_min_cells = hirschberg_block_min_cells;
+  opts->hb_block_min_cols = hirschberg_block_min_cols;
+  opts->hb_band_strip_rows = hirschberg_band_strip_rows;
+  opts->hb_band_min_width = hirschberg_band_min_width;
+}
+
 // A path through diagonal d has at least I = |d| + |n-m-d| gap characters
 // and at most (m+n-I)/2 aligned pairs, each scoring at most smax; opening
 // gaps only lowers the score (gap_open <= 0)
@@ -139,12 +170,18 @@ size_t alignment_band_width(score_t smax, score_t gap_extend,
 
 #ifdef ALN_STRIPED
 
-// Wait until the block on the left has finished row y
-static inline void alignment_wait_row(atomic_size_t *left_done, size_t y)
+// Wait until the block on the left has finished row y. Returns false if a
+// narrow fill overflowed meanwhile (overflow may be NULL)
+static inline bool alignment_wait_row(atomic_size_t *left_done, size_t y,
+                                      atomic_bool *overflow)
 {
   unsigned spins = 0;
-  while(atomic_load_explicit(left_done, memory_order_acquire) < y)
+  while(atomic_load_explicit(left_done, memory_order_acquire) < y) {
+    if(overflow != NULL &&
+       atomic_load_explicit(overflow, memory_order_relaxed)) return false;
     if(++spins > 256) { spins = 0; sched_yield(); }
+  }
+  return true;
 }
 
 // One column block of the striped fill: the columns of seq_a c0 ..
@@ -178,256 +215,71 @@ typedef struct {
   bool score_only;
   score_t target;
   size_t tgt_x, tgt_y;
+  // Fill with 16-bit lanes (twice as many) where alignment_narrow_limit()
+  // allows: blocks stop once a row's best match score passes narrow_limit,
+  // setting *overflow, and the fill is done again with 32-bit lanes
+  bool narrow;
+  score_t narrow_limit;
+  atomic_bool *overflow;
 } alignment_block_t;
 
-// Lanes of a where mask is set, of b elsewhere
-ALN_INLINE vscore_t vsel(vscore_t mask, vscore_t a, vscore_t b)
+#define ALN_K_SUFFIX 32
+#define ALN_K_S score_t
+#define ALN_K_VL ALN_VL
+#define ALN_K_NARROW 0
+#include "alignment_kernel.inc"
+
+#define ALN_K_SUFFIX 16
+#define ALN_K_S int16_t
+#define ALN_K_VL (2 * ALN_VL)
+#define ALN_K_NARROW 1
+#include "alignment_kernel.inc"
+
+// Whether a Smith-Waterman fill of len_i columns with this table may use
+// 16-bit lanes, and the highest row best (*limit) that still keeps the next
+// row in range. Cells are then never below 0 (min) nor above the best match
+// score so far: no gap scores above 0, so gap cells take at most the score
+// of a match cell before them, and a match cell at most the best of the row
+// above plus the highest substitution score. Sums of a cell and a penalty
+// stay in range as every penalty is over -16000
+static bool alignment_narrow_limit(const sub_table_t *table,
+                                   const scoring_t *scoring, score_t min,
+                                   size_t len_i, score_t *limit)
 {
-  return (a & mask) | (b & ~mask);
-}
-
-// Matrix the traceback steps to from a cell scoring cur, given each
-// predecessor's score plus the penalty for stepping from it: the first of
-// GAP_A, GAP_B and MATCH that gives cur, as alignment_reverse_move() checks
-ALN_INLINE vscore_t vtrace(vscore_t cur, vscore_t from_a, vscore_t from_b,
-                              vscore_t from_m)
-{
-  vscore_t c = vsplat(ALN_TRACE_NONE);
-  c = vsel(from_m == cur, vsplat(MATCH), c);
-  c = vsel(from_b == cur, vsplat(GAP_B), c);
-  return vsel(from_a == cur, vsplat(GAP_A), c);
-}
-
-ALN_TARGET_CLONES
-static void alignment_fill_striped(alignment_block_t *p)
-{
-  aligner_t *aligner = p->aligner;
-  const sub_table_t *table = p->table;
-  const scoring_t *scoring = aligner->scoring;
-  const score_t min = p->min;
-  const size_t c0 = p->c0, ls = p->lstride;
-  const bool full = p->trace == NULL && !p->score_only;
-  score_t *match_scores = full ? aligner->match_scores + c0 : NULL;
-  score_t *gap_a_scores = full ? aligner->gap_a_scores + c0 : NULL;
-  score_t *gap_b_scores = full ? aligner->gap_b_scores + c0 : NULL;
-  const score_t *lcM = p->lc[MATCH], *lcA = p->lc[GAP_A], *lcB = p->lc[GAP_B];
-  const char *seq_a = aligner->seq_a + c0;
-  const size_t w = aligner->score_width;
-  const size_t len_i = p->width, ly0 = p->ly0;
-  const size_t seg = (len_i + ALN_VL - 1) / ALN_VL;
-  const size_t n = table->n;
-  size_t c, k, l, y, i;
-
-  const vscore_t vmin = vsplat(min);
-  const vscore_t vopen = vsplat(scoring->gap_open + scoring->gap_extend);
-  const vscore_t vext = vsplat(scoring->gap_extend);
-
-  // profile[c*seg + k] lane l: score of seq_a[l*seg+k] against character c
-  // of seq_b (0 past the end of seq_a; those cells are never read back)
-  size_t nvec = (n + 7) * seg;
-  vscore_t *buf = aligned_alloc(sizeof(vscore_t), nvec * sizeof(vscore_t));
-  if(buf == NULL) {
-    fprintf(stderr, "%s:%i: Out of memory\n", __FILE__, __LINE__);
-    exit(EXIT_FAILURE);
+  const long long open = (long long)scoring->gap_open + scoring->gap_extend;
+  const long long ext = scoring->gap_extend;
+  size_t i;
+  if(min != 0 || open > 0 || ext > 0 || open < -16000 || ext < -16000 ||
+     len_i / (2 * ALN_VL) + 1 >= INT16_MAX) return false;
+  score_t smax = 0;
+  for(i = 0; i < table->n * table->n; i++) {
+    if(table->scores[i] < -16000 || table->scores[i] > 16000) return false;
+    smax = MAX2(smax, table->scores[i]);
   }
-  vscore_t *profile = buf;
-  vscore_t *pM = buf + n*seg, *pA = pM + seg, *pB = pA + seg; // previous row
-  vscore_t *cM = pB + seg, *cA = cM + seg, *cB = cA + seg; // current row
-  vscore_t *tb = cB + seg; // traceback bytes of the current row
-  vscore_t *tmp;
-
-  for(c = 0; c < n; c++) {
-    for(k = 0; k < seg; k++) {
-      for(l = 0; l < ALN_VL; l++) {
-        i = l*seg + k;
-        profile[c*seg+k][l] = i < len_i
-          ? table->scores[c*n + table->code[(unsigned char)seq_a[i]]]
-          : 0;
-      }
-    }
-  }
-
-  // Row y0-1 (row 0 for a whole fill) in striped order
-  for(k = 0; k < seg; k++) {
-    for(l = 0; l < ALN_VL; l++) {
-      i = l*seg + k;
-      pM[k][l] = i < len_i ? p->r0[MATCH][c0+1+i] : min;
-      pA[k][l] = i < len_i ? p->r0[GAP_A][c0+1+i] : min;
-      pB[k][l] = i < len_i ? p->r0[GAP_B][c0+1+i] : min;
-    }
-  }
-  if(!full)
-    for(c = 0; c < 3; c++) p->rc[c][p->y0-1] = p->r0[c][c0+len_i];
-
-  // Column of each lane's first cell, to leave out cells past the end of
-  // seq_a when looking for the best cell
-  vscore_t vfirst;
-  for(l = 0; l < ALN_VL; l++) vfirst[l] = (score_t)(l*seg);
-  const vscore_t vlen = vsplat((score_t)len_i);
-
-  for(y = p->y0; y <= p->y1; y++)
-  {
-    const size_t row = y*w;
-    const vscore_t *prof = profile +
-      (size_t)table->code[(unsigned char)aligner->seq_b[y-1]] * seg;
-
-    // Column c0 (initialised, or the left block's) feeds lane 0 at k = 0
-    if(p->left_done != NULL) alignment_wait_row(p->left_done, y);
-    const size_t lp = (y-1-ly0)*ls, lc = (y-ly0)*ls;
-    const score_t lm_prev = lcM[lp], la_prev = lcA[lp], lb_prev = lcB[lp];
-    const score_t lm = lcM[lc], la = lcA[lc], lb = lcB[lc];
-    score_t h0_prev = MAX3(lm_prev, la_prev, lb_prev);
-    score_t x0 = MAX2(lm, la);
-    score_t b0 = lb; // min in the real column 0
-
-    // match from the diagonal, gap_a from the cell above
-    vscore_t vdiag = vshift(vmax(vmax(pM[seg-1], pA[seg-1]), pB[seg-1]),
-                            h0_prev);
-    for(k = 0; k < seg; k++) {
-      cM[k] = vmax(vdiag + prof[k], vmin);
-      cA[k] = vmax(vmax(vmax(pM[k], pB[k]) + vopen, pA[k] + vext), vmin);
-      vdiag = vmax(vmax(pM[k], pA[k]), pB[k]);
-    }
-
-    // gap_b within each segment; lanes other than 0 start without the
-    // gap_b value carried from the previous segment
-    vscore_t vx = vshift(vmax(cM[seg-1], cA[seg-1]), x0);
-    vscore_t vb = vshift(vmin, b0);
-    for(k = 0; k < seg; k++) {
-      cB[k] = vmax(vmax(vx + vopen, vb + vext), vmin);
-      vx = vmax(cM[k], cA[k]);
-      vb = cB[k];
-    }
-
-    // Lazy F: carry gap_b across segment boundaries while it improves a cell
-    vscore_t vf = vmax(vshift(cB[seg-1], min) + vext, vmin);
-    k = 0;
-    while(vany(vf > cB[k])) {
-      cB[k] = vmax(cB[k], vf);
-      vf = vmax(vf + vext, vmin);
-      if(++k == seg) { k = 0; vf = vmax(vshift(vf, min), vmin); }
-    }
-
-    if(full)
-    {
-      // Back to row-major for traceback
-      for(l = 0; l < ALN_VL; l++) {
-        for(k = 0, i = l*seg; k < seg && i < len_i; k++, i++) {
-          match_scores[row+1+i] = cM[k][l];
-          gap_a_scores[row+1+i] = cA[k][l];
-          gap_b_scores[row+1+i] = cB[k][l];
-        }
-      }
-    }
-    else
-    {
-      if(!p->score_only)
-      {
-        // Traceback bytes, from each cell's predecessors: diagonal (match),
-        // above (gap_a) and left (gap_b)
-        vscore_t dM = vshift(pM[seg-1], lm_prev);
-        vscore_t dA = vshift(pA[seg-1], la_prev);
-        vscore_t dB = vshift(pB[seg-1], lb_prev);
-        vscore_t eM = vshift(cM[seg-1], lm), eA = vshift(cA[seg-1], la);
-        vscore_t eB = vshift(cB[seg-1], lb);
-        for(k = 0; k < seg; k++) {
-          tb[k] = vtrace(cM[k], dA + prof[k], dB + prof[k], dM + prof[k]) |
-                  vtrace(cA[k], pA[k] + vext, pB[k] + vopen, pM[k] + vopen) << 2 |
-                  vtrace(cB[k], eA + vopen, eB + vext, eM + vopen) << 4;
-          dM = pM[k]; dA = pA[k]; dB = pB[k];
-          eM = cM[k]; eA = cA[k]; eB = cB[k];
-        }
-        uint8_t *trow = p->trace + (p->trace_rows != NULL
-                                    ? (size_t)(p->trace_rows[y] +
-                                               (ptrdiff_t)(c0 + 1))
-                                    : row + c0 + 1);
-        for(l = 0; l < ALN_VL; l++)
-          for(k = 0, i = l*seg; k < seg && i < len_i; k++, i++)
-            trow[i] = (uint8_t)tb[k][l];
-      }
-
-      i = len_i - 1;
-      p->rc[MATCH][y] = cM[i % seg][i / seg];
-      p->rc[GAP_A][y] = cA[i % seg][i / seg];
-      p->rc[GAP_B][y] = cB[i % seg][i / seg];
-
-      if(p->track_best || p->target > 0)
-      {
-        vscore_t vm = vmin;
-        for(k = 0; k < seg; k++)
-          vm = vmax(vm, vsel(vfirst + (score_t)k < vlen, cM[k], vmin));
-        score_t rmax = vm[0];
-        for(l = 1; l < ALN_VL; l++) rmax = MAX2(rmax, vm[l]);
-        if(p->track_best && rmax > 0 && rmax >= p->best_score) {
-          // Lowest column in this row with that score: the first k in each
-          // lane (a vector pass, as the best rises in most rows of similar
-          // sequences), then the first lane with one
-          const vscore_t vr = vsplat(rmax), vnone = vsplat((score_t)seg);
-          vscore_t vk = vnone;
-          for(k = 0; k < seg; k++)
-            vk = vsel((cM[k] == vr) & (vk == vnone) &
-                      (vfirst + (score_t)k < vlen), vsplat((score_t)k), vk);
-          for(l = 0, i = len_i; l < ALN_VL && i == len_i; l++)
-            if(vk[l] < (score_t)seg) i = l*seg + (size_t)vk[l];
-          if(rmax > p->best_score || c0+1+i < p->best_x) {
-            p->best_score = rmax; p->best_x = c0+1+i; p->best_y = y;
-          }
-        }
-        if(p->target > 0 && rmax >= p->target) {
-          // Highest column in this row with the target score (none score
-          // more, see alignment_sw_scan())
-          for(l = ALN_VL, i = len_i; l-- > 0 && i == len_i; )
-            for(k = seg; k-- > 0; )
-              if(l*seg+k < len_i && cM[k][l] == p->target) {
-                i = l*seg+k;
-                break;
-              }
-          if(i < len_i) {
-            p->tgt_x = MAX2(p->tgt_x, c0+1+i);
-            p->tgt_y = y;
-          }
-          p->best_score = MAX2(p->best_score, rmax);
-        }
-      }
-    }
-    if(p->done != NULL) atomic_store_explicit(p->done, y, memory_order_release);
-
-    tmp = pM; pM = cM; cM = tmp;
-    tmp = pA; pA = cA; cA = tmp;
-    tmp = pB; pB = cB; cB = tmp;
-  }
-
-  // The last row, for the strip below
-  if(p->lastrow[MATCH] != NULL) {
-    for(l = 0; l < ALN_VL; l++) {
-      for(k = 0, i = l*seg; k < seg && i < len_i; k++, i++) {
-        p->lastrow[MATCH][c0+1+i] = pM[k][l];
-        p->lastrow[GAP_A][c0+1+i] = pA[k][l];
-        p->lastrow[GAP_B][c0+1+i] = pB[k][l];
-      }
-    }
-  }
-
-  free(buf);
+  *limit = INT16_MAX - smax;
+  return true;
 }
 
 static void* alignment_block_thread(void *ptr)
 {
-  alignment_fill_striped(ptr);
+  alignment_block_t *p = ptr;
+  if(p->narrow) alignment_fill_striped_16(p);
+  else alignment_fill_striped_32(p);
   return NULL;
 }
 
 // Threads (column blocks) for a striped fill of width x rows cells
-static size_t alignment_fill_threads(size_t width, size_t rows)
+static size_t alignment_fill_threads(const alignment_options_t *o,
+                                    size_t width, size_t rows)
 {
-  int threads = alignment_max_threads;
+  int threads = o->max_threads;
   if(threads <= 0) {
     long cpus = sysconf(_SC_NPROCESSORS_ONLN);
     threads = cpus > 1 ? (int)(cpus / 2) : 1;
   }
   // At least one vector of columns per block, so no block is empty
-  const size_t min_cols = MAX2(alignment_block_min_cols, (size_t)ALN_VL);
-  if(threads > 1 && (double)width * rows >= alignment_block_min_cells &&
+  const size_t min_cols = MAX2(o->block_min_cols, (size_t)ALN_VL);
+  if(threads > 1 && (double)width * rows >= o->block_min_cells &&
      width >= 2 * min_cols)
     return MIN2((size_t)threads, width / min_cols);
   return 1;
@@ -445,7 +297,7 @@ static void alignment_fill_blocks(alignment_block_t *tmpl)
   aligner_t *aligner = tmpl->aligner;
   const size_t w = aligner->score_width, h = aligner->score_height;
   const size_t len_i = tmpl->width, len_j = tmpl->y1 - tmpl->y0 + 1;
-  const size_t nblocks = alignment_fill_threads(len_i, len_j);
+  const size_t nblocks = alignment_fill_threads(&aligner->opts, len_i, len_j);
   size_t i, m;
 
   // Blocks of equal width (a multiple of ALN_VL); the last takes the rest
@@ -454,6 +306,10 @@ static void alignment_fill_blocks(alignment_block_t *tmpl)
   atomic_size_t done[nblocks];
   pthread_t thread_ids[nblocks];
   bool started[nblocks];
+
+  atomic_bool overflow;
+  atomic_init(&overflow, false);
+  if(tmpl->narrow) atomic_fetch_add(&alignment_narrow_fills, 1);
 
   // With trace, each block's last column goes here for the next block
   score_t *cols = NULL;
@@ -476,6 +332,7 @@ static void alignment_fill_blocks(alignment_block_t *tmpl)
     b->done = i + 1 < nblocks ? &done[i] : NULL;
     b->best_score = 0;
     b->best_x = b->best_y = 0;
+    b->overflow = tmpl->narrow ? &overflow : NULL;
     for(m = 0; m < 3; m++) {
       if(cols != NULL) {
         b->rc[m] = cols + (i*3 + m) * h; // by row
@@ -494,6 +351,15 @@ static void alignment_fill_blocks(alignment_block_t *tmpl)
   for(i = 1; i < nblocks; i++) {
     if(started[i]) pthread_join(thread_ids[i], NULL);
     else alignment_block_thread(&args[i]);
+  }
+
+  // Scores grew past 16-bit lanes: all again with 32-bit ones
+  if(tmpl->narrow && atomic_load(&overflow)) {
+    atomic_fetch_add(&alignment_narrow_retries, 1);
+    free(cols);
+    tmpl->narrow = false;
+    alignment_fill_blocks(tmpl);
+    return;
   }
 
   if(cols != NULL) {
@@ -527,21 +393,28 @@ static void alignment_fill_blocks(alignment_block_t *tmpl)
 // it. With target > 0, for a scan in which no cell scores more than target:
 // the highest x and the highest y of cells scoring target (0 if none).
 // Returns false, with nothing found, where the striped fill does not apply
-// or (target > 0) a cell scores more than target
+// or (target > 0) a cell scores more than target. opts may be NULL (the
+// defaults)
 bool alignment_sw_scan(const char *a, size_t len_a, const char *b, size_t len_b,
                        const scoring_t *scoring, score_t target,
+                       const alignment_options_t *opts,
                        score_t *best, size_t *x, size_t *y)
 {
+  aligner_t tmp;
+  aligner_init(&tmp);
+  if(opts != NULL) tmp.opts = *opts;
+  else alignment_options_default(&tmp.opts);
+
   bool no_gaps_in_a, no_gaps_in_b;
   alignment_no_gaps(scoring, len_a, len_b, &no_gaps_in_a, &no_gaps_in_b);
-  if(!alignment_striped_enabled || len_a == 0 || len_b == 0 ||
+  if(!tmp.opts.striped || len_a == 0 || len_b == 0 ||
      len_a >= INT_MAX || len_b >= INT_MAX ||
      len_a + len_b > SIZE_MAX / (3 * sizeof(score_t)) ||
      scoring->no_start_gap_penalty || scoring->no_end_gap_penalty ||
      scoring->no_mismatches || no_gaps_in_a || no_gaps_in_b) return false;
+  if(alignment_scores_may_overflow(scoring, a, len_a, b, len_b, true))
+    return false; // aligner_align() reports it
 
-  aligner_t tmp;
-  aligner_init(&tmp);
   tmp.scoring = scoring;
   tmp.seq_a = a;
   tmp.seq_b = b;
@@ -561,6 +434,11 @@ bool alignment_sw_scan(const char *a, size_t len_a, const char *b, size_t len_b,
     .r0 = {zeros, zeros, zeros}, .lc = {zeros, zeros, zeros}, .lstride = 0,
     .width = len_a, .y0 = 1, .y1 = len_b,
     .score_only = true, .track_best = target == 0, .target = target};
+  // A target scan finds cells scoring target, so needs it in range
+  tmpl.narrow = tmp.opts.narrow &&
+                alignment_narrow_limit(&table, scoring, 0, len_a,
+                                       &tmpl.narrow_limit) &&
+                target <= tmpl.narrow_limit;
   alignment_fill_blocks(&tmpl);
   sub_table_free(&table);
   free(zeros);
@@ -582,9 +460,11 @@ bool alignment_sw_scan(const char *a, size_t len_a, const char *b, size_t len_b,
 
 bool alignment_sw_scan(const char *a, size_t len_a, const char *b, size_t len_b,
                        const scoring_t *scoring, score_t target,
+                       const alignment_options_t *opts,
                        score_t *best, size_t *x, size_t *y)
 {
   (void)a; (void)len_a; (void)b; (void)len_b; (void)scoring; (void)target;
+  (void)opts;
   (void)best; (void)x; (void)y;
   return false;
 }
@@ -671,7 +551,7 @@ static void alignment_fill_matrices(aligner_t *aligner, char is_sw)
   #ifdef ALN_STRIPED
   // The striped fill handles the uniform recurrence only; options that
   // change it for particular cells use the scalar loop below
-  if(alignment_striped_enabled && len_i > 0 &&
+  if(aligner->opts.striped && len_i > 0 &&
      !scoring->no_end_gap_penalty && !scoring->no_mismatches &&
      !no_gaps_in_a && !no_gaps_in_b)
   {
@@ -844,16 +724,17 @@ static bool alignment_fill_banded(aligner_t *aligner, const sub_table_t *table,
   const size_t len_i = w-1, len_j = h-1;
   const ptrdiff_t D = (ptrdiff_t)len_i - (ptrdiff_t)len_j;
   // The whole fill's threads, or one for a narrow band
-  const double full_threads = (double)alignment_fill_threads(len_i, len_j);
+  const double full_threads =
+    (double)alignment_fill_threads(&aligner->opts, len_i, len_j);
   size_t i, m, y0, y1, c0, c1;
 
-  if(!alignment_band_enabled || scoring->gap_open > 0 ||
+  if(!aligner->opts.band || scoring->gap_open > 0 ||
      scoring->gap_extend > 0) return false;
 
   score_t smax = 0;
   for(i = 0; i < table->n * table->n; i++) smax = MAX2(smax, table->scores[i]);
 
-  size_t bw = alignment_band_min_width;
+  size_t bw = aligner->opts.band_min_width;
   score_t *top = NULL, *lcol = NULL;
   bool done = false;
 
@@ -862,12 +743,14 @@ static bool alignment_fill_banded(aligner_t *aligner, const sub_table_t *table,
     // Columns per row, plus the strip height the window grows by
     if(bw >= len_i) break;
     const double cols = (double)(D < 0 ? -D : D) + 2.0*bw + 1;
-    const size_t strip = alignment_band_strip_rows ? alignment_band_strip_rows
+    const size_t strip = aligner->opts.band_strip_rows
+                         ? aligner->opts.band_strip_rows
                          : MAX2(256, (size_t)(cols / 4));
     // A fill on t threads runs about max(1, t/2) times faster (16 threads:
     // 6-8x); a narrow band runs on one
     const double band_threads =
-      (double)alignment_fill_threads((size_t)cols + strip, strip);
+      (double)alignment_fill_threads(&aligner->opts,
+                                     (size_t)cols + strip, strip);
     if((cols + strip) / MAX2(1.0, band_threads / 2) >=
        0.6 * (double)len_i / MAX2(1.0, full_threads / 2)) break;
 
@@ -966,7 +849,7 @@ static bool alignment_fill_trace(aligner_t *aligner, char is_sw)
 
   bool no_gaps_in_a, no_gaps_in_b;
   alignment_no_gaps(scoring, len_i, len_j, &no_gaps_in_a, &no_gaps_in_b);
-  if(!alignment_striped_enabled || len_i == 0 || len_j == 0 ||
+  if(!aligner->opts.striped || len_i == 0 || len_j == 0 ||
      len_i >= INT_MAX || len_j >= INT_MAX ||
      w + h > SIZE_MAX / (3 * sizeof(score_t)) ||
      scoring->no_start_gap_penalty ||
@@ -1015,6 +898,9 @@ static bool alignment_fill_trace(aligner_t *aligner, char is_sw)
       .lc = {col0[MATCH], col0[GAP_A], col0[GAP_B]}, .lstride = 1,
       .trace = aligner->trace, .track_best = is_sw,
       .width = len_i, .y0 = 1, .y1 = len_j};
+    tmpl.narrow = is_sw && aligner->opts.narrow &&
+                  alignment_narrow_limit(&table, scoring, min, len_i,
+                                         &tmpl.narrow_limit);
     alignment_fill_blocks(&tmpl);
   }
   sub_table_free(&table);
@@ -1026,19 +912,151 @@ static bool alignment_fill_trace(aligner_t *aligner, char is_sw)
 #endif
 }
 
+// The score matrices of len_a x len_b would not fit in memory addresses
+static bool alignment_too_long(size_t len_a, size_t len_b)
+{
+  return len_a == SIZE_MAX || len_b == SIZE_MAX ||
+         len_b + 1 > SIZE_MAX / (len_a + 1) / sizeof(score_t);
+}
+
+bool alignment_scores_may_overflow(const scoring_t *scoring,
+                                   const char *a, size_t len_a,
+                                   const char *b, size_t len_b, bool is_sw)
+{
+  // Upwards: a path takes at most len_a + len_b steps, each adding at most
+  // top, the highest score of a gap or of a pair in the sequences
+  bool in_a[256] = {false}, in_b[256] = {false};
+  size_t i, j;
+  for(i = 0; i < len_a; i++) in_a[(unsigned char)a[i]] = true;
+  for(i = 0; i < len_b; i++) in_b[(unsigned char)b[i]] = true;
+  double top = MAX2((double)scoring->gap_open + scoring->gap_extend,
+                    (double)scoring->gap_extend);
+  double low = 0; // the lowest score of a pair in the sequences
+  for(j = 0; j < 256; j++) {
+    if(!in_b[j]) continue;
+    for(i = 0; i < 256; i++) {
+      if(!in_a[i] || !scoring_has_pair(scoring, (char)i, (char)j)) continue;
+      int score;
+      bool is_match;
+      scoring_lookup(scoring, (char)i, (char)j, &score, &is_match);
+      top = MAX2(top, (double)score);
+      low = MIN2(low, (double)score);
+    }
+  }
+  const double half = (double)INT_MAX / 2;
+  if(((double)len_a + (double)len_b + 1) * top > half) return true;
+
+  // Downwards: cells are clamped at the min score (see
+  // alignment_min_score()). That leaves Needleman-Wunsch's first row and
+  // column, gaps of every length up to the longer sequence, which must be
+  // ints, and its score, at least that of a pair at each position of the
+  // shorter sequence and one gap
+  if(!is_sw) {
+    const double open = scoring->gap_open, ext = scoring->gap_extend;
+    const double longest = (double)MAX2(len_a, len_b);
+    const double shortest = (double)MIN2(len_a, len_b);
+    const double rest = longest - shortest;
+    const double edges[] = {longest * ext, open + ext, open + longest * ext,
+                            shortest * low + (rest > 0 ? open + rest * ext : 0)};
+    for(i = 0; i < sizeof(edges) / sizeof(edges[0]); i++)
+      if(edges[i] < (double)INT_MIN || edges[i] > (double)INT_MAX) return true;
+  }
+  return false;
+}
+
+bool alignment_scoring_complete(const scoring_t *scoring,
+                                const char *a, size_t len_a,
+                                const char *b, size_t len_b,
+                                aln_error_t *err)
+{
+  bool in_a[256] = {false}, in_b[256] = {false};
+  size_t i, j;
+  for(i = 0; i < len_a; i++) in_a[(unsigned char)a[i]] = true;
+  for(i = 0; i < len_b; i++) in_b[(unsigned char)b[i]] = true;
+
+  // In the order sub_table_build() looks pairs up, so the pair reported is
+  // the one scoring_lookup() would stop at
+  for(j = 0; j < 256; j++) {
+    if(!in_b[j]) continue;
+    for(i = 0; i < 256; i++) {
+      if(in_a[i] && !scoring_has_pair(scoring, (char)i, (char)j)) {
+        if(err != NULL) {
+          err->status = ALN_ERR_SCORING;
+          err->a = scoring->case_sensitive ? (char)i : (char)tolower((int)i);
+          err->b = scoring->case_sensitive ? (char)j : (char)tolower((int)j);
+        }
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+aln_status_t alignment_check(const scoring_t *scoring,
+                             const char *a, size_t len_a,
+                             const char *b, size_t len_b,
+                             bool scoring_first, aln_error_t *err)
+{
+  aln_error_t e = {ALN_OK, 0, 0};
+  bool ok = !scoring_first ||
+            alignment_scoring_complete(scoring, a, len_a, b, len_b, &e);
+  if(ok && alignment_too_long(len_a, len_b)) {
+    e.status = ALN_ERR_TOO_LONG;
+    ok = false;
+  }
+  if(ok && alignment_scores_may_overflow(scoring, a, len_a, b, len_b,
+                                         scoring_first)) {
+    e.status = ALN_ERR_OVERFLOW;
+    ok = false;
+  }
+  if(ok && !scoring_first)
+    alignment_scoring_complete(scoring, a, len_a, b, len_b, &e);
+  if(err != NULL) *err = e;
+  return e.status;
+}
+
+void alignment_fprint_error(FILE *out, const aln_error_t *err)
+{
+  switch(err->status) {
+    case ALN_OK: break;
+    case ALN_ERR_SCORING:
+      fprintf(out, "Error: Unknown character pair (%c,%c) and "
+                   "match/mismatch have not been set\n", err->a, err->b);
+      break;
+    case ALN_ERR_TOO_LONG:
+      fprintf(out, "Error: Sequences too long to align\n");
+      break;
+    case ALN_ERR_OVERFLOW:
+      fprintf(out, "Error: Scores could overflow: use smaller scores or "
+                   "shorter sequences\n");
+      break;
+    case ALN_ERR_UNSUPPORTED:
+      fprintf(out, "Error: linear space does not support these scoring "
+                   "options (or penalties this large)\n");
+      break;
+  }
+}
+
 void aligner_align(aligner_t *aligner,
                    const char *seq_a, const char *seq_b,
                    size_t len_a, size_t len_b,
                    const scoring_t *scoring, char is_sw)
 {
   aligner->scoring = scoring;
+  if(aligner->options != NULL) aligner->opts = *aligner->options;
+  else alignment_options_default(&aligner->opts);
   aligner->seq_a = seq_a;
   aligner->seq_b = seq_b;
   aligner->score_width = len_a+1;
   aligner->score_height = len_b+1;
 
-  if(aligner->score_height > SIZE_MAX / aligner->score_width / sizeof(score_t)) {
-    fprintf(stderr, "%s:%i: Sequences too long to align\n", __FILE__, __LINE__);
+  // The same checks and messages as the *_checked() aligners
+  aln_error_t e = {ALN_OK, 0, 0};
+  if(alignment_too_long(len_a, len_b)) e.status = ALN_ERR_TOO_LONG;
+  else if(alignment_scores_may_overflow(scoring, seq_a, len_a, seq_b, len_b,
+                                        is_sw)) e.status = ALN_ERR_OVERFLOW;
+  if(e.status != ALN_OK) {
+    alignment_fprint_error(stderr, &e);
     exit(EXIT_FAILURE);
   }
 
@@ -1050,6 +1068,9 @@ void aligner_align(aligner_t *aligner,
   if(aligner->capacity < new_capacity)
   {
     aligner->capacity = ROUNDUP2POW(new_capacity);
+    // Rounding up can take the bytes past SIZE_MAX: no rounding then
+    if(aligner->capacity > SIZE_MAX / sizeof(score_t))
+      aligner->capacity = new_capacity;
     size_t mem = sizeof(score_t) * aligner->capacity;
     // The fill overwrites every cell it uses, so old contents are not kept
     free(aligner->match_scores);

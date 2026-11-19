@@ -59,19 +59,32 @@ static void nw_worker_free(void *ptr)
   free(wk);
 }
 
-// Returns 0, or EXIT_FAILURE if --linear cannot align with these options
+// Write an error in the input as the library would before exiting, or
+// --linear's own message. Returns 0 for none, else EXIT_FAILURE
+static int nw_error(const aln_error_t *e, FILE *err)
+{
+  if(e->status == ALN_OK) return 0;
+  if(e->status == ALN_ERR_UNSUPPORTED)
+    fprintf(err, "Error: --linear does not support these scoring options "
+                 "(or penalties this large)\n");
+  else alignment_fprint_error(err, e);
+  fflush(err);
+  return EXIT_FAILURE;
+}
+
+// Returns 0, or EXIT_FAILURE with the error written to err
 static int nw_align(nw_worker_t *wk, const char *seq_a, const char *seq_b,
                     FILE *err)
 {
+  const size_t len_a = strlen(seq_a), len_b = strlen(seq_b);
+  aln_error_t e;
   if(!cmd->linear_space)
-    needleman_wunsch_align(seq_a, seq_b, &scoring, wk->nw, wk->result);
-  else if(!hirschberg_align(seq_a, seq_b, &scoring, wk->result))
-  {
-    fprintf(err, "Error: --linear does not support these scoring options "
-                 "(or penalties this large)\n");
-    return EXIT_FAILURE;
-  }
-  return 0;
+    needleman_wunsch_align_checked(seq_a, seq_b, len_a, len_b, &scoring,
+                                   wk->nw, wk->result, &e);
+  else
+    hirschberg_align_checked(seq_a, seq_b, len_a, len_b, &scoring,
+                             wk->nw->options, wk->result, &e);
+  return nw_error(&e, err);
 }
 
 static int align_zam(nw_worker_t *wk, const char *seq_a, const char *seq_b,
@@ -134,10 +147,16 @@ static int align(nw_worker_t *wk, const char *seq_a, const char *seq_b,
   {
     // One linear-memory pass; options it cannot handle use the full matrices
     score_t score;
-    if(!hirschberg_score(seq_a, seq_b, &scoring, &score)) {
-      needleman_wunsch_align(seq_a, seq_b, &scoring, wk->nw, result);
+    const size_t len_a = strlen(seq_a), len_b = strlen(seq_b);
+    aln_error_t e;
+    if(hirschberg_score_checked(seq_a, seq_b, len_a, len_b, &scoring,
+                                wk->nw->options, &score, &e)
+       == ALN_ERR_UNSUPPORTED) {
+      needleman_wunsch_align_checked(seq_a, seq_b, len_a, len_b, &scoring,
+                                     wk->nw, result, &e);
       score = result->score;
     }
+    if(e.status != ALN_OK) return nw_error(&e, err);
     if(cmd->print_fasta && seq_a_name != NULL) fprintf(out, "%s\n", seq_a_name);
     if(cmd->print_fasta && seq_b_name != NULL) fprintf(out, "%s\n", seq_b_name);
     fprintf(out, "score: %i\n\n", score);
@@ -218,9 +237,11 @@ static int align(nw_worker_t *wk, const char *seq_a, const char *seq_b,
 }
 
 static int align_pair_run(void *wk, read_t *read1, read_t *read2,
-                          size_t number, FILE *out, FILE *err)
+                          size_t number, const alignment_options_t *opts,
+                          FILE *out, FILE *err)
 {
   (void)number;
+  ((nw_worker_t*)wk)->nw->options = opts;
   return align(wk, read1->seq.b, read2->seq.b,
                (read1->name.end == 0 ? NULL : read1->name.b),
                (read2->name.end == 0 ? NULL : read2->name.b), out, err);
@@ -228,10 +249,12 @@ static int align_pair_run(void *wk, read_t *read1, read_t *read2,
 
 // One pair at a time, on this thread
 static nw_worker_t *main_worker;
+static alignment_options_t main_opts;
 
 static void align_pair_from_file(read_t *read1, read_t *read2)
 {
-  int status = align_pair_run(main_worker, read1, read2, 0, stdout, stderr);
+  int status = align_pair_run(main_worker, read1, read2, 0, &main_opts,
+                              stdout, stderr);
   if(status != 0) exit(status);
 }
 
@@ -246,10 +269,12 @@ int main(int argc, char* argv[])
 
   // Threads within an alignment, and for pairs from files at once
   unsigned int threads = cmdline_threads(cmd);
-  alignment_max_threads = hirschberg_max_threads = (int)threads;
+  alignment_options_default(&main_opts);
+  main_opts.max_threads = main_opts.hb_max_threads = (int)threads;
 
   // Align!
   main_worker = nw_worker_new();
+  main_worker->nw->options = &main_opts;
 
   if(cmd->seq1 != NULL)
   {
@@ -271,8 +296,8 @@ int main(int argc, char* argv[])
     // Interactive input, and printed matrices, one pair at a time
     if(threads > 1 && !cmd->interactive && !cmd->print_matrices)
       align_from_file_threaded(file1, file2, !cmd->interactive, threads,
-                               &scoring,
-                               NULL, align_pair_run, nw_worker_new,
+                               NULL, &main_opts,
+                               align_pair_run, nw_worker_new,
                                nw_worker_free);
     else
       align_from_file(file1, file2, &align_pair_from_file, !cmd->interactive);

@@ -62,6 +62,37 @@ void scoring_add_wildcard(scoring_t* scoring, char c, int score)
   scoring->max_penalty = MAX2(scoring->max_penalty, score);
 }
 
+// Pairs and wildcards set while case insensitive were stored in lower case:
+// give every mix of cases the same scores, so text in either case scores as
+// before, apart from a character against the other case of itself
+void scoring_make_case_sensitive(scoring_t* scoring)
+{
+  if(scoring->case_sensitive) return;
+  scoring->case_sensitive = true;
+  int a, b, i, j;
+  for(a = 0; a < 256; a++) {
+    if(get_wildcard_bit(scoring, a) && toupper(a) != a &&
+       !get_wildcard_bit(scoring, toupper(a)))
+      scoring_add_wildcard(scoring, (char)toupper(a), scoring->wildscores[a]);
+    // Pairs added hold an upper-case character in place of a lower-case one
+    // the loop has passed, so none is copied again
+    for(b = 0; b < 256; b++) {
+      if(!get_swap_bit(scoring, a, b) || (!islower(a) && !islower(b)))
+        continue;
+      const int ca[2] = {a, toupper(a)}, cb[2] = {b, toupper(b)};
+      for(i = 0; i < 2; i++) {
+        for(j = 0; j < 2; j++) {
+          // Not a character against the other case of itself
+          if((i != j && a == b) || get_swap_bit(scoring, ca[i], cb[j]))
+            continue;
+          scoring_add_mutation(scoring, (char)ca[i], (char)cb[j],
+                               scoring->swap_scores[a][b]);
+        }
+      }
+    }
+  }
+}
+
 void scoring_add_mutation(scoring_t* scoring, char a, char b, int score)
 {
   scoring->swap_scores[(unsigned char)a][(unsigned char)b] = score;

@@ -16,6 +16,12 @@
 typedef int score_t;
 #define SCORE_MIN INT_MIN
 
+// Scores (match, mismatch, gap open and extend, substitution and wildcard
+// scores) should lie within -SCORE_ABS_MAX .. SCORE_ABS_MAX, so a few added
+// together cannot overflow. The command line tools and the scoring file
+// loaders refuse others
+#define SCORE_ABS_MAX (INT_MAX / 4)
+
 typedef struct
 {
   int gap_open, gap_extend;
@@ -71,6 +77,13 @@ void scoring_init(scoring_t* scoring, int match, int mismatch,
 void scoring_add_wildcard(scoring_t* scoring, char c, int s);
 
 void scoring_add_mutation(scoring_t* scoring, char a, char b, int score);
+
+// Compare characters case sensitively from now on. Scores already set (in
+// lower case, as scoring_add_*() store them while case insensitive) are
+// copied to every mix of cases, so 'A' against 'R' or 'r' scores as 'a'
+// against 'r' did. 'A' against 'a' gets no score from them (a mismatch
+// where match/mismatch scoring is used)
+void scoring_make_case_sensitive(scoring_t* scoring);
 
 void scoring_print(const scoring_t* scoring);
 

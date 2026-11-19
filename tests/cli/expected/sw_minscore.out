@@ -1,0 +1,250 @@
+== Alignment 0 lengths (58, 67):
+
+hit 0.0 score: 94
+  acgtttgacgtacgtagcta--gctgatcgtagctagctagctgatcgatcgtag  [pos: 0; len: 53]
+  acgtttgacgtacgtagcccccgctgatcgtagctagctagctgatcgatcgtag  [pos: 6; len: 55]
+
+hit 0.1 score: 35
+  tga-cgtacg-tagctagctgatcg  [pos: 5; len: 23]
+  tgatcgta-gctagctagctgatcg  [pos: 30; len: 24]
+
+hit 0.2 score: 17
+  tacgtagctagctgatcgtagc-tagc  [pos: 10; len: 26]
+  tacgt---t---tga-cgta-cgtagc  [pos: 5; len: 19]
+
+hit 0.3 score: 15
+  tgatcgat-cgtagc  [pos: 40; len: 14]
+  tga-cg-tacgtagc  [pos: 11; len: 13]
+
+hit 0.4 score: 13
+  tga-cgta-cgtag  [pos: 5; len: 12]
+  tgatcg-atcgtag  [pos: 48; len: 13]
+
+hit 0.5 score: 13
+  gatcgtagc-tagc  [pos: 45; len: 13]
+  ga-cgta-cgtagc  [pos: 12; len: 12]
+
+hit 0.6 score: 12
+  tttgacgt  [pos: 3; len: 8]
+  ttttacgt  [pos: 2; len: 8]
+
+hit 0.7 score: 9
+  ga-cgta  [pos: 6; len: 6]
+  gatcgta  [pos: 53; len: 7]
+
+hit 0.8 score: 8
+  acgt  [pos: 0; len: 4]
+  acgt  [pos: 13; len: 4]
+
+hit 0.9 score: 8
+  acgt  [pos: 0; len: 4]
+  acgt  [pos: 17; len: 4]
+
+hit 0.10 score: 6
+  cgt  [pos: 1; len: 3]
+  cgt  [pos: 34; len: 3]
+
+hit 0.11 score: 6
+  cgt  [pos: 1; len: 3]
+  cgt  [pos: 56; len: 3]
+
+hit 0.12 score: 6
+  ttt  [pos: 3; len: 3]
+  ttt  [pos: 0; len: 3]
+
+hit 0.13 score: 6
+  ttt  [pos: 3; len: 3]
+  ttt  [pos: 1; len: 3]
+
+hit 0.14 score: 6
+  ttt  [pos: 3; len: 3]
+  ttt  [pos: 3; len: 3]
+
+hit 0.15 score: 6
+  cgt  [pos: 26; len: 3]
+  cgt  [pos: 7; len: 3]
+
+hit 0.16 score: 6
+  cgt  [pos: 48; len: 3]
+  cgt  [pos: 7; len: 3]
+
+==
+== Alignment 1 lengths (30, 42):
+
+hit 1.0 score: 50
+  AAAAAAAAAA---CCCCCCCCCC---AAAAAAAAAA  [pos: 0; len: 30]
+  AAAAAAAAAAGGGCCCCCCCCCCGGGAAAAAAAAAA  [pos: 3; len: 36]
+
+hit 1.1 score: 20
+  AAAAAAAAAA  [pos: 0; len: 10]
+  AAAAAAAAAA  [pos: 29; len: 10]
+
+hit 1.2 score: 20
+  AAAAAAAAAA  [pos: 20; len: 10]
+  AAAAAAAAAA  [pos: 3; len: 10]
+
+hit 1.3 score: 18
+  AAAAAAAAA  [pos: 0; len: 9]
+  AAAAAAAAA  [pos: 4; len: 9]
+
+hit 1.4 score: 18
+  AAAAAAAAA  [pos: 0; len: 9]
+  AAAAAAAAA  [pos: 30; len: 9]
+
+hit 1.5 score: 18
+  AAAAAAAAA  [pos: 1; len: 9]
+  AAAAAAAAA  [pos: 3; len: 9]
+
+hit 1.6 score: 18
+  AAAAAAAAA  [pos: 1; len: 9]
+  AAAAAAAAA  [pos: 29; len: 9]
+
+hit 1.7 score: 18
+  AAAAAAAAA  [pos: 20; len: 9]
+  AAAAAAAAA  [pos: 4; len: 9]
+
+hit 1.8 score: 18
+  AAAAAAAAA  [pos: 21; len: 9]
+  AAAAAAAAA  [pos: 3; len: 9]
+
+hit 1.9 score: 16
+  AAAAAAAA  [pos: 0; len: 8]
+  AAAAAAAA  [pos: 5; len: 8]
+
+hit 1.10 score: 16
+  AAAAAAAA  [pos: 0; len: 8]
+  AAAAAAAA  [pos: 31; len: 8]
+
+hit 1.11 score: 16
+  AAAAAAAA  [pos: 2; len: 8]
+  AAAAAAAA  [pos: 3; len: 8]
+
+hit 1.12 score: 16
+  AAAAAAAA  [pos: 2; len: 8]
+  AAAAAAAA  [pos: 29; len: 8]
+
+hit 1.13 score: 16
+  AAAAAAAA  [pos: 20; len: 8]
+  AAAAAAAA  [pos: 5; len: 8]
+
+hit 1.14 score: 16
+  AAAAAAAA  [pos: 22; len: 8]
+  AAAAAAAA  [pos: 3; len: 8]
+
+hit 1.15 score: 14
+  AAAAAAA  [pos: 0; len: 7]
+  AAAAAAA  [pos: 6; len: 7]
+
+hit 1.16 score: 14
+  AAAAAAA  [pos: 0; len: 7]
+  AAAAAAA  [pos: 32; len: 7]
+
+hit 1.17 score: 14
+  AAAAAAA  [pos: 3; len: 7]
+  AAAAAAA  [pos: 3; len: 7]
+
+hit 1.18 score: 14
+  AAAAAAA  [pos: 3; len: 7]
+  AAAAAAA  [pos: 29; len: 7]
+
+hit 1.19 score: 14
+  AAAAAAA  [pos: 20; len: 7]
+  AAAAAAA  [pos: 6; len: 7]
+
+hit 1.20 score: 14
+  AAAAAAA  [pos: 23; len: 7]
+  AAAAAAA  [pos: 3; len: 7]
+
+hit 1.21 score: 12
+  AAAAAA  [pos: 0; len: 6]
+  AAAAAA  [pos: 7; len: 6]
+
+hit 1.22 score: 12
+  AAAAAA  [pos: 0; len: 6]
+  AAAAAA  [pos: 33; len: 6]
+
+hit 1.23 score: 12
+  AAAAAA  [pos: 4; len: 6]
+  AAAAAA  [pos: 3; len: 6]
+
+hit 1.24 score: 12
+  AAAAAA  [pos: 4; len: 6]
+  AAAAAA  [pos: 29; len: 6]
+
+hit 1.25 score: 12
+  AAAAAA  [pos: 20; len: 6]
+  AAAAAA  [pos: 7; len: 6]
+
+hit 1.26 score: 12
+  AAAAAA  [pos: 24; len: 6]
+  AAAAAA  [pos: 3; len: 6]
+
+hit 1.27 score: 10
+  AAAAA  [pos: 0; len: 5]
+  AAAAA  [pos: 8; len: 5]
+
+hit 1.28 score: 10
+  AAAAA  [pos: 0; len: 5]
+  AAAAA  [pos: 34; len: 5]
+
+hit 1.29 score: 10
+  AAAAA  [pos: 5; len: 5]
+  AAAAA  [pos: 3; len: 5]
+
+hit 1.30 score: 10
+  AAAAA  [pos: 5; len: 5]
+  AAAAA  [pos: 29; len: 5]
+
+hit 1.31 score: 10
+  AAAAA  [pos: 20; len: 5]
+  AAAAA  [pos: 8; len: 5]
+
+hit 1.32 score: 10
+  AAAAA  [pos: 25; len: 5]
+  AAAAA  [pos: 3; len: 5]
+
+hit 1.33 score: 8
+  AAAA  [pos: 0; len: 4]
+  AAAA  [pos: 9; len: 4]
+
+hit 1.34 score: 8
+  AAAA  [pos: 0; len: 4]
+  AAAA  [pos: 35; len: 4]
+
+hit 1.35 score: 8
+  AAAA  [pos: 6; len: 4]
+  AAAA  [pos: 3; len: 4]
+
+hit 1.36 score: 8
+  AAAA  [pos: 6; len: 4]
+  AAAA  [pos: 29; len: 4]
+
+hit 1.37 score: 8
+  AAAA  [pos: 20; len: 4]
+  AAAA  [pos: 9; len: 4]
+
+hit 1.38 score: 8
+  AAAA  [pos: 26; len: 4]
+  AAAA  [pos: 3; len: 4]
+
+hit 1.39 score: 6
+  AAA  [pos: 0; len: 3]
+  AAA  [pos: 10; len: 3]
+
+hit 1.40 score: 6
+  AAA  [pos: 0; len: 3]
+  AAA  [pos: 36; len: 3]
+
+hit 1.41 score: 6
+  AAA  [pos: 7; len: 3]
+  AAA  [pos: 3; len: 3]
+
+hit 1.42 score: 6
+  AAA  [pos: 7; len: 3]
+  AAA  [pos: 29; len: 3]
+
+hit 1.43 score: 6
+  AAA  [pos: 27; len: 3]
+  AAA  [pos: 3; len: 3]
+
+==

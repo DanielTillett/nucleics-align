@@ -73,6 +73,11 @@ static void _nw_finish(const nw_aligner_t *nw, alignment_t *result,
   alignment_b[alignment_len] = '\0';
 
   result->length = alignment_len;
+  // A global alignment covers both sequences (a result reused from
+  // Smith-Waterman would otherwise keep its hit's positions)
+  result->pos_a = result->pos_b = 0;
+  result->len_a = nw->score_width - 1;
+  result->len_b = nw->score_height - 1;
 }
 
 // The traceback below, from the traceback bytes of a compact fill. Returns
@@ -113,6 +118,20 @@ static bool _nw_follow_trace(const nw_aligner_t *nw, alignment_t *result)
 
   _nw_finish(nw, result, score_x, score_y, next_char, longest_alignment);
   return true;
+}
+
+aln_status_t needleman_wunsch_align_checked(const char *a, const char *b,
+                                            size_t len_a, size_t len_b,
+                                            const scoring_t *scoring,
+                                            nw_aligner_t *nw,
+                                            alignment_t *result,
+                                            aln_error_t *err)
+{
+  aln_status_t status = alignment_check(scoring, a, len_a, b, len_b, false,
+                                        err);
+  if(status == ALN_OK)
+    needleman_wunsch_align2(a, b, len_a, len_b, scoring, nw, result);
+  return status;
 }
 
 void needleman_wunsch_align2(const char *a, const char *b,

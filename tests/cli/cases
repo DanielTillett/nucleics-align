@@ -1,0 +1,38 @@
+# Command line fixtures: name | threads | command
+# Run from the repository root by tests/cli/run.sh. In a command, @ is the
+# input directory (tests/cli/input). threads "batch": run with --threads 1
+# and --threads 4, both compared with the same expected output; "-": once
+# as written.
+nw_ties          | batch | ./bin/needleman_wunsch --printscores --file @/ties.fa
+nw_pretty        | -     | ./bin/needleman_wunsch --printscores --pretty --printfasta --file @/ties.fa
+nw_colour        | -     | ./bin/needleman_wunsch --colour --file @/ties.fa
+nw_zam           | -     | ./bin/needleman_wunsch --zam --file @/ties.fa
+nw_free_gaps     | -     | ./bin/needleman_wunsch --printscores --freestartgap --freeendgap --file @/local.fa
+nw_nogapsin1     | -     | ./bin/needleman_wunsch --printscores --nogapsin1 --file @/ties.fa
+nw_linear        | batch | ./bin/needleman_wunsch --linear --printscores --file @/ties.fa
+nw_scoreonly     | batch | ./bin/needleman_wunsch --scoreonly --file @/batch.fa
+nw_batch         | batch | ./bin/needleman_wunsch --printscores --file @/batch.fa
+nw_batch_linear  | batch | ./bin/needleman_wunsch --linear --printscores --file @/batch.fa
+nw_protein       | -     | ./bin/needleman_wunsch --scoring BLOSUM62 --printscores --file @/protein.fa
+nw_matrix_file   | -     | ./bin/needleman_wunsch --substitution_matrix scoring/BLOSUM62.txt --printscores --file @/protein.fa
+nw_case          | -     | ./bin/needleman_wunsch --case_sensitive --printscores --file @/case_dash.fa
+nw_dash_linear   | -     | ./bin/needleman_wunsch --linear --printscores --file @/case_dash.fa
+nw_undefined     | batch | ./bin/needleman_wunsch --substitution_pairs @/ac_pairs.txt --printscores --file @/undefined_mid.txt
+nw_linear_fail   | batch | ./bin/needleman_wunsch --linear --printscores --gapopen -300000 --gapextend -300000 --file @/linear_fail.fa
+nw_args          | -     | ./bin/needleman_wunsch --printscores ACGT AGT
+nw_bad_option    | -     | ./bin/needleman_wunsch --nonsense
+sw_hits          | batch | ./bin/smith_waterman --maxhits 3 --context 4 --pretty --printseq --file @/local.fa
+sw_minscore      | -     | ./bin/smith_waterman --minscore 5 --file @/local.fa
+sw_batch         | batch | ./bin/smith_waterman --maxhits 2 --file @/batch.fa
+sw_colour        | -     | ./bin/smith_waterman --maxhits 2 --colour --printfasta --file @/local.fa
+sw_undefined     | batch | ./bin/smith_waterman --substitution_pairs @/ac_pairs.txt --minscore 1 --file @/undefined_mid.txt
+sw_protein       | -     | ./bin/smith_waterman --scoring PAM30 --maxhits 2 --file @/protein.fa
+lcs              | -     | ./bin/lcs ACGTACGTTACGACGT
+nw_case_blosum   | -     | ./bin/needleman_wunsch --case_sensitive --scoring BLOSUM62 --printscores --file @/protein.fa
+nw_empty_number  | -     | ./bin/needleman_wunsch --match "" --mismatch -1 ACGT AGT
+nw_score_range   | -     | ./bin/needleman_wunsch --gapopen 2147483647 --gapextend 1 A A
+nw_pairs_range   | -     | ./bin/needleman_wunsch --substitution_pairs @/big_pairs.txt ACGT AGT
+sw_overflow      | -     | ./bin/smith_waterman --match 500000000 --mismatch -1 ACGTACGT ACGTACGT
+nw_gap_overflow  | -     | ./bin/needleman_wunsch --printscores --gapextend -500000000 AAAAA A
+nw_unused_score  | -     | ./bin/needleman_wunsch --printscores --wildcard X 536870911 A A
+nw_case_mixed    | -     | ./bin/needleman_wunsch --printscores --scoring BLOSUM62 --case_sensitive A c

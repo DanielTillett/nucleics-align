@@ -6,3 +6,5 @@ examples/nw_example
 examples/sw_example
 examples/nw_cpp
 examples/sw_cpp
+src/*.d
+src/.build-flags
