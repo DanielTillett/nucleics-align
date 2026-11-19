@@ -19,12 +19,16 @@
 #include <strings.h> // strcasecmp
 #include <limits.h> // INT_MIN
 #include <stdarg.h> // for va_list
+#include <pthread.h>
+#include <unistd.h> // sysconf
 
 #include "seq_file/seq_file.h"
 
 #include "alignment.h"
 #include "alignment_cmdline.h"
 #include "alignment_scoring_load.h"
+#include "alignment_macros.h"
+#include "hirschberg.h" // hirschberg_max_threads
 
 char parse_entire_int(char *str, int *result)
 {
@@ -107,7 +111,10 @@ static void print_usage(enum SeqAlignCmdType cmd_type, score_t defaults[4],
 "    --substitution_matrix <file>  see details for formatting\n"
 "    --substitution_pairs <file>   see details for formatting\n"
 "\n"
-"    --wildcard <w> <s>   Character <w> matches all characters with score <s>\n\n",
+"    --wildcard <w> <s>   Character <w> matches all characters with score <s>\n"
+"\n"
+"    --threads <n>        Threads to use, within an alignment and for aligning\n"
+"                         pairs from a file at once [default: half the CPUs]\n\n",
           defaults[0], defaults[1],
           defaults[2], defaults[3]);
 
@@ -417,6 +424,13 @@ cmdline_t* cmdline_new(int argc, char **argv, scoring_t *scoring,
 
         argi++;
       }
+      else if(strcasecmp(argv[argi], "--threads") == 0)
+      {
+        if(!parse_entire_uint(argv[argi+1], &cmd->threads) ||
+           cmd->threads == 0 || cmd->threads > 4096)
+          usage("Invalid --threads <n> argument (must be 1 to 4096)");
+        argi++;
+      }
       else if(strcasecmp(argv[argi], "--context") == 0)
       {
         if(cmd_type != SEQ_ALIGN_SW_CMD)
@@ -686,4 +700,312 @@ void align_from_file(const char *path1, const char *path2,
   // Free memory
   seq_read_dealloc(&read1);
   seq_read_dealloc(&read2);
+}
+
+unsigned int cmdline_threads(const cmdline_t *cmd)
+{
+  if(cmd->threads > 0) return cmd->threads;
+  long cpus = sysconf(_SC_NPROCESSORS_ONLN);
+  return cpus > 1 ? (unsigned int)(cpus / 2) : 1;
+}
+
+// A pair read from the file, and the output aligning it gave
+typedef struct
+{
+  read_t r1, r2;
+  bool allocated, done;
+  size_t number;
+  char *out, *err;
+  size_t out_len, err_len;
+  int status;
+} cmd_job_t;
+
+typedef int (*cmd_run_t)(void *worker, read_t *r1, read_t *r2, size_t number,
+                         FILE *out, FILE *err);
+
+// Pairs being aligned, in a ring of cap slots: the i-th pair read is in slot
+// i % cap. This thread reads pairs, worker threads take them, and whichever
+// worker finishes the next pair to be written writes it (and those finished
+// after it). Counts are of pairs since the start of the file
+typedef struct
+{
+  pthread_mutex_t lock;
+  pthread_cond_t work, space; // a pair to take (or the end); a pair written
+  cmd_job_t *jobs;
+  size_t cap, read, taken, written;
+  bool end; // no more pairs
+  int status; // a pair's non-zero status: stop after its output
+  cmd_run_t run;
+} cmd_batch_t;
+
+typedef struct
+{
+  cmd_batch_t *batch;
+  void *worker;
+  pthread_t thread;
+} cmd_worker_t;
+
+// Write the finished pairs next in order, up to one that failed. Called
+// holding the lock
+static void cmd_write_done(cmd_batch_t *b)
+{
+  while(b->status == 0 && b->written < b->taken)
+  {
+    cmd_job_t *job = &b->jobs[b->written % b->cap];
+    if(!job->done) break;
+    fwrite(job->out, 1, job->out_len, stdout);
+    fflush(stdout);
+    fwrite(job->err, 1, job->err_len, stderr);
+    fflush(stderr);
+    free(job->out);
+    free(job->err);
+    job->done = false;
+    b->status = job->status;
+    b->written++;
+  }
+  pthread_cond_broadcast(&b->space);
+}
+
+static void* cmd_worker_thread(void *ptr)
+{
+  cmd_worker_t *wk = ptr;
+  cmd_batch_t *b = wk->batch;
+  pthread_mutex_lock(&b->lock);
+  while(true)
+  {
+    while(b->taken == b->read && !b->end && b->status == 0)
+      pthread_cond_wait(&b->work, &b->lock);
+    if(b->taken == b->read || b->status != 0) break;
+    cmd_job_t *job = &b->jobs[b->taken++ % b->cap];
+    pthread_mutex_unlock(&b->lock);
+
+    FILE *out = open_memstream(&job->out, &job->out_len);
+    FILE *err = open_memstream(&job->err, &job->err_len);
+    if(out == NULL || err == NULL) {
+      fprintf(stderr, "%s:%i: Out of memory\n", __FILE__, __LINE__);
+      exit(EXIT_FAILURE);
+    }
+    job->status = b->run(wk->worker, &job->r1, &job->r2, job->number,
+                         out, err);
+    fclose(out);
+    fclose(err);
+
+    pthread_mutex_lock(&b->lock);
+    job->done = true;
+    cmd_write_done(b);
+  }
+  pthread_mutex_unlock(&b->lock);
+  return NULL;
+}
+
+// Pairs aligned on their own, on this thread once the pairs before are
+// written: big ones, which get all the threads, and those that may end the
+// program (scoring_lookup() on a pair the scoring does not define, or scores
+// large enough to overflow), so it ends after the same output as aligning
+// one pair at a time
+static bool cmd_run_alone(const scoring_t *scoring,
+                          const read_t *r1, const read_t *r2)
+{
+  const size_t la = r1->seq.end, lb = r2->seq.end;
+  if((double)la * (double)lb > (double)alignment_block_min_cells) return true;
+  if(scoring == NULL) return false;
+
+  bool in_a[256] = {false}, in_b[256] = {false};
+  size_t i, j;
+  for(i = 0; i < la; i++) in_a[(unsigned char)r1->seq.b[i]] = true;
+  for(i = 0; i < lb; i++) in_b[(unsigned char)r2->seq.b[i]] = true;
+
+  double smax = 0;
+  for(i = 0; i < 256; i++) {
+    if(!in_a[i]) continue;
+    for(j = 0; j < 256; j++) {
+      if(!in_b[j]) continue;
+      if(!scoring_has_pair(scoring, (char)i, (char)j)) return true;
+      int s;
+      bool is_match;
+      scoring_lookup(scoring, (char)i, (char)j, &s, &is_match);
+      smax = MAX2(smax, s < 0 ? -(double)s : (double)s);
+    }
+  }
+  // Bounds the size of every score on a path through the matrices
+  const double open = scoring->gap_open, extend = scoring->gap_extend;
+  smax += (open < 0 ? -open : open) + (extend < 0 ? -extend : extend);
+  return (double)(la + lb + 2) * smax > INT_MAX / 4;
+}
+
+void align_from_file_threaded(const char *path1, const char *path2,
+                              bool use_zlib, unsigned int threads,
+                              const scoring_t *scoring,
+                              size_t (*number)(read_t *r1, read_t *r2),
+                              int (*run)(void *worker, read_t *r1, read_t *r2,
+                                         size_t number, FILE *out, FILE *err),
+                              void* (*new_worker)(void),
+                              void (*free_worker)(void *worker))
+{
+  seq_file_t *sf1, *sf2;
+
+  if((sf1 = open_seq_file(path1, use_zlib)) == NULL)
+  {
+    fprintf(stderr, "Alignment Error: couldn't open file %s\n", path1);
+    fflush(stderr);
+    return;
+  }
+
+  if(path2 == NULL)
+  {
+    sf2 = sf1;
+  }
+  else if((sf2 = open_seq_file(path2, use_zlib)) == NULL)
+  {
+    fprintf(stderr, "Alignment Error: couldn't open file %s\n", path2);
+    fflush(stderr);
+    seq_close(sf1);
+    return;
+  }
+
+  threads = MAX2(threads, 1);
+  cmd_batch_t b;
+  memset(&b, 0, sizeof(b));
+  pthread_mutex_init(&b.lock, NULL);
+  pthread_cond_init(&b.work, NULL);
+  pthread_cond_init(&b.space, NULL);
+  b.run = run;
+  // Pairs read ahead: enough to keep every thread busy
+  b.cap = 8 * (size_t)threads;
+  b.jobs = calloc(b.cap, sizeof(cmd_job_t));
+  // Started as pairs arrive, so no more than there are pairs
+  cmd_worker_t *workers = calloc(threads, sizeof(cmd_worker_t));
+  if(b.jobs == NULL || workers == NULL) {
+    fprintf(stderr, "%s:%i: Out of memory\n", __FILE__, __LINE__);
+    exit(EXIT_FAILURE);
+  }
+  void *main_worker = NULL;
+  size_t i, nworkers = 0, alignments = 0;
+  bool odd = false;
+
+  // An alignment beside others gets one thread; one on its own gets them all
+  int a_threads = alignment_max_threads, h_threads = hirschberg_max_threads;
+  alignment_max_threads = hirschberg_max_threads = 1;
+
+  while(true)
+  {
+    // Wait for the slot's last pair to be written
+    pthread_mutex_lock(&b.lock);
+    while(b.read - b.written == b.cap && b.status == 0)
+      pthread_cond_wait(&b.space, &b.lock);
+    bool stop = b.status != 0;
+    pthread_mutex_unlock(&b.lock);
+    if(stop) break;
+
+    cmd_job_t *job = &b.jobs[b.read % b.cap];
+    if(!job->allocated) {
+      seq_read_alloc(&job->r1);
+      seq_read_alloc(&job->r2);
+      job->allocated = true;
+    }
+    if(seq_read(sf1, &job->r1) <= 0) break;
+    if(seq_read(sf2, &job->r2) <= 0) { odd = true; break; }
+    job->number = number != NULL ? number(&job->r1, &job->r2) : alignments;
+    alignments++;
+
+    bool alone = cmd_run_alone(scoring, &job->r1, &job->r2);
+
+    // A thread for each pair, up to `threads`
+    if(!alone && nworkers < threads)
+    {
+      cmd_worker_t *wk = &workers[nworkers];
+      wk->batch = &b;
+      wk->worker = new_worker();
+      if(pthread_create(&wk->thread, NULL, cmd_worker_thread, wk) == 0)
+        nworkers++;
+      else
+        free_worker(wk->worker);
+    }
+
+    if(alone || nworkers == 0)
+    {
+      pthread_mutex_lock(&b.lock);
+      while(b.written < b.read && b.status == 0)
+        pthread_cond_wait(&b.space, &b.lock);
+      stop = b.status != 0;
+      pthread_mutex_unlock(&b.lock);
+      if(stop) break;
+
+      // No worker is aligning or writing now
+      if(main_worker == NULL) main_worker = new_worker();
+      alignment_max_threads = hirschberg_max_threads = (int)threads;
+      int status = run(main_worker, &job->r1, &job->r2, job->number,
+                       stdout, stderr);
+      alignment_max_threads = hirschberg_max_threads = 1;
+      if(status != 0) {
+        pthread_mutex_lock(&b.lock);
+        b.status = status;
+        pthread_mutex_unlock(&b.lock);
+        break;
+      }
+      // The slot is free again
+      continue;
+    }
+
+    pthread_mutex_lock(&b.lock);
+    b.read++;
+    pthread_cond_signal(&b.work);
+    pthread_mutex_unlock(&b.lock);
+  }
+
+  // Workers finish the pairs taken, write them, and stop
+  pthread_mutex_lock(&b.lock);
+  b.end = true;
+  pthread_cond_broadcast(&b.work);
+  pthread_mutex_unlock(&b.lock);
+  for(i = 0; i < nworkers; i++) {
+    pthread_join(workers[i].thread, NULL);
+    free_worker(workers[i].worker);
+  }
+  if(main_worker != NULL) free_worker(main_worker);
+
+  alignment_max_threads = a_threads;
+  hirschberg_max_threads = h_threads;
+
+  const int status = b.status;
+  if(status == 0)
+  {
+    // Reported after the output of the pairs before, as one at a time
+    if(odd)
+    {
+      fprintf(stderr, "Alignment Error: Odd number of sequences - "
+                      "I read in pairs!\n");
+      fflush(stderr);
+    }
+
+    // warn if no bases read
+    if(alignments == 0)
+    {
+      fprintf(stderr, "Alignment Warning: empty input\n");
+      fflush(stderr);
+    }
+  }
+
+  seq_close(sf1);
+  if(path2 != NULL) seq_close(sf2);
+
+  for(i = 0; i < b.cap; i++) {
+    // Pairs finished after one that failed are not written
+    if(b.jobs[i].done) {
+      free(b.jobs[i].out);
+      free(b.jobs[i].err);
+    }
+    if(b.jobs[i].allocated) {
+      seq_read_dealloc(&b.jobs[i].r1);
+      seq_read_dealloc(&b.jobs[i].r2);
+    }
+  }
+  free(b.jobs);
+  free(workers);
+  pthread_mutex_destroy(&b.lock);
+  pthread_cond_destroy(&b.work);
+  pthread_cond_destroy(&b.space);
+
+  // As one pair at a time: after the failing pair's output
+  if(status != 0) exit(status);
 }

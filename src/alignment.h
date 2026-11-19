@@ -10,6 +10,8 @@
 #define ALIGNMENT_HEADER_SEEN
 
 #include <string.h> // memset
+#include <stddef.h> // ptrdiff_t
+#include <stdio.h> // FILE
 #include <stdint.h>
 #include <stdbool.h>
 #include "alignment_scoring.h"
@@ -40,6 +42,11 @@ typedef struct
   score_t final_scores[3]; // traced: MATCH, GAP_A, GAP_B at the last cell
   size_t best_index; // traced Smith-Waterman: first cell with best_score
   score_t best_score;
+  // Banded trace (Needleman-Wunsch): only cells near the main diagonals
+  // were filled, and cell (x, y)'s byte is at trace[trace_rows[y] + x]
+  bool trace_banded;
+  ptrdiff_t *trace_rows;
+  size_t trace_rows_capacity;
 } aligner_t;
 
 // Store alignment result here
@@ -77,6 +84,15 @@ static inline int alignment_trace_next(const aligner_t *aligner, size_t index,
   return (aligner->trace[index] >> (2 * (int)m)) & 3;
 }
 
+// Index of the traceback byte of cell (x, y)
+static inline size_t alignment_trace_index(const aligner_t *aligner,
+                                           size_t x, size_t y)
+{
+  return aligner->trace_banded
+         ? (size_t)(aligner->trace_rows[y] + (ptrdiff_t)x)
+         : y * aligner->score_width + x;
+}
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -107,6 +123,27 @@ extern bool alignment_striped_enabled;
 extern size_t alignment_block_min_cells, alignment_block_min_cols;
 extern int alignment_max_threads;
 
+// Compact Needleman-Wunsch fills skip cells that cannot be on a best path,
+// with the same result (see alignment_band_width()). alignment_band_enabled
+// (default true) turns that off; alignment_band_strip_rows (0: automatic)
+// and alignment_band_min_width (first band tried, default 64) are for
+// tuning and tests
+extern bool alignment_band_enabled;
+extern size_t alignment_band_strip_rows, alignment_band_min_width;
+
+// Half-width w of the band a global alignment of m x n needs for a path
+// scoring at least `lower`: such a path stays on diagonals from
+// MIN2(0, n-m) - w to MAX2(0, n-m) + w. smax is the best substitution score
+// (at least 0); gap penalties must be 0 or less. SIZE_MAX: no useful band
+size_t alignment_band_width(score_t smax, score_t gap_extend,
+                            size_t m, size_t n, score_t lower);
+
+// Smith-Waterman scans in O(len_b) memory (see alignment.c), used by
+// smith_waterman.c for the best hit of large alignments
+bool alignment_sw_scan(const char *a, size_t len_a, const char *b, size_t len_b,
+                       const scoring_t *scoring, score_t target,
+                       score_t *best, size_t *x, size_t *y);
+
 // Constructors/Destructors for alignment
 alignment_t* alignment_create(size_t capacity);
 void alignment_ensure_capacity(alignment_t* result, size_t strlength);
@@ -125,6 +162,14 @@ void alignment_colour_print_against(const char *alignment_a,
 
 void alignment_print_spacer(const char* alignment_a, const char* alignment_b,
                             const scoring_t* scoring);
+
+// The same, to out instead of stdout
+void alignment_colour_fprint_against(FILE *out, const char *alignment_a,
+                                     const char *alignment_b,
+                                     char case_sensitive);
+void alignment_fprint_spacer(FILE *out, const char* alignment_a,
+                             const char* alignment_b,
+                             const scoring_t* scoring);
 
 #ifdef __cplusplus
 }

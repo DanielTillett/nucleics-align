@@ -50,7 +50,7 @@ typedef struct
   void *vbuf; // striped rows and score profile, see hb_pass_striped()
   void *vbuf2; // the same for a pass on a second thread
   bool simd_ok; // all scores far enough from HB_NEG and overflow
-  int pass_threads; // threads for one pass, see hb_pass_striped()
+  int pass_threads; // threads for the passes of one step (see hb_passes_striped())
   score_t smax; // best substitution score, at least 0, see hb_band()
 #endif
 } hb_state_t;
@@ -90,7 +90,7 @@ static void hb_emit_ins(hb_state_t *st, const char *b, size_t n)
 // threads, each one row behind the block to its left. Tests lower these
 size_t hirschberg_block_min_cells = 4000000; // rows x columns
 size_t hirschberg_block_min_cols = 1024; // columns per block
-int hirschberg_max_threads = 0; // threads per pass; 0: half the CPUs
+int hirschberg_max_threads = 0; // see hirschberg.h; 0: half the CPUs
 
 // No score known for a sub-problem yet, see hb_diff()
 #define HB_NO_BOUND SCORE_MIN
@@ -292,15 +292,15 @@ static void hb_pass_striped(hb_state_t *st, const char *a, ptrdiff_t astep,
                             size_t rows, const char *b, ptrdiff_t bstep,
                             size_t c0, size_t n, score_t t0,
                             score_t *oc, score_t *od, ptrdiff_t ostep,
-                            void *buf, const hb_top_t *top)
+                            void *buf, const hb_top_t *top, int threads)
 {
   // At least one vector of columns per block, so no block is empty
   const size_t min_cols = MAX2(hirschberg_block_min_cols, (size_t)ALN_VL);
   size_t nblocks = 1, i;
-  if(st->pass_threads > 1 && (double)rows * n >= hirschberg_block_min_cells &&
+  if(threads > 1 && (double)rows * n >= hirschberg_block_min_cells &&
      n >= 2 * min_cols)
   {
-    nblocks = MIN2((size_t)st->pass_threads, n / min_cols);
+    nblocks = MIN2((size_t)threads, n / min_cols);
   }
 
   if(nblocks <= 1) {
@@ -315,7 +315,7 @@ static void hb_pass_striped(hb_state_t *st, const char *a, ptrdiff_t astep,
   size_t bufsize = (3 + st->table.n) * seg * sizeof(vscore_t);
   hb_block_args_t args[nblocks];
   hb_boundary_t bounds[nblocks-1];
-  pthread_t threads[nblocks];
+  pthread_t thread_ids[nblocks];
   bool started[nblocks];
   void *bufs = aligned_alloc(sizeof(vscore_t), bufsize * nblocks);
   score_t *edges = malloc(2 * (nblocks-1) * (rows+1) * sizeof(score_t));
@@ -342,11 +342,11 @@ static void hb_pass_striped(hb_state_t *st, const char *a, ptrdiff_t astep,
   // Block 0 runs here; the rest on their own threads. A block whose thread
   // cannot start runs here too, after the blocks to its left
   for(i = 1; i < nblocks; i++)
-    started[i] = pthread_create(&threads[i], NULL, hb_block_thread,
+    started[i] = pthread_create(&thread_ids[i], NULL, hb_block_thread,
                                 &args[i]) == 0;
   hb_block_thread(&args[0]);
   for(i = 1; i < nblocks; i++) {
-    if(started[i]) pthread_join(threads[i], NULL);
+    if(started[i]) pthread_join(thread_ids[i], NULL);
     else hb_block_thread(&args[i]);
   }
 
@@ -365,7 +365,8 @@ static void hb_pass_banded(hb_state_t *st, const char *a, ptrdiff_t astep,
                            size_t rows, const char *b, ptrdiff_t bstep,
                            size_t n, score_t t0,
                            score_t *oc, score_t *od, ptrdiff_t ostep,
-                           void *buf, ptrdiff_t dlo, ptrdiff_t dhi)
+                           void *buf, ptrdiff_t dlo, ptrdiff_t dhi,
+                           int threads)
 {
   const score_t g = st->scoring->gap_open, h = st->scoring->gap_extend;
   size_t strip = hirschberg_band_strip_rows;
@@ -397,7 +398,7 @@ static void hb_pass_banded(hb_state_t *st, const char *a, ptrdiff_t astep,
 
     hb_top_t top = {top_h, top_d, i0 == 0 ? t0 : top_h[0], c0 > 0};
     hb_pass_striped(st, a + (ptrdiff_t)i0 * astep, astep, hs, b, bstep,
-                    c0, jr - c0, t0, top_h, top_d, 1, buf, &top);
+                    c0, jr - c0, t0, top_h, top_d, 1, buf, &top, threads);
   }
 
   for(j = 0; j <= n; j++) {
@@ -414,6 +415,7 @@ typedef struct {
   hb_state_t *st; const char *a; ptrdiff_t astep; size_t rows;
   const char *b; ptrdiff_t bstep; size_t n; score_t t0;
   score_t *oc, *od; ptrdiff_t ostep; void *buf; ptrdiff_t dlo, dhi;
+  int threads;
 } hb_pass_args_t;
 
 static void* hb_pass_thread(void *ptr)
@@ -421,29 +423,20 @@ static void* hb_pass_thread(void *ptr)
   hb_pass_args_t *p = ptr;
   if(p->dlo <= p->dhi)
     hb_pass_banded(p->st, p->a, p->astep, p->rows, p->b, p->bstep, p->n,
-                   p->t0, p->oc, p->od, p->ostep, p->buf, p->dlo, p->dhi);
+                   p->t0, p->oc, p->od, p->ostep, p->buf, p->dlo, p->dhi,
+                   p->threads);
   else
     hb_pass_striped(p->st, p->a, p->astep, p->rows, p->b, p->bstep, 0, p->n,
-                    p->t0, p->oc, p->od, p->ostep, p->buf, NULL);
+                    p->t0, p->oc, p->od, p->ostep, p->buf, NULL, p->threads);
   return NULL;
 }
 
-// Half-width w of the band an m x n sub-problem needs for a path scoring
-// at least `lower`: such a path stays on diagonals j - i from
-// MIN2(0, n-m) - w to MAX2(0, n-m) + w. A path through diagonal d has at
-// least I = |d| + |n-m-d| gap characters and at most (m+n-I)/2 aligned
-// pairs, each scoring at most smax; opening gaps only lowers the score
-// (gap_open <= 0). SIZE_MAX: no useful band
+// Half-width of the band an m x n sub-problem needs for a path scoring at
+// least `lower` (see alignment_band_width())
 static size_t hb_band(const hb_state_t *st, size_t m, size_t n,
                       score_t lower)
 {
-  const double smax = st->smax, h = st->scoring->gap_extend;
-  const double gaps = m > n ? (double)(m - n) : (double)(n - m);
-  const double step = 2 * (smax - 2*h); // each diagonal further out
-  const double room = smax * ((double)m + n - gaps) + 2*h*gaps - 2.0*lower;
-  if(step <= 0) return SIZE_MAX;
-  if(room < 0) return 0;
-  return room / step >= 1e15 ? SIZE_MAX : (size_t)(room / step);
+  return alignment_band_width(st->smax, st->scoring->gap_extend, m, n, lower);
 }
 
 // Is a band of half-width w over n columns narrow enough to be worth it?
@@ -616,21 +609,27 @@ static void hb_passes_striped(hb_state_t *st, const char *a, const char *b,
   // In the reverse pass, diagonal j - i becomes (n - m) - (j - i): the band
   // around 0 .. n-m maps onto itself
   hb_pass_args_t fwd = {st, a, 1, imid, b, 1, n, tb,
-                        st->cc, st->dd, 1, st->vbuf, dlo, dhi};
+                        st->cc, st->dd, 1, st->vbuf, dlo, dhi,
+                        st->pass_threads};
   hb_pass_args_t rev = {st, a+m-1, -1, m-imid, b+n-1, -1, n, te,
-                        st->rr+n, st->ss+n, -1, st->vbuf2, dlo, dhi};
+                        st->rr+n, st->ss+n, -1, st->vbuf2, dlo, dhi,
+                        st->pass_threads};
   pthread_t thread;
-  if((double)m * (double)n >= HB_THREAD_CELLS &&
-     pthread_create(&thread, NULL, hb_pass_thread, &rev) == 0)
-  {
-    hb_pass_thread(&fwd);
-    pthread_join(thread, NULL);
+  // Passes run at the same time share the threads: with the full count
+  // each, twice as many threads as cores slowed 50 kb unrelated pairs
+  // (0.31 -> 0.39 s) and tripled the CPU time. With one thread, they run
+  // one after the other
+  if(st->pass_threads >= 2 && (double)m * (double)n >= HB_THREAD_CELLS) {
+    fwd.threads = rev.threads = MAX2(1, st->pass_threads / 2);
+    if(pthread_create(&thread, NULL, hb_pass_thread, &rev) == 0) {
+      hb_pass_thread(&fwd);
+      pthread_join(thread, NULL);
+      return;
+    }
+    fwd.threads = rev.threads = st->pass_threads; // one after the other
   }
-  else
-  {
-    hb_pass_thread(&fwd);
-    hb_pass_thread(&rev);
-  }
+  hb_pass_thread(&fwd);
+  hb_pass_thread(&rev);
 }
 #endif
 
@@ -975,7 +974,7 @@ bool hirschberg_score2(const char *a, const char *b,
   else if(hb_simd_ok(&st, len_a, len_b))
   {
     hb_pass_striped(&st, a, 1, len_a, b, 1, 0, len_b, g, st.cc, st.dd, 1,
-                    st.vbuf, NULL);
+                    st.vbuf, NULL, st.pass_threads);
     *score = st.cc[len_b];
   }
   else

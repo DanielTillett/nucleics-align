@@ -182,6 +182,21 @@ void scoring_lookup(const scoring_t* scoring, char a, char b,
   exit(EXIT_FAILURE);
 }
 
+// The same checks as scoring_lookup(), in the same order
+bool scoring_has_pair(const scoring_t* scoring, char a, char b)
+{
+  if(!scoring->case_sensitive)
+  {
+    a = (char)tolower((unsigned char)a);
+    b = (char)tolower((unsigned char)b);
+  }
+
+  if(scoring->no_mismatches && a != b) return true;
+
+  return get_swap_bit(scoring,a,b) || get_wildcard_bit(scoring,a) ||
+         get_wildcard_bit(scoring,b) || scoring->use_match_mismatch;
+}
+
 //
 // Some scoring systems
 //

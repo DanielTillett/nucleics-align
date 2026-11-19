@@ -64,8 +64,14 @@
 // so the lazy F loop wraps less; 20 kb unrelated score pass, one thread,
 // SSE4.1: 0.21 -> 0.11 s). clang rejects 8-lane vectors in the versions
 // without AVX, so its dispatch builds keep 4
+// AVX-512 targets (e.g. NATIVE=1 on Zen 4/5 or Ice Lake and later) use 16:
+// a 20 kb unrelated score pass on one thread 0.10 -> 0.055 s. Not in the
+// dispatch builds, where every version shares one lane count and 16 lanes
+// run 10x slower on AVX2
 #ifndef ALN_VL
-#  if defined(__AVX2__) || (defined(ALN_DISPATCH) && !defined(__clang__))
+#  if defined(__AVX512F__)
+#    define ALN_VL 16
+#  elif defined(__AVX2__) || (defined(ALN_DISPATCH) && !defined(__clang__))
 #    define ALN_VL 8
 #  else
 #    define ALN_VL 4
@@ -91,7 +97,10 @@ ALN_INLINE vscore_t vmax(vscore_t a, vscore_t b)
 // Move every lane up by one; lane 0 gets x
 ALN_INLINE vscore_t vshift(vscore_t v, score_t x)
 {
-#if ALN_VL == 8
+#if ALN_VL == 16
+  return __builtin_shufflevector(v, vsplat(x), 16, 0, 1, 2, 3, 4, 5, 6, 7, 8,
+                                 9, 10, 11, 12, 13, 14);
+#elif ALN_VL == 8
   return __builtin_shufflevector(v, vsplat(x), 8, 0, 1, 2, 3, 4, 5, 6);
 #else
   return __builtin_shufflevector(v, vsplat(x), 4, 0, 1, 2);

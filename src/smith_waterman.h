@@ -48,6 +48,17 @@ void smith_waterman_set_min_score(sw_aligner_t *sw, score_t min_score);
 // has no score matrices if its traced flag is set
 void smith_waterman_set_compact(sw_aligner_t *sw, bool compact);
 
+// Compact alignments of at least this many cells (default 2^30, 1 GB of
+// traceback bytes) find the best hit with O(len_b)-memory scans and then
+// fill just the rectangle of the best hits: much less memory and time when
+// the hit is short against the sequences (50 kb pairs sharing 2 kb: 0.55 ->
+// 0.09 s, 2.9 GB -> 10 MB), but about 50% more time when it spans them.
+// Same hits. Not used where a gap scores above 0 (a hit can then start with
+// one). Until a second hit is fetched, the aligner describes the rectangle,
+// or the whole sequences if no hit reaches the minimum score. For tuning and
+// tests
+extern size_t smith_waterman_rect_min_cells;
+
 // An alignment to read from, and a pointer to memory to store the result
 // returns 1 if an alignment was read, 0 otherwise
 int smith_waterman_fetch(sw_aligner_t *sw, alignment_t *result);

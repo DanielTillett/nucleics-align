@@ -36,7 +36,9 @@ bool hirschberg_align2(const char *a, const char *b,
 // Tuning (and testing) of column-block threading in large passes: a pass of
 // at least hirschberg_block_min_cells cells is split into blocks of at least
 // hirschberg_block_min_cols columns, one thread each, up to
-// hirschberg_max_threads per pass (0: half the CPUs). Set before aligning
+// hirschberg_max_threads in all (0: half the CPUs); with two or more, big
+// forward and reverse passes run at the same time with half each. Set
+// before aligning
 extern size_t hirschberg_block_min_cells, hirschberg_block_min_cols;
 extern int hirschberg_max_threads;
 

@@ -77,6 +77,9 @@ void scoring_print(const scoring_t* scoring);
 void scoring_lookup(const scoring_t* scoring, char a, char b,
                     int *score, bool *is_match);
 
+// Does scoring_lookup() find a score for (a, b)? (It exits if not)
+bool scoring_has_pair(const scoring_t* scoring, char a, char b);
+
 // Some scoring systems
 void scoring_system_PAM30(scoring_t *scoring);
 void scoring_system_PAM70(scoring_t *scoring);

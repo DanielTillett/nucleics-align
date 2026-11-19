@@ -53,15 +53,19 @@ Build options:
     $ make NATIVE=1                       # tune for this CPU (e.g. AVX2)
     $ make DEBUG=1                        # no optimisation, debug symbols
 
-`NATIVE=1` adds `-march=native`, which lets the SIMD code use 8-lane AVX2 on
-x86 (4 lanes otherwise). Binaries built this way may not run on other CPUs.
+`NATIVE=1` adds `-march=native`, which lets the SIMD code use 16-lane
+AVX-512 or 8-lane AVX2 on x86 (4 lanes otherwise). Binaries built this way
+may not run on other CPUs.
 
 Without it, x86-64 Linux builds with gcc or clang compile the SIMD code for
 AVX2, SSE4.1 and plain SSE2, and pick one for the CPU when the program
 starts. That gets most of the `NATIVE=1` speed in a portable binary (see
 Performance). With gcc every version uses 8 lanes, run as two halves
-without AVX2; clang does not allow that, so its versions use 4. Plain SSE2 has no vector max instruction for 32-bit integers,
-so on such CPUs the linear-space aligner uses scalar loops. Other platforms
+without AVX2; clang does not allow that, so its versions use 4. AVX-512 is
+only used with `NATIVE=1`: every version of a function shares one lane
+count, and 16 lanes run 10x slower without AVX-512. Plain SSE2 has no vector
+max instruction for 32-bit integers, so on such CPUs the linear-space
+aligner uses scalar loops. Other platforms
 use the compiler's target: ARM NEON (e.g. Apple silicon) gets all the SIMD
 code, while x86 builds elsewhere (e.g. macOS on Intel) can add
 `OPT="-O3 -msse4.1"` or `NATIVE=1`. ThreadSanitizer builds skip the run-time
@@ -89,21 +93,26 @@ Link against `src/libalign.a` (and `libs/string_buffer/libstrbuf.a`, `-lz`,
   of the three score matrices (12x less memory, same alignment); the
   matrices are then not available, e.g. to `alignment_print_matrices()`.
   `aligner_t` gained fields for this, so code built against an older
-  `alignment.h` must be recompiled
+  `alignment.h` must be recompiled. Compact fills of similar sequences skip
+  cells that cannot be on a best path (`alignment_band_enabled`, default
+  true), with the same alignment
 * `smith_waterman_align()` then `smith_waterman_fetch()` repeatedly
   (`src/smith_waterman.h`): local alignments, best first.
   `smith_waterman_set_min_score()` skips hits below a score: the hits
   returned are the same, but lower-scoring cells are never indexed.
   `smith_waterman_set_compact()` suits callers that mostly want the best
   hit: it is found from traceback bytes, and the score matrices are only
-  filled if a second hit is fetched. The hits are the same either way
+  filled if a second hit is fetched. Above `smith_waterman_rect_min_cells`
+  (default 2^30), and where no gap scores above 0, only the rectangle of
+  the best hit gets traceback bytes. The hits are the same either way
 * `hirschberg_align()` (`src/hirschberg.h`): global alignment in O(n) memory;
   same scores as `needleman_wunsch_align()`, but returns false for options it
   does not support (a positive gap open, free end gaps, `no_gaps_in_*`,
   `no_mismatches`). Large sub-problems run their forward and reverse passes
   at the same time, each split into column blocks on several threads
   (tunable with `hirschberg_block_min_cells`, `hirschberg_block_min_cols`
-  and `hirschberg_max_threads`). Passes skip cells that cannot be on a best
+  and `hirschberg_max_threads`, shared by the two passes). Passes skip cells
+  that cannot be on a best
   path (`hirschberg_band_enabled`, default true), with the same result
 * `hirschberg_score()` (`src/hirschberg.h`): only the global alignment score,
   in O(n) memory; same options as `hirschberg_align()`
@@ -115,9 +124,18 @@ off in both the matrix fill and the linear-space aligner, for testing or
 comparison; results are exactly the same either way. Large full-matrix fills
 are split into column blocks on several threads, tunable with
 `alignment_block_min_cells`, `alignment_block_min_cols` and
-`alignment_max_threads`.
+`alignment_max_threads`. `alignment_colour_fprint_against()` and
+`alignment_fprint_spacer()` print to a given stream instead of stdout.
 
 See `examples/` for complete C and C++ programs.
+
+The command line tools use half the CPUs by default (`--threads <n>` to
+change it). Pairs read from a file are aligned several at a time, on
+separate threads, and printed in input order, so the output is the same as
+one at a time. Each pair is printed as soon as those before it are. A pair
+of more than 4 million cells runs on its own with all the threads, as does
+one that would end the program (a character pair the scoring does not
+define, or scores big enough to overflow), after the output before it.
 
 Performance
 -----------
@@ -142,12 +160,16 @@ Time and peak memory for one global alignment (`needleman_wunsch
 | Sequences | Full matrices | `--linear` | `--scoreonly` |
 |---|---|---|---|
 | 5 kb | 0.01 s, 26 MB | 0.01 s, 2 MB | <0.01 s, 2 MB |
-| 20 kb | 0.06-0.08 s, 388 MB | 0.05-0.12 s, 7 MB | 0.01-0.03 s, 7 MB |
-| 50 kb | 0.35-0.39 s, 2.4 GB | 0.18-0.42 s, 7 MB | 0.05-0.12 s, 7 MB |
+| 20 kb | 0.03-0.08 s, 19-388 MB | 0.05-0.15 s, 7 MB | 0.01-0.03 s, 7 MB |
+| 50 kb | 0.15-0.41 s, 92 MB-2.4 GB | 0.18-0.63 s, 7 MB | 0.05-0.18 s, 7 MB |
 
-The full-matrix aligner keeps one traceback byte per cell (see below); with
-`--printmatrices` it keeps the score matrices, 12 bytes per cell (5 kb 289
-MB, 20 kb 4.6 GB).
+The full-matrix aligner keeps one traceback byte per cell, and for similar
+sequences only near the main diagonals (see below); with `--printmatrices`
+it keeps the score matrices, 12 bytes per cell (5 kb 289 MB, 20 kb 4.6 GB).
+By divergence, full-matrix aligner, 50 kb: 1% 0.15 s and 92 MB, 5% 0.16 s
+and 411 MB, 10% 0.18 s and 744 MB, 25% or unrelated 0.39-0.41 s and 2.4 GB
+(the whole matrix); 20 kb: 1% 0.03 s and 19 MB, otherwise 0.07-0.08 s and
+388 MB.
 
 `--linear` and `--scoreonly` are fastest for similar sequences, where most
 of the matrix can be skipped (see banding below). For 20 kb and 50 kb pairs
@@ -156,21 +178,23 @@ with substitutions and equal numbers of insertions and deletions:
 | Divergence | 20 kb `--linear` | 20 kb `--scoreonly` | 50 kb `--linear` | 50 kb `--scoreonly` |
 |---|---|---|---|---|
 | 1% substitutions, 0.2% indels | 0.05 s | 0.01 s | 0.18 s | 0.05 s |
-| 5%, 1% | 0.09 s | 0.03 s | 0.33 s | 0.06 s |
-| 10%, 2% | 0.11 s | 0.03 s | 0.41 s | 0.10 s |
-| 25%, 5% | 0.17 s | 0.04 s | 0.73 s | 0.18 s |
-| unrelated | 0.08 s | 0.01 s | 0.39 s | 0.07 s |
+| 5%, 1% | 0.09 s | 0.03 s | 0.32 s | 0.06 s |
+| 10%, 2% | 0.11 s | 0.03 s | 0.43 s | 0.10 s |
+| 25%, 5% | 0.15 s | 0.04 s | 0.63 s | 0.18 s |
+| unrelated | 0.08 s | 0.01 s | 0.33 s | 0.07 s |
 
 Before banding the same runs took 0.11-0.22 s, 0.02-0.05 s, 0.53-1.06 s and
 0.11-0.27 s, fastest for the unrelated pair.
 
 Measured on 32 CPUs; large fills and passes use up to half of them. Threads
 wait for each other by spinning, so CPU time can be several times the wall
-time (50 kb unrelated sequences, `--linear`: 0.4 s wall, 3.4 s CPU).
+time (50 kb unrelated sequences, `--linear`: 0.33 s wall, 2.1 s CPU).
 
-The command line tools align one pair at a time. Splitting a batch across
-processes scales well: 32 pairs ran 4x faster as 8 processes for
-Needleman-Wunsch (5 kb) and 6x faster as 16 for Smith-Waterman (3 kb).
+Pairs from a file are aligned several at a time (see Using the library):
+3,000 pairs of 0.2-2 kb took 0.50 s instead of 4.93 s (Needleman-Wunsch),
+0.69 s instead of 7.48 s (`--linear`), 0.31 s instead of 2.54 s
+(`--scoreonly`) and 0.63 s instead of 5.05 s (`smith_waterman --maxhits
+1`), with the same output.
 
 Where the speed comes from:
 * A substitution score table for the characters in the two sequences replaces
@@ -209,9 +233,32 @@ Where the speed comes from:
   first sequence, then the second: the first hit of a full search). Only if
   a second hit is wanted are the score matrices filled and every cell
   indexed. 20 kb, best hit: 2.5-3.0 s -> 0.09-0.11 s, 5.6 GB -> 0.45 GB
+* The traceback-byte fill uses the linear-space aligner's exact banding: a
+  narrow band is filled first, in strips of rows, and widened (or the whole
+  matrix filled) if the score found shows a best path could leave it. No
+  cell outside a band that held can tie with a cell on a best path, so the
+  traceback takes the same steps. Only the band's bytes are kept. 50 kb at
+  1% divergence: 0.40 -> 0.15 s, 6.0 -> 0.14 s of CPU, 2.4 GB -> 92 MB.
+  A band is used only where it beats the whole fill on its threads
+* For a compact Smith-Waterman best hit of more than 2^30 cells, a
+  score-only scan finds the best score and where it ends, and a scan of the
+  reversed sequences up to there finds where every best path starts. Only
+  that rectangle gets traceback bytes (as SSW does, but with the same hit
+  as the full search). 100 kb sequences sharing a 2 kb region: 3.1 -> 0.34
+  s and 11.6 GB -> 22 MB; 300 kb ones take 3.3 s and 66 MB (they did not fit
+  in 40 GB before). Hits spanning both sequences take about 50% longer, so
+  smaller alignments fill every cell's byte. Not used where a gap scores
+  above 0, as a hit can then start with a gap
+* The linear-space aligner's forward and reverse passes share the threads
+  rather than taking half the CPUs each, which oversubscribed the cores (50
+  kb unrelated `--linear` 0.45 -> 0.33 s and 6.1 -> 2.1 s of CPU)
+* The command line tools align pairs from a file several at a time, each
+  on its own thread with its own aligner, and print them in input order
+  (3,000 pairs of 0.2-2 kb: 8-11x faster)
 * gcc builds with run-time selection use 8-lane vectors in every version,
   which also helps without AVX2: fewer segments per row, so the lazy F loop
-  wraps less (20 kb unrelated `--scoreonly`, one thread, 0.20 -> 0.10 s)
+  wraps less (20 kb unrelated `--scoreonly`, one thread, 0.20 -> 0.10 s).
+  `NATIVE=1` on an AVX-512 CPU uses 16 lanes (the same pass 0.10 -> 0.055 s)
 * On Linux the score matrices are allocated for transparent huge pages:
   page faults for a 5 kb x 5 kb alignment fall from ~72,000 to ~320, and
   fewer TLB misses speed up the fill itself (5 kb NW 0.060 -> 0.046 s)
@@ -278,8 +325,8 @@ Global alignment with the alignment returned, 20 kb:
 | Tool | 1% | 10% | Unrelated | Peak memory |
 |---|---|---|---|---|
 | seq-align before this fork | 9.55 s | 9.75 s | 10.56 s | 4.6 GB |
-| seq-align, full matrix | 0.08 s (1.1 s) | 0.08 s (1.1 s) | 0.06 s (1.0 s) | 388 MB |
-| seq-align `--linear` | 0.05 s | 0.12 s | 0.09 s (0.42 s) | 7 MB |
+| seq-align, full matrix | 0.03 s | 0.07 s (0.8 s) | 0.06 s (0.7 s) | 19 - 388 MB |
+| seq-align `--linear` | 0.05 s | 0.12 s | 0.08 s (0.29 s) | 7 MB |
 | parasail | 1.17 s | 1.28 s | 0.76 s | 1.5 GB |
 | ksw2 | 0.33 s | 0.35 s | 0.34 s | 524 MB |
 | WFA2 | 0.01 s | 0.90 s | 23.3 s | 23 MB - 16.9 GB |
@@ -289,8 +336,8 @@ Global alignment, 50 kb (the original would need ~30 GB, so was not run):
 
 | Tool | 1% | 10% | Unrelated | Peak memory |
 |---|---|---|---|---|
-| seq-align, full matrix | 0.39 s (5.6 s) | 0.36 s (5.4 s) | 0.35 s (5.5 s) | 2.4 GB |
-| seq-align `--linear` | 0.18 s (0.25 s) | 0.42 s (1.7 s) | 0.41 s (4.7 s) | 7 - 10 MB |
+| seq-align, full matrix | 0.14 s | 0.17 s (1.7 s) | 0.36 s (5.3 s) | 93 MB - 2.4 GB |
+| seq-align `--linear` | 0.18 s (0.23 s) | 0.41 s (1.2 s) | 0.31 s (1.8 s) | 7 MB |
 | parasail | 10.1 s | 8.74 s | 5.25 s | 9.5 GB |
 | ksw2 | 1.77 s | 1.78 s | 1.71 s | 2.8 GB |
 | WFA2 | 0.07 s | 5.23 s | out of memory (28 GB limit) | 87 MB - 6.2 GB |
@@ -300,7 +347,7 @@ Global alignment score only (every tool under 40 MB):
 
 | Tool | 20 kb 1% | 20 kb 10% | 20 kb unrelated | 50 kb 1% | 50 kb 10% | 50 kb unrelated |
 |---|---|---|---|---|---|---|
-| seq-align `--scoreonly` | 0.01 s | 0.03 s (0.06 s) | 0.01 s (0.15 s) | 0.05 s (0.08 s) | 0.12 s (1.46 s) | 0.08 s (1.02 s) |
+| seq-align `--scoreonly` | 0.01 s | 0.02 s (0.06 s) | 0.01 s (0.13 s) | 0.05 s (0.09 s) | 0.10 s (0.66 s) | 0.07 s (0.84 s) |
 | parasail | 0.18 s | 0.17 s | 0.07 s | 1.14 s | 1.00 s | 0.45 s |
 | ksw2 | 0.10 s | 0.10 s | 0.10 s | 0.63 s | 0.62 s | 0.61 s |
 | WFA2 | <0.01 s | 0.46 s | 8.47 s | 0.03 s | 2.74 s | 49.5 s |
@@ -310,28 +357,30 @@ Local alignment, best hit only (`smith_waterman --maxhits 1`), 20 kb:
 | Tool | 1% | 10% | Unrelated | Peak memory |
 |---|---|---|---|---|
 | seq-align before this fork | 71.1 s | 61.2 s | 34.5 s | 6.3 - 8.5 GB |
-| seq-align | 0.11 s (1.3 s) | 0.11 s (1.3 s) | 0.09 s (0.9 s) | 448 MB |
+| seq-align | 0.11 s (1.3 s) | 0.09 s (1.0 s) | 0.09 s (1.0 s) | 448 MB |
 | parasail | 0.90 s | 0.83 s | 0.72 s | 1.5 GB |
 | SSW | 0.27 s | 0.22 s | 0.03 s | 7 MB |
 
 For the unrelated pair seq-align reports no hit, as the best (score 14) is
-below the default `--minscore`. At 50 kb seq-align's best hit took 0.58-0.62
-s and 2.9 GB (the other tools were not run). At 5 kb every global aligner
+below the default `--minscore`. At 50 kb seq-align's best hit took 0.80-0.85
+s and 2.9 GB when it spans both sequences, and 0.09 s and 10 MB for the
+unrelated pair (the other tools were not run). At 5 kb every global aligner
 took 0.07 s or less, except seq-align before this fork (0.53-0.63 s) and
 WFA2 on the unrelated pair (0.65-0.96 s).
 
 In short:
 * Against the code before this fork, the same full-matrix alignment is
-  120-180x faster with 12x less memory, and the best local hit 380-650x
+  140-320x faster with 12-240x less memory, and the best local hit 380-650x
   faster
 * For global alignment seq-align has the lowest wall time of the exact
-  aligners tested, except WFA2 on near-identical sequences: 0.06-0.08 s for
+  aligners tested, except WFA2 on near-identical sequences: 0.03-0.07 s for
   the full-matrix aligner at 20 kb against 0.33-0.35 s for ksw2. WFA2's time
   grows with the number of differences, so it is far slower on divergent or
   unrelated pairs. `--linear` needs only megabytes at any length
-* Per CPU core, seq-align still does less: ksw2 used 0.33 s of CPU at 20 kb
-  against 1.0-1.1 s for the full-matrix aligner. seq-align's lead in wall
-  time comes from threads
+* On divergent and unrelated pairs seq-align uses more CPU time than ksw2:
+  0.7-0.8 s at 20 kb for the full-matrix aligner against ksw2's 0.33 s. Its
+  lead in wall time there comes from threads. On similar pairs
+  banding skips most cells (20 kb at 1%: 0.02 s of CPU)
 * For the best local hit seq-align is now faster than parasail, and than SSW
   on related pairs, in wall time. SSW is still faster on unrelated pairs,
   uses about 5x less CPU time on related pairs (30x on unrelated) and needs
@@ -452,6 +501,9 @@ Smith-Waterman
 
         --wildcard <w> <s>   Character <w> matches all characters with score <s>
 
+        --threads <n>        Threads to use, within an alignment and for aligning
+                             pairs from a file at once [default: half the CPUs]
+
         --minscore <score>   Minimum required score
                              [default: match * MAX(0.2 * length, 2)]
         --maxhits <hits>     Maximum number of results per alignment
@@ -507,6 +559,9 @@ Needleman-Wunsch
         --substitution_pairs <file>   see details for formatting
 
         --wildcard <w> <s>   Character <w> matches all characters with score <s>
+
+        --threads <n>        Threads to use, within an alignment and for aligning
+                             pairs from a file at once [default: half the CPUs]
 
 
         --freestartgap       No penalty for gap at start of alignment

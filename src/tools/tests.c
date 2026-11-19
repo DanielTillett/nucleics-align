@@ -1057,9 +1057,237 @@ void simd_test_compact()
   alignment_free(r_compact);
 }
 
+/* Large compact Smith-Waterman alignments (forced here for small ones) find
+ * the best hit from scans and a fill of just its rectangle: the same hits
+ * as the full search, first and later ones, local hits in random flanks */
+void simd_test_compact_rect()
+{
+  size_t min_cells = alignment_block_min_cells;
+  size_t min_cols = alignment_block_min_cols;
+  int max_threads = alignment_max_threads;
+  size_t rect_cells = smith_waterman_rect_min_cells;
+  sw_aligner_t *full = smith_waterman_new(), *rect = smith_waterman_new();
+  alignment_t *r_full = alignment_create(256), *r_rect = alignment_create(256);
+  char core[701], hit[901], seqa[2001], seqb[2001];
+  scoring_t scoring;
+  const unsigned int rates[] = {0, 10, 60, 200};
+  size_t i, h, rects = 0, hits = 0;
+
+  smith_waterman_set_compact(rect, true);
+  smith_waterman_rect_min_cells = 0;
+  alignment_block_min_cells = 1;
+  alignment_block_min_cols = 8;
+
+  for(i = 0; i < 600; i++)
+  {
+    alignment_max_threads = 1 + (int)(i % 3) * 2;
+    const char *alpha = i % 2 ? "acgt" : "ac";
+    if(i % 7 == 6) {
+      scoring_system_BLOSUM62(&scoring);
+      alpha = "ARNDCQEGHILKMFPSTWYV";
+    }
+    else if(i % 5 == 4) {
+      // Gaps scoring 0 or above 0 (no rectangle then)
+      int extend = (int)hb_rand(6) - 3;
+      scoring_init(&scoring, 1 + (int)hb_rand(4), -(int)hb_rand(8),
+                   (int)hb_rand(9) - 4 - extend, extend, false, false,
+                   false, false, false, false);
+    }
+    else scoring_init(&scoring, 1 + (int)hb_rand(4), -(int)hb_rand(8),
+                      -(int)hb_rand(8), -(int)hb_rand(4), false, false,
+                      false, false, false, false);
+    // A related piece somewhere in each of two longer sequences
+    hb_rand_seq(core, 1 + hb_rand(700), alpha);
+    hb_mutate(hit, core, rates[i % 4], alpha);
+    size_t fa = hb_rand(600), fb = hb_rand(600), ta = hb_rand(600);
+    hb_rand_seq(seqa, fa, alpha);
+    strcat(seqa, core);
+    hb_rand_seq(seqa + strlen(seqa), ta, alpha);
+    hb_rand_seq(seqb, fb, alpha);
+    strcat(seqb, hit);
+    hb_rand_seq(seqb + strlen(seqb), hb_rand(600), alpha);
+
+    score_t min_score = 1 + (score_t)hb_rand(3) * (score_t)hb_rand(20);
+    smith_waterman_set_min_score(full, min_score);
+    smith_waterman_set_min_score(rect, min_score);
+    smith_waterman_align(seqa, seqb, &scoring, full);
+    smith_waterman_align(seqa, seqb, &scoring, rect);
+    const aligner_t *ra = smith_waterman_get_aligner(rect);
+    rects += ra->traced && ra->score_width < strlen(seqa) + 1;
+    if(ra->traced && ra->best_score < min_score) {
+      // No hit: the aligner still describes the sequences
+      ASSERT(ra->score_width == strlen(seqa) + 1);
+      ASSERT(ra->score_height == strlen(seqb) + 1);
+      ASSERT(ra->seq_a == seqa && ra->seq_b == seqb);
+    }
+    // The best hit, sometimes later ones too
+    size_t max_hits = i % 3 == 0 ? 4 : 1;
+    for(h = 0; h < max_hits; h++) {
+      int got_full = smith_waterman_fetch(full, r_full);
+      int got_rect = smith_waterman_fetch(rect, r_rect);
+      ASSERT(got_full == got_rect);
+      if(!got_full || !got_rect) break;
+      ASSERT(alignments_equal(r_full, r_rect));
+      hits++;
+    }
+  }
+  // Rectangles smaller than the matrix were used (they need the striped
+  // fill)
+#ifdef ALN_STRIPED
+  ASSERT(rects > 300);
+#else
+  ASSERT(rects == 0);
+#endif
+  ASSERT(hits > 500);
+
+  smith_waterman_rect_min_cells = rect_cells;
+  alignment_block_min_cells = min_cells;
+  alignment_block_min_cols = min_cols;
+  alignment_max_threads = max_threads;
+  smith_waterman_free(full);
+  smith_waterman_free(rect);
+  alignment_free(r_full);
+  alignment_free(r_rect);
+}
+
+/* A gap scoring above 0 can open a local hit, which the rectangle's
+ * reverse scan would miss: the compact aligner gives the same hit */
+void simd_test_rect_gap_score()
+{
+  size_t rect_cells = smith_waterman_rect_min_cells;
+  sw_aligner_t *full = smith_waterman_new(), *rect = smith_waterman_new();
+  alignment_t *r_full = alignment_create(256), *r_rect = alignment_create(256);
+  char seqa[400], seqb[400];
+  scoring_t scoring;
+  size_t pad;
+
+  smith_waterman_set_compact(rect, true);
+  smith_waterman_rect_min_cells = 0;
+  scoring_init(&scoring, 2, -1000000, 4, -3, false, false,
+               false, false, false, false);
+  scoring_add_mutation(&scoring, 'a', 'c', -1);
+  scoring_add_mutation(&scoring, 'a', 'g', -1);
+  scoring_add_mutation(&scoring, 'c', 'g', -1);
+  scoring_add_mutation(&scoring, 'x', 'g', 5);
+
+  for(pad = 0; pad < 300; pad += 37)
+  {
+    strcpy(seqa, "ACCAAGG");
+    memset(seqa + 7, 'Y', pad);
+    strcpy(seqa + 7 + pad, "X");
+    strcpy(seqb, "GACAAC");
+    memset(seqb + 6, 'Z', pad + 2);
+    seqb[8 + pad] = '\0';
+    smith_waterman_set_min_score(full, 1);
+    smith_waterman_set_min_score(rect, 1);
+    smith_waterman_align(seqa, seqb, &scoring, full);
+    smith_waterman_align(seqa, seqb, &scoring, rect);
+    ASSERT(smith_waterman_fetch(full, r_full) == 1);
+    ASSERT(smith_waterman_fetch(rect, r_rect) == 1);
+    ASSERT(alignments_equal(r_full, r_rect));
+  }
+
+  smith_waterman_rect_min_cells = rect_cells;
+  smith_waterman_free(full);
+  smith_waterman_free(rect);
+  alignment_free(r_full);
+  alignment_free(r_rect);
+}
+
+/* Banded compact Needleman-Wunsch fills give the same alignment as the
+ * score matrices: narrow first bands (widened when the score found needs
+ * it), strips of a few rows, threaded strips, DNA and protein */
+void simd_test_compact_band()
+{
+  size_t min_cells = alignment_block_min_cells;
+  size_t min_cols = alignment_block_min_cols;
+  int max_threads = alignment_max_threads;
+  size_t strip_rows = alignment_band_strip_rows;
+  size_t min_width = alignment_band_min_width;
+  nw_aligner_t *full = needleman_wunsch_new(), *compact = needleman_wunsch_new();
+  alignment_t *r_full = alignment_create(256), *r_compact = alignment_create(256);
+  char seqa[1601], seqb[1801];
+  scoring_t scoring;
+  const size_t strips[] = {1, 5, 32, 0};
+  const unsigned int rates[] = {0, 5, 30, 120};
+  size_t s, i, banded = 0;
+
+  compact->compact = true;
+  alignment_block_min_cells = 1;
+  alignment_block_min_cols = 8;
+
+  for(s = 0; s < 4; s++)
+  {
+    alignment_band_strip_rows = strips[s];
+    alignment_max_threads = 1 + (int)s % 3 * 2; // 1, 3, 5, 1
+    for(i = 0; i < 150; i++)
+    {
+      alignment_band_min_width = i % 2 ? 1 : 1 + hb_rand(16);
+      const char *alpha = "acgt";
+      if(i % 5 == 4) {
+        scoring_system_BLOSUM62(&scoring);
+        alpha = "ARNDCQEGHILKMFPSTWYV";
+      }
+      else scoring_init(&scoring, 1 + (int)hb_rand(3), -(int)hb_rand(6),
+                        -(int)hb_rand(8), -(int)hb_rand(3), false, false,
+                        false, false, false, false);
+      hb_rand_seq(seqa, 50 + hb_rand(1551), alpha);
+      hb_mutate(seqb, seqa, rates[i % 4], alpha);
+
+      needleman_wunsch_align(seqa, seqb, &scoring, full, r_full);
+      needleman_wunsch_align(seqa, seqb, &scoring, compact, r_compact);
+      ASSERT(alignments_equal(r_full, r_compact));
+      banded += compact->traced && compact->trace_banded;
+    }
+  }
+  // Tight bounds: no gap open, and b is a with one base moved, so the band
+  // that holds is one diagonal either side and the best paths run along its
+  // edges, where cells must still be exact
+  scoring_init(&scoring, 1, -2, 0, -1, false, false, false, false,
+               false, false);
+  alignment_band_min_width = 1;
+  for(i = 0; i < 400; i++)
+  {
+    alignment_band_strip_rows = 1 + i % 7;
+    alignment_max_threads = 1 + (int)(i % 2) * 2;
+    hb_rand_seq(seqa, 100 + hb_rand(600), "acgt");
+    size_t len = strlen(seqa), from = hb_rand((unsigned int)len);
+    size_t to = hb_rand((unsigned int)len), j, o = 0;
+    for(j = 0; j < len; j++) {
+      if(j == to) seqb[o++] = "acgt"[hb_rand(4)];
+      if(j != from) seqb[o++] = seqa[j];
+    }
+    seqb[o] = '\0';
+    needleman_wunsch_align(seqa, seqb, &scoring, full, r_full);
+    needleman_wunsch_align(seqa, seqb, &scoring, compact, r_compact);
+    ASSERT(alignments_equal(r_full, r_compact));
+    banded += compact->traced && compact->trace_banded;
+  }
+
+  // Bands held for many (they need the striped fill)
+#ifdef ALN_STRIPED
+  ASSERT(banded > 400);
+#else
+  ASSERT(banded == 0);
+#endif
+
+  alignment_block_min_cells = min_cells;
+  alignment_block_min_cols = min_cols;
+  alignment_max_threads = max_threads;
+  alignment_band_strip_rows = strip_rows;
+  alignment_band_min_width = min_width;
+  needleman_wunsch_free(full);
+  needleman_wunsch_free(compact);
+  alignment_free(r_full);
+  alignment_free(r_compact);
+}
+
 void test_simd()
 {
   SUITE_START("Striped SIMD fill");
+  simd_test_compact_rect();
+  simd_test_rect_gap_score();
+  simd_test_compact_band();
   simd_test_compact();
   simd_test_tiny_blocks();
   simd_test_fill_blocks();

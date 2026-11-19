@@ -102,7 +102,9 @@ static bool _nw_follow_trace(const nw_aligner_t *nw, alignment_t *result)
     result->result_a[next_char] = curr_matrix == GAP_A ? '-' : nw->seq_a[score_x-1];
     result->result_b[next_char] = curr_matrix == GAP_B ? '-' : nw->seq_b[score_y-1];
 
-    int next = alignment_trace_next(nw, score_y * w + score_x, curr_matrix);
+    int next = alignment_trace_next(nw,
+                                    alignment_trace_index(nw, score_x, score_y),
+                                    curr_matrix);
     if(next == ALN_TRACE_NONE) return false;
     if(curr_matrix != GAP_A) score_x--;
     if(curr_matrix != GAP_B) score_y--;
