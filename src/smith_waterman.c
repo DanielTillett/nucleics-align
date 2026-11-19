@@ -47,11 +47,13 @@ static inline BitSet* bitset_set_length(BitSet *bs, size_t l) {
   return bs;
 }
 
-// For iterating through local alignments
+// For iterating through local alignments. The sorted index of hits is only
+// built if a second hit is fetched: the first is just the best cell
 typedef struct
 {
   BitSet match_scores_mask;
   size_t *sorted_match_indices, hits_capacity, num_of_hits, next_hit;
+  bool indexed, first_done;
 } sw_history_t;
 
 // Store alignment here
@@ -253,6 +255,39 @@ void smith_waterman_align2(const char *a, const char *b,
 
   // Set number of hits
   hist->num_of_hits = hist->next_hit = 0;
+  hist->indexed = hist->first_done = false;
+}
+
+// The first hit in index order: the highest-scoring cell, then lowest
+// position in seq_a, then seq_b. Its walk always succeeds, as no cell is used
+// yet. Returns false if no cell scores at least min_score
+static bool _best_cell(const sw_aligner_t *sw, size_t *best)
+{
+  const aligner_t *aligner = &sw->aligner;
+  const score_t *scores = aligner->match_scores;
+  const size_t w = aligner->score_width, h = aligner->score_height;
+  size_t x, y, row, bx = w;
+  score_t max_score = 0;
+
+  for(row = 0; row < w * h; row++)
+    if(scores[row] > max_score) max_score = scores[row];
+  if(max_score < sw->min_score) return false;
+
+  // Lowest x, then y (rows are scanned in order, so the first in a column)
+  for(y = 0, row = 0; y < h; y++, row += w) {
+    for(x = 0; x < bx; x++) {
+      if(scores[row+x] == max_score) { bx = x; *best = row + x; break; }
+    }
+  }
+  return true;
+}
+
+// Order every cell scoring at least min_score for smith_waterman_fetch()
+static void _index_hits(sw_aligner_t *sw)
+{
+  aligner_t *aligner = &sw->aligner;
+  sw_history_t *hist = &sw->history;
+  const size_t arr_size = aligner->score_width * aligner->score_height;
 
   // Hits may start from cells scoring at least lo. Cells scoring less are
   // only reached after every higher one, so leaving them out changes no
@@ -413,6 +448,17 @@ static char _follow_hit(sw_aligner_t* sw, size_t arr_index,
 int smith_waterman_fetch(sw_aligner_t *sw, alignment_t *result)
 {
   sw_history_t *hist = &(sw->history);
+
+  if(!hist->first_done) {
+    hist->first_done = true;
+    size_t best = 0;
+    if(!_best_cell(sw, &best)) { hist->indexed = true; return 0; }
+    // Cannot fail: no cell is used yet
+    return _follow_hit(sw, best, result);
+  }
+
+  // The best cell is first in the index and now used, so it is skipped
+  if(!hist->indexed) { hist->indexed = true; _index_hits(sw); }
 
   while(hist->next_hit < hist->num_of_hits)
   {
