@@ -1,6 +1,6 @@
 /*
  hirschberg.c
- url: https://github.com/DanielTillett/seq-align
+ url: https://github.com/DanielTillett/nucleics-align
  license: BSD 3-Clause, see LICENSE
  date: Nov 2026
  */

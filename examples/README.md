@@ -1,7 +1,7 @@
-Seq-Align Example Code
-----------------------
+Nucleics Align Example Code
+--------------------------
 
-Example code in C and C++ for Needleman-Wunsch and Smith-Waterman optimal sequence alignment. Provided as guidance for using Seq-Align in your own programs.
+Example code in C and C++ for Needleman-Wunsch and Smith-Waterman optimal sequence alignment. Provided as guidance for using Nucleics Align in your own programs.
 
 Isaac Turner <turner.isaac@gmail.com>
 

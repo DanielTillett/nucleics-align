@@ -1,6 +1,6 @@
 /*
  smith_waterman.c
- url: https://github.com/DanielTillett/seq-align
+ url: https://github.com/DanielTillett/nucleics-align
  original author: Isaac Turner <turner.isaac@gmail.com>
  license: BSD 3-Clause, see LICENSE
  date: Nov 2013
@@ -591,7 +591,7 @@ static char _follow_hit(sw_aligner_t* sw, size_t arr_index,
 
       default:
       fprintf(stderr, "Program error: invalid matrix in _follow_hit()\n");
-      fprintf(stderr, "Please submit a bug report to: https://github.com/DanielTillett/seq-align/issues\n");
+      fprintf(stderr, "Please submit a bug report to: https://github.com/DanielTillett/nucleics-align/issues\n");
       exit(EXIT_FAILURE);
     }
 

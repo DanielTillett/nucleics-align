@@ -1,6 +1,6 @@
 /*
  tests/tests.c
- url: https://github.com/DanielTillett/seq-align
+ url: https://github.com/DanielTillett/nucleics-align
  original author: Isaac Turner <turner.isaac@gmail.com>
  license: BSD 3-Clause, see LICENSE
  date: Feb 2015
@@ -1481,7 +1481,7 @@ int main(int argc, char **argv)
   // Initialise random number generator
   srand((unsigned int)time(NULL) + getpid());
 
-  printf("  Test seq-align C library:\n\n");
+  printf("  Test Nucleics Align C library:\n\n");
 
   // Test suites go here
   test_nw();

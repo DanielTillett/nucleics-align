@@ -1,6 +1,6 @@
 /*
  alignment_cmdline.c
- url: https://github.com/DanielTillett/seq-align
+ url: https://github.com/DanielTillett/nucleics-align
  original author: Isaac Turner <turner.isaac@gmail.com>
  license: BSD 3-Clause, see LICENSE
  date: Nov 2013
@@ -169,7 +169,7 @@ static void print_usage(enum SeqAlignCmdType cmd_type, score_t defaults[4],
 "  * Scoring files should be matrices, with entries separated by a single\n"
 "    character or whitespace. See files in the 'scoring' directory for examples.\n"
 "\n"
-"  https://github.com/DanielTillett/seq-align  (compiled: %s %s)\n", __DATE__, __TIME__);
+"  https://github.com/DanielTillett/nucleics-align  (compiled: %s %s)\n", __DATE__, __TIME__);
 
   exit(EXIT_FAILURE);
 }

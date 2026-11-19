@@ -1,7 +1,7 @@
 #!/usr/bin/env perl
 
 # perl/nw_example.pl
-# url: https://github.com/DanielTillett/seq-align
+# url: https://github.com/DanielTillett/nucleics-align
 # original author: Isaac Turner <turner.isaac@gmail.com>
 # license: BSD 3-Clause, see LICENSE
 # date: Oct 2012

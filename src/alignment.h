@@ -1,7 +1,7 @@
 /*
  alignment.h
  original author: Isaac Turner <turner.isaac@gmail.com>
- url: https://github.com/DanielTillett/seq-align
+ url: https://github.com/DanielTillett/nucleics-align
  license: BSD 3-Clause, see LICENSE
  May 2013
  */

@@ -1,12 +1,12 @@
-seq-align
-=========
+Nucleics Align
+==============
 Smith-Waterman and Needleman-Wunsch alignment in C
-url: https://github.com/DanielTillett/seq-align
+url: https://github.com/DanielTillett/nucleics-align
 original author: Isaac Turner <turner.isaac@gmail.com>
 license: BSD 3-Clause (see [LICENSE](LICENSE))
-updated: 18 Nov 2026
+updated: 19 Nov 2026
 
-[![CI](https://github.com/DanielTillett/seq-align/actions/workflows/ci.yml/badge.svg)](https://github.com/DanielTillett/seq-align/actions/workflows/ci.yml)
+[![CI](https://github.com/DanielTillett/nucleics-align/actions/workflows/ci.yml/badge.svg)](https://github.com/DanielTillett/nucleics-align/actions/workflows/ci.yml)
 
 About
 =====
@@ -17,7 +17,8 @@ tools `smith_waterman`, `needleman_wunsch` and `lcs` cover most uses, and the
 library is easy to call from other programs (see `examples/`). Perl wrapper
 modules are in `perl/`.
 
-This is a fork of [noporpoise/seq-align](https://github.com/noporpoise/seq-align)
+Nucleics Align is a fork of Isaac Turner's
+[seq-align](https://github.com/noporpoise/seq-align)
 with bug fixes, a linear-space global aligner and a faster SIMD matrix fill.
 
 Features:
@@ -42,8 +43,8 @@ Features:
 Build
 -----
 
-    $ git clone --recursive https://github.com/DanielTillett/seq-align
-    $ cd seq-align
+    $ git clone --recursive https://github.com/DanielTillett/nucleics-align
+    $ cd nucleics-align
     $ make
 
 Build options:
@@ -302,7 +303,7 @@ memory. Every tool used the same scoring (match +1, mismatch -2, gap of
 length k: -(4+k)) and reported the same optimal score for every pair. The
 sequences are random DNA: "1%" has 1% substitutions and 0.2% insertions and
 deletions, "10%" has 10% and 2%, and "unrelated" is two independent random
-sequences. seq-align uses up to 16 threads and the other tools one, so CPU
+sequences. Nucleics Align uses up to 16 threads and the other tools one, so CPU
 time is shown in brackets where it is well above the wall time.
 
 The tools:
@@ -314,9 +315,9 @@ The tools:
   BiWFA (ultralow memory)
 * SSW 1.2.5
 
-seq-align was run through `needleman_wunsch` and `smith_waterman`, and the
+Nucleics Align was run through `needleman_wunsch` and `smith_waterman`, and the
 others through a small C program that reads the two sequences and aligns them
-once. The seq-align rows were measured again after the traceback bytes and
+once. The Nucleics Align rows were measured again after the traceback bytes and
 8-lane vectors were added; the other rows are from the earlier run, on the
 same sequences and machine.
 
@@ -325,8 +326,8 @@ Global alignment with the alignment returned, 20 kb:
 | Tool | 1% | 10% | Unrelated | Peak memory |
 |---|---|---|---|---|
 | seq-align before this fork | 9.55 s | 9.75 s | 10.56 s | 4.6 GB |
-| seq-align, full matrix | 0.03 s | 0.07 s (0.8 s) | 0.06 s (0.7 s) | 19 - 388 MB |
-| seq-align `--linear` | 0.05 s | 0.12 s | 0.08 s (0.29 s) | 7 MB |
+| Nucleics Align, full matrix | 0.03 s | 0.07 s (0.8 s) | 0.06 s (0.7 s) | 19 - 388 MB |
+| Nucleics Align `--linear` | 0.05 s | 0.12 s | 0.08 s (0.29 s) | 7 MB |
 | parasail | 1.17 s | 1.28 s | 0.76 s | 1.5 GB |
 | ksw2 | 0.33 s | 0.35 s | 0.34 s | 524 MB |
 | WFA2 | 0.01 s | 0.90 s | 23.3 s | 23 MB - 16.9 GB |
@@ -336,8 +337,8 @@ Global alignment, 50 kb (the original would need ~30 GB, so was not run):
 
 | Tool | 1% | 10% | Unrelated | Peak memory |
 |---|---|---|---|---|
-| seq-align, full matrix | 0.14 s | 0.17 s (1.7 s) | 0.36 s (5.3 s) | 93 MB - 2.4 GB |
-| seq-align `--linear` | 0.18 s (0.23 s) | 0.41 s (1.2 s) | 0.31 s (1.8 s) | 7 MB |
+| Nucleics Align, full matrix | 0.14 s | 0.17 s (1.7 s) | 0.36 s (5.3 s) | 93 MB - 2.4 GB |
+| Nucleics Align `--linear` | 0.18 s (0.23 s) | 0.41 s (1.2 s) | 0.31 s (1.8 s) | 7 MB |
 | parasail | 10.1 s | 8.74 s | 5.25 s | 9.5 GB |
 | ksw2 | 1.77 s | 1.78 s | 1.71 s | 2.8 GB |
 | WFA2 | 0.07 s | 5.23 s | out of memory (28 GB limit) | 87 MB - 6.2 GB |
@@ -347,7 +348,7 @@ Global alignment score only (every tool under 40 MB):
 
 | Tool | 20 kb 1% | 20 kb 10% | 20 kb unrelated | 50 kb 1% | 50 kb 10% | 50 kb unrelated |
 |---|---|---|---|---|---|---|
-| seq-align `--scoreonly` | 0.01 s | 0.02 s (0.06 s) | 0.01 s (0.13 s) | 0.05 s (0.09 s) | 0.10 s (0.66 s) | 0.07 s (0.84 s) |
+| Nucleics Align `--scoreonly` | 0.01 s | 0.02 s (0.06 s) | 0.01 s (0.13 s) | 0.05 s (0.09 s) | 0.10 s (0.66 s) | 0.07 s (0.84 s) |
 | parasail | 0.18 s | 0.17 s | 0.07 s | 1.14 s | 1.00 s | 0.45 s |
 | ksw2 | 0.10 s | 0.10 s | 0.10 s | 0.63 s | 0.62 s | 0.61 s |
 | WFA2 | <0.01 s | 0.46 s | 8.47 s | 0.03 s | 2.74 s | 49.5 s |
@@ -357,12 +358,12 @@ Local alignment, best hit only (`smith_waterman --maxhits 1`), 20 kb:
 | Tool | 1% | 10% | Unrelated | Peak memory |
 |---|---|---|---|---|
 | seq-align before this fork | 71.1 s | 61.2 s | 34.5 s | 6.3 - 8.5 GB |
-| seq-align | 0.11 s (1.3 s) | 0.09 s (1.0 s) | 0.09 s (1.0 s) | 448 MB |
+| Nucleics Align | 0.11 s (1.3 s) | 0.09 s (1.0 s) | 0.09 s (1.0 s) | 448 MB |
 | parasail | 0.90 s | 0.83 s | 0.72 s | 1.5 GB |
 | SSW | 0.27 s | 0.22 s | 0.03 s | 7 MB |
 
-For the unrelated pair seq-align reports no hit, as the best (score 14) is
-below the default `--minscore`. At 50 kb seq-align's best hit took 0.80-0.85
+For the unrelated pair Nucleics Align reports no hit, as the best (score 14) is
+below the default `--minscore`. At 50 kb Nucleics Align's best hit took 0.80-0.85
 s and 2.9 GB when it spans both sequences, and 0.09 s and 10 MB for the
 unrelated pair (the other tools were not run). At 5 kb every global aligner
 took 0.07 s or less, except seq-align before this fork (0.53-0.63 s) and
@@ -372,16 +373,16 @@ In short:
 * Against the code before this fork, the same full-matrix alignment is
   140-320x faster with 12-240x less memory, and the best local hit 380-650x
   faster
-* For global alignment seq-align has the lowest wall time of the exact
+* For global alignment Nucleics Align has the lowest wall time of the exact
   aligners tested, except WFA2 on near-identical sequences: 0.03-0.07 s for
   the full-matrix aligner at 20 kb against 0.33-0.35 s for ksw2. WFA2's time
   grows with the number of differences, so it is far slower on divergent or
   unrelated pairs. `--linear` needs only megabytes at any length
-* On divergent and unrelated pairs seq-align uses more CPU time than ksw2:
+* On divergent and unrelated pairs Nucleics Align uses more CPU time than ksw2:
   0.7-0.8 s at 20 kb for the full-matrix aligner against ksw2's 0.33 s. Its
   lead in wall time there comes from threads. On similar pairs
   banding skips most cells (20 kb at 1%: 0.02 s of CPU)
-* For the best local hit seq-align is now faster than parasail, and than SSW
+* For the best local hit Nucleics Align is now faster than parasail, and than SSW
   on related pairs, in wall time. SSW is still faster on unrelated pairs,
   uses about 5x less CPU time on related pairs (30x on unrelated) and needs
   only 7 MB
@@ -530,7 +531,7 @@ Smith-Waterman
       * Scoring files should be matrices, with entries separated by a single
         character or whitespace. See files in the 'scoring' directory for examples.
 
-      https://github.com/DanielTillett/seq-align  (compiled: <date>)
+      https://github.com/DanielTillett/nucleics-align  (compiled: <date>)
 
 
 Needleman-Wunsch
@@ -590,7 +591,7 @@ Needleman-Wunsch
       * Scoring files should be matrices, with entries separated by a single
         character or whitespace. See files in the 'scoring' directory for examples.
 
-      https://github.com/DanielTillett/seq-align  (compiled: <date>)
+      https://github.com/DanielTillett/nucleics-align  (compiled: <date>)
 
 `--linear` cannot be combined with `--freestartgap`, `--freeendgap`,
 `--nogaps..`, `--nomismatches`, `--printmatrices` or a positive `--gapopen`.
@@ -653,11 +654,11 @@ match/mismatch: (1,-2)
 License
 =======
 
-seq-align is licensed under the BSD 3-Clause License; see [LICENSE](LICENSE).
+Nucleics Align is licensed under the BSD 3-Clause License; see [LICENSE](LICENSE).
 
-It was originally written by Isaac Turner and released into the public domain
-(Unlicense). The bundled libraries in `libs/` keep their own licences. The
-substitution matrices in `scoring/` come from NCBI
+It is derived from seq-align, originally written by Isaac Turner and released
+into the public domain (Unlicense). The bundled libraries in `libs/` keep
+their own licences. The substitution matrices in `scoring/` come from NCBI
 (ftp://ftp.ncbi.nih.gov/blast/matrices/).
 
 
@@ -665,7 +666,7 @@ Development
 ===========
 
 Bug reports and feature requests:
-https://github.com/DanielTillett/seq-align/issues
+https://github.com/DanielTillett/nucleics-align/issues
 
 Done:
 * `--nogapsinlongest`: no gaps within the longer of the two sequences

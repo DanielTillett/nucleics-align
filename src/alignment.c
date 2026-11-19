@@ -1,6 +1,6 @@
 /*
  alignment.c
- url: https://github.com/DanielTillett/seq-align
+ url: https://github.com/DanielTillett/nucleics-align
  original author: Isaac Turner <turner.isaac@gmail.com>
  license: BSD 3-Clause, see LICENSE
  date: Feb 2015
@@ -1190,7 +1190,7 @@ void alignment_reverse_move(enum Matrix *curr_matrix, score_t *curr_score,
 
     default:
       fprintf(stderr, "Program error: invalid matrix in get_reverse_move()\n");
-      fprintf(stderr, "Please submit a bug report to: https://github.com/DanielTillett/seq-align/issues\n");
+      fprintf(stderr, "Please submit a bug report to: https://github.com/DanielTillett/nucleics-align/issues\n");
       exit(EXIT_FAILURE);
   }
 
@@ -1232,7 +1232,7 @@ void alignment_reverse_move(enum Matrix *curr_matrix, score_t *curr_score,
 "This may be due to an integer overflow if your sequences are long or scores\n"
 "are large. If this is the case using smaller scores or shorter sequences may\n"
 "work around this problem.  \n"
-"  If you think this is a bug, please report it to: https://github.com/DanielTillett/seq-align/issues\n");
+"  If you think this is a bug, please report it to: https://github.com/DanielTillett/nucleics-align/issues\n");
     exit(EXIT_FAILURE);
   }
 }
