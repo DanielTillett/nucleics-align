@@ -94,9 +94,10 @@ Link against `src/libalign.a` (and `libs/string_buffer/libstrbuf.a`, `-lz`,
   `no_mismatches`). Large sub-problems run their forward and reverse passes
   at the same time, each split into column blocks on several threads
   (tunable with `hirschberg_block_min_cells`, `hirschberg_block_min_cols`
-  and `hirschberg_max_threads`)
+  and `hirschberg_max_threads`). Passes skip cells that cannot be on a best
+  path (`hirschberg_band_enabled`, default true), with the same result
 * `hirschberg_score()` (`src/hirschberg.h`): only the global alignment score,
-  in one pass and O(n) memory; same options as `hirschberg_align()`
+  in O(n) memory; same options as `hirschberg_align()`
 * `scoring_init()` and the `scoring_system_*()` functions
   (`src/alignment_scoring.h`): set up a scoring system
 
@@ -131,15 +132,31 @@ Time and peak memory for one global alignment (`needleman_wunsch
 
 | Sequences | Full matrices | `--linear` | `--scoreonly` |
 |---|---|---|---|
-| 5 kb | 0.03-0.15 s, 289 MB | 0.02 s, 2 MB | <0.01 s, 2 MB |
-| 20 kb | 0.35-2.5 s, 4.6 GB | 0.19 s, 2 MB | 0.04 s, 2 MB |
-| 50 kb | not run (needs ~30 GB) | 0.83 s, 10 MB | 0.22 s, 7 MB |
+| 5 kb | 0.03-0.15 s, 289 MB | 0.01 s, 2 MB | <0.01 s, 2 MB |
+| 20 kb | 0.35-2.5 s, 4.6 GB | 0.10 s, 3 MB | 0.02 s, 3 MB |
+| 50 kb | not run (needs ~30 GB) | 0.34 s, 4 MB | 0.09 s, 4 MB |
+
+`--linear` and `--scoreonly` are fastest for similar sequences, where most
+of the matrix can be skipped (see banding below). For 20 kb and 50 kb pairs
+with substitutions and equal numbers of insertions and deletions:
+
+| Divergence | 20 kb `--linear` | 20 kb `--scoreonly` | 50 kb `--linear` | 50 kb `--scoreonly` |
+|---|---|---|---|---|
+| 1% substitutions, 0.2% indels | 0.05 s | 0.01 s | 0.18 s | 0.05 s |
+| 5%, 1% | 0.09 s | 0.03 s | 0.32 s | 0.06 s |
+| 10%, 2% | 0.11 s | 0.02 s | 0.43 s | 0.12 s |
+| 25%, 5% | 0.16 s | 0.04 s | 0.74 s | 0.20 s |
+| unrelated | 0.13 s | 0.02 s | 0.60 s | 0.13 s |
+
+Before banding the same runs took 0.11-0.22 s, 0.02-0.05 s, 0.53-1.06 s and
+0.11-0.27 s, fastest for the unrelated pair.
 
 Full-matrix times vary most: the first run after others have freed memory is
 the slowest, while the kernel finds and clears huge pages.
 
-Measured on 32 CPUs; large fills and passes use up to half of them. Threads wait for each other by spinning, so CPU time is several times
-the wall time (50 kb `--linear`: 0.8 s wall, ~9 s CPU).
+Measured on 32 CPUs; large fills and passes use up to half of them. Threads
+wait for each other by spinning, so CPU time can be several times the wall
+time (50 kb unrelated sequences, `--linear`: 0.6 s wall, 6-8 s CPU).
 
 The command line tools align one pair at a time. Splitting a batch across
 processes scales well: 32 pairs ran 4x faster as 8 processes for
@@ -171,8 +188,19 @@ Where the speed comes from:
 * On Linux the score matrices are allocated for transparent huge pages:
   page faults for a 5 kb x 5 kb alignment fall from ~72,000 to ~320, and
   fewer TLB misses speed up the fill itself (5 kb NW 0.060 -> 0.046 s)
-* `--scoreonly` (`hirschberg_score()`) runs only the forward pass over every
-  row: no alignment, no matrices
+* Exact banding in the linear-space aligner: a path through a cell far from
+  the main diagonals needs many gap characters, which caps its score. Cells
+  that cannot reach the best score are skipped, by running each pass in
+  strips of rows over only the columns that might. The bound comes from the
+  sub-problem's best score, which the split above it already found; the top
+  level first tries a narrow band. If the best score found needs a wider band
+  than was used, the pass is rerun wider (or whole), so the result is always
+  the same. For similar sequences most cells are skipped: 50 kb at 1%
+  divergence 0.9 -> 0.18 s and ~10 s -> 0.25 s of CPU; for unrelated ones
+  the narrow first try costs a few milliseconds
+* `--scoreonly` (`hirschberg_score()`): no alignment, no matrices. With a
+  band, the forward and reverse passes run at the same time and meet in the
+  middle row; otherwise one forward pass over every row
 * On x86-64 Linux the SIMD code is compiled for several CPU levels and the
   best is picked when the program starts (see Build)
 * Smith-Waterman hits are ordered with a counting sort on score instead of a
@@ -190,6 +218,91 @@ Where the speed comes from:
 Most of the remaining Smith-Waterman time is still spent following hits back
 through the matrices. Each hit marks the cells it uses, which defines which
 later hits are reported, so the walk itself is unchanged.
+
+Comparison with other aligners
+------------------------------
+
+The same machine, with whole-program wall time (best of three runs) and peak
+memory. Every tool used the same scoring (match +1, mismatch -2, gap of
+length k: -(4+k)) and reported the same optimal score for every pair. The
+sequences are random DNA: "1%" has 1% substitutions and 0.2% insertions and
+deletions, "10%" has 10% and 2%, and "unrelated" is two independent random
+sequences. seq-align uses up to 16 threads and the other tools one, so CPU
+time is shown in brackets where it is well above the wall time.
+
+The tools:
+* seq-align before this fork: commit dc41988 (2017), the last upstream commit
+* parasail 2.6.2: `nw_trace_striped_32`, `nw_striped_32` and
+  `sw_trace_striped_32`
+* ksw2 (289609b): `ksw_extz2_sse`, with no band
+* WFA2-lib 2.3.5: exact (heuristics off), in the default memory mode and as
+  BiWFA (ultralow memory)
+* SSW 1.2.5
+
+seq-align was run through `needleman_wunsch` and `smith_waterman`, and the
+others through a small C program that reads the two sequences and aligns them
+once.
+
+Global alignment with the alignment returned, 20 kb:
+
+| Tool | 1% | 10% | Unrelated | Peak memory |
+|---|---|---|---|---|
+| seq-align before this fork | 9.55 s | 9.75 s | 10.56 s | 4.6 GB |
+| seq-align, full matrices | 0.37 s (2.1 s) | 0.43 s (2.3 s) | 0.41 s (2.2 s) | 4.6 GB |
+| seq-align `--linear` | 0.05 s | 0.12 s | 0.12 s (0.73 s) | 7 MB |
+| parasail | 1.17 s | 1.28 s | 0.76 s | 1.5 GB |
+| ksw2 | 0.33 s | 0.35 s | 0.34 s | 524 MB |
+| WFA2 | 0.01 s | 0.90 s | 23.3 s | 23 MB - 16.9 GB |
+| WFA2 BiWFA | 0.01 s | 0.54 s | 10.3 s | 8 - 24 MB |
+
+Global alignment, 50 kb (full matrices would need ~30 GB, so the original and
+the full-matrix aligner were not run):
+
+| Tool | 1% | 10% | Unrelated | Peak memory |
+|---|---|---|---|---|
+| seq-align `--linear` | 0.18 s (0.25 s) | 0.43 s (2.1 s) | 0.56 s (8.4 s) | 7 - 9 MB |
+| parasail | 10.1 s | 8.74 s | 5.25 s | 9.5 GB |
+| ksw2 | 1.77 s | 1.78 s | 1.71 s | 2.8 GB |
+| WFA2 | 0.07 s | 5.23 s | out of memory (28 GB limit) | 87 MB - 6.2 GB |
+| WFA2 BiWFA | 0.05 s | 3.07 s | 57.3 s | 7 - 44 MB |
+
+Global alignment score only (every tool under 40 MB):
+
+| Tool | 20 kb 1% | 20 kb 10% | 20 kb unrelated | 50 kb 1% | 50 kb 10% | 50 kb unrelated |
+|---|---|---|---|---|---|---|
+| seq-align `--scoreonly` | 0.01 s | 0.02 s (0.07 s) | 0.02 s (0.25 s) | 0.05 s (0.10 s) | 0.11 s (1.54 s) | 0.10 s (1.45 s) |
+| parasail | 0.18 s | 0.17 s | 0.07 s | 1.14 s | 1.00 s | 0.45 s |
+| ksw2 | 0.10 s | 0.10 s | 0.10 s | 0.63 s | 0.62 s | 0.61 s |
+| WFA2 | <0.01 s | 0.46 s | 8.47 s | 0.03 s | 2.74 s | 49.5 s |
+
+Local alignment, best hit only (`smith_waterman --maxhits 1`), 20 kb:
+
+| Tool | 1% | 10% | Unrelated | Peak memory |
+|---|---|---|---|---|
+| seq-align before this fork | 71.1 s | 61.2 s | 34.5 s | 6.3 - 8.5 GB |
+| seq-align | 3.03 s (4.6 s) | 3.32 s (4.9 s) | 0.65 s (2.1 s) | 4.7 - 5.6 GB |
+| parasail | 0.90 s | 0.83 s | 0.72 s | 1.5 GB |
+| SSW | 0.27 s | 0.22 s | 0.03 s | 7 MB |
+
+For the unrelated pair seq-align reports no hit, as the best (score 14) is
+below the default `--minscore`. At 5 kb every global aligner took 0.07 s or
+less, except seq-align before this fork (0.53-0.63 s) and WFA2 on the
+unrelated pair (0.65-0.96 s).
+
+In short:
+* Against the code before this fork, the same full-matrix alignment is
+  18-30x faster, and `--linear` is up to ~190x faster on similar sequences
+  while using megabytes instead of gigabytes
+* For global alignment `--linear` has the lowest wall time of the exact
+  aligners tested except WFA2 on near-identical sequences. WFA2's time grows
+  with the number of differences, so it is far slower on divergent or
+  unrelated pairs
+* Per CPU core, ksw2 and parasail do more work than seq-align on divergent
+  and unrelated sequences: seq-align's lead there comes from threads
+* Local alignment is the weak spot: on related 20 kb pairs SSW finds the
+  best hit 11-15x faster and parasail 3-4x faster. seq-align keeps the full
+  matrices and indexes every cell above `--minscore` so that it can report
+  further hits, which a best-hit-only search does not need
 
 Examples
 ========

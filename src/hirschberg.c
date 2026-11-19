@@ -15,6 +15,7 @@
 #include <stddef.h> // ptrdiff_t
 #include <stdio.h>
 #include <string.h>
+#include <limits.h> // INT_MAX
 #include <pthread.h>
 #include <sched.h> // sched_yield
 #include <stdatomic.h>
@@ -44,11 +45,13 @@ typedef struct
   score_t *cc, *dd, *rr, *ss; // forward and reverse rows, len_b+1 each
   char *out_a, *out_b;
   size_t pos; // next position to write in out_a, out_b
+  bool in_range; // no score or sum of two can overflow, see hb_state_init()
 #ifdef HB_STRIPED
   void *vbuf; // striped rows and score profile, see hb_pass_striped()
   void *vbuf2; // the same for a pass on a second thread
   bool simd_ok; // all scores far enough from HB_NEG and overflow
   int pass_threads; // threads for one pass, see hb_pass_striped()
+  score_t smax; // best substitution score, at least 0, see hb_band()
 #endif
 } hb_state_t;
 
@@ -89,6 +92,15 @@ size_t hirschberg_block_min_cells = 4000000; // rows x columns
 size_t hirschberg_block_min_cols = 1024; // columns per block
 int hirschberg_max_threads = 0; // threads per pass; 0: half the CPUs
 
+// No score known for a sub-problem yet, see hb_diff()
+#define HB_NO_BOUND SCORE_MIN
+
+// Banded passes (see hb_diff()). Tests lower the last two
+bool hirschberg_band_enabled = true;
+size_t hirschberg_band_strip_rows = 0; // rows per strip; 0: automatic
+size_t hirschberg_band_min_width = 64; // first band to try with no bound
+size_t hirschberg_banded_passes = 0;
+
 #ifdef HB_STRIPED
 
 // Below any real score, with room to add penalties without overflow
@@ -115,6 +127,15 @@ static inline void hb_wait_row(hb_boundary_t *left, size_t r)
     if(++spins > 256) { spins = 0; sched_yield(); }
 }
 
+// Where a strip of a banded pass starts (see hb_pass_banded()): its top row
+// and the column on its left. A whole pass (NULL) starts at row 0
+typedef struct {
+  const score_t *H, *D; // top row, best score and ending in a deletion,
+                        // indexed by column of the pass
+  score_t col0; // running deletion score in the left column, for column 0
+  bool neg_left; // left column outside the band: HB_NEG in every row
+} hb_top_t;
+
 // Striped SIMD (Farrar 2007) version of one pass of hb_diff() over the
 // columns c0 .. c0+width-1 of the pass: gives exactly the same values as the
 // scalar loops. Rows run over `rows` characters of a starting at a[0] and
@@ -129,12 +150,14 @@ static inline void hb_wait_row(hb_boundary_t *left, size_t r)
 // left / right are the boundaries shared with neighbouring blocks (NULL at
 // the ends). A block with a right neighbour must have width a multiple of
 // ALN_VL, so its last column is the last cell of its last lane.
+// top, if not NULL, gives the top row and left column of a strip instead
 ALN_TARGET_CLONES
 static void hb_block_pass(hb_state_t *st, const char *a, ptrdiff_t astep,
                           size_t rows, const char *b, ptrdiff_t bstep,
                           size_t c0, size_t width, score_t t0,
                           score_t *oc, score_t *od, ptrdiff_t ostep,
-                          void *buf, hb_boundary_t *left, hb_boundary_t *right)
+                          void *buf, hb_boundary_t *left, hb_boundary_t *right,
+                          const hb_top_t *top)
 {
   const scoring_t *scoring = st->scoring;
   const sub_table_t *t = &st->table;
@@ -154,14 +177,21 @@ static void hb_block_pass(hb_state_t *st, const char *a, ptrdiff_t astep,
     for(c = 0; c < t->n; c++) prof[c*seg + k][l] = t->scores[row + c];
   }
 
-  // Row 0: only insertions
+  // Row 0: only insertions; or the strip's top row (padding: HB_NEG)
   for(k = 0; k < seg; k++)
     for(l = 0; l < ALN_VL; l++) {
-      H[k][l] = g + (score_t)(c0 + l*seg + k + 1) * h;
-      D[k][l] = H[k][l] + g;
+      p = l*seg + k;
+      if(top == NULL) {
+        H[k][l] = g + (score_t)(c0 + p + 1) * h;
+        D[k][l] = H[k][l] + g;
+      } else {
+        H[k][l] = p < width ? top->H[c0+p+1] : HB_NEG;
+        D[k][l] = p < width ? top->D[c0+p+1] : HB_NEG;
+      }
     }
   if(right != NULL) {
-    right->H[0] = g + (score_t)(c0 + width) * h;
+    right->H[0] = top == NULL ? g + (score_t)(c0 + width) * h
+                              : top->H[c0+width];
     right->F[0] = HB_NEG; // not used
     atomic_store_explicit(&right->done, 1, memory_order_release);
   }
@@ -169,13 +199,19 @@ static void hb_block_pass(hb_state_t *st, const char *a, ptrdiff_t astep,
   // The column left of the block: column 0 (only deletions) for the first
   // block, otherwise the last column of the block on the left
   score_t col0 = t0, col0_prev = 0, fstart;
+  const bool neg_left = top != NULL && top->neg_left;
+  // (with a left block, its last column comes from the boundary instead:
+  // the left block may be writing top->H[c0] as the strip's output)
+  if(top != NULL && left == NULL) { col0 = top->col0; col0_prev = top->H[c0]; }
 
   for(r = 0; r < rows; r++)
   {
     const vscore_t *pr = prof +
       (size_t)t->code[(unsigned char)a[(ptrdiff_t)r * astep]] * seg;
 
-    if(left == NULL) {
+    if(neg_left && left == NULL) {
+      col0 = fstart = HB_NEG;
+    } else if(left == NULL) {
       col0 += h;
       fstart = col0 + g + h;
     } else {
@@ -224,7 +260,7 @@ static void hb_block_pass(hb_state_t *st, const char *a, ptrdiff_t astep,
     col0_prev = col0;
   }
 
-  if(left == NULL) oc[0] = od[0] = col0;
+  if(left == NULL) oc[(ptrdiff_t)c0 * ostep] = od[(ptrdiff_t)c0 * ostep] = col0;
   for(l = 0; l < ALN_VL; l++)
     for(k = 0, p = l*seg; k < seg && p < width; k++, p++) {
       oc[(ptrdiff_t)(c0+p+1) * ostep] = H[k][l];
@@ -237,7 +273,7 @@ typedef struct {
   hb_state_t *st; const char *a; ptrdiff_t astep; size_t rows;
   const char *b; ptrdiff_t bstep; size_t c0, width; score_t t0;
   score_t *oc, *od; ptrdiff_t ostep; void *buf;
-  hb_boundary_t *left, *right;
+  hb_boundary_t *left, *right; const hb_top_t *top;
 } hb_block_args_t;
 
 static void* hb_block_thread(void *ptr)
@@ -245,28 +281,31 @@ static void* hb_block_thread(void *ptr)
   hb_block_args_t *p = ptr;
   hb_block_pass(p->st, p->a, p->astep, p->rows, p->b, p->bstep, p->c0,
                 p->width, p->t0, p->oc, p->od, p->ostep, p->buf,
-                p->left, p->right);
+                p->left, p->right, p->top);
   return NULL;
 }
 
-// One pass of hb_diff() over n columns: as one block, or split into column
-// blocks on several threads when it is big enough (see hb_block_pass())
+// One pass of hb_diff() over the n columns c0+1 .. c0+n: as one block, or
+// split into column blocks on several threads when it is big enough (see
+// hb_block_pass()). A whole pass has c0 = 0 and top = NULL
 static void hb_pass_striped(hb_state_t *st, const char *a, ptrdiff_t astep,
                             size_t rows, const char *b, ptrdiff_t bstep,
-                            size_t n, score_t t0,
+                            size_t c0, size_t n, score_t t0,
                             score_t *oc, score_t *od, ptrdiff_t ostep,
-                            void *buf)
+                            void *buf, const hb_top_t *top)
 {
+  // At least one vector of columns per block, so no block is empty
+  const size_t min_cols = MAX2(hirschberg_block_min_cols, (size_t)ALN_VL);
   size_t nblocks = 1, i;
   if(st->pass_threads > 1 && (double)rows * n >= hirschberg_block_min_cells &&
-     n >= 2 * hirschberg_block_min_cols)
+     n >= 2 * min_cols)
   {
-    nblocks = MIN2((size_t)st->pass_threads, n / hirschberg_block_min_cols);
+    nblocks = MIN2((size_t)st->pass_threads, n / min_cols);
   }
 
   if(nblocks <= 1) {
-    hb_block_pass(st, a, astep, rows, b, bstep, 0, n, t0, oc, od, ostep, buf,
-                  NULL, NULL);
+    hb_block_pass(st, a, astep, rows, b, bstep, c0, n, t0, oc, od, ostep, buf,
+                  NULL, NULL, top);
     return;
   }
 
@@ -292,11 +331,11 @@ static void hb_pass_striped(hb_state_t *st, const char *a, ptrdiff_t astep,
   }
 
   for(i = 0; i < nblocks; i++) {
-    hb_block_args_t blk = {st, a, astep, rows, b, bstep, i * width,
+    hb_block_args_t blk = {st, a, astep, rows, b, bstep, c0 + i * width,
                            i + 1 < nblocks ? width : n - i * width, t0,
                            oc, od, ostep, (char*)bufs + i * bufsize,
                            i > 0 ? &bounds[i-1] : NULL,
-                           i + 1 < nblocks ? &bounds[i] : NULL};
+                           i + 1 < nblocks ? &bounds[i] : NULL, top};
     args[i] = blk;
   }
 
@@ -315,19 +354,106 @@ static void hb_pass_striped(hb_state_t *st, const char *a, ptrdiff_t astep,
   free(edges);
 }
 
-// Arguments for running hb_pass_striped() on another thread
+// Banded version of hb_pass_striped() over all n columns: only cells on
+// diagonals dlo <= j - i <= dhi (row i, column j of the pass) need to be
+// right. The rows are cut into strips; each strip runs over just the columns
+// its rows' diagonals reach, with HB_NEG for the column on its left and for
+// top-row cells the strip above did not compute. Cells next to those come
+// out too low, never too high, and cells whose best path stays inside the
+// band are exact. Columns of the last row outside the strip get HB_NEG
+static void hb_pass_banded(hb_state_t *st, const char *a, ptrdiff_t astep,
+                           size_t rows, const char *b, ptrdiff_t bstep,
+                           size_t n, score_t t0,
+                           score_t *oc, score_t *od, ptrdiff_t ostep,
+                           void *buf, ptrdiff_t dlo, ptrdiff_t dhi)
+{
+  const score_t g = st->scoring->gap_open, h = st->scoring->gap_extend;
+  size_t strip = hirschberg_band_strip_rows;
+  if(strip == 0) strip = MAX2(256, (size_t)(dhi - dlo + 1) / 4);
+
+  // Last row of the strip above, by column; the first strip starts at row 0
+  score_t *top_h = malloc(2 * (n+1) * sizeof(score_t)), *top_d = top_h + n+1;
+  if(top_h == NULL) {
+    fprintf(stderr, "%s:%i: Out of memory\n", __FILE__, __LINE__);
+    exit(EXIT_FAILURE);
+  }
+  size_t i0, j, hs, c0 = 0, jr = n, jr_prev = n;
+  top_h[0] = top_d[0] = 0;
+  for(j = 1; j <= n; j++) {
+    top_h[j] = g + (score_t)j * h;
+    top_d[j] = top_h[j] + g;
+  }
+
+  for(i0 = 0; i0 < rows; i0 += hs)
+  {
+    hs = MIN2(strip, rows - i0);
+    // Columns the band reaches in rows i0+1 .. i0+hs
+    ptrdiff_t lo = (ptrdiff_t)i0 + 1 + dlo, hi = (ptrdiff_t)(i0 + hs) + dhi;
+    c0 = lo <= 1 ? 0 : (size_t)lo - 1;
+    jr = hi >= (ptrdiff_t)n ? n : (size_t)hi;
+    // Columns the strip above did not reach
+    for(j = jr_prev + 1; j <= jr; j++) top_h[j] = top_d[j] = HB_NEG;
+    jr_prev = jr;
+
+    hb_top_t top = {top_h, top_d, i0 == 0 ? t0 : top_h[0], c0 > 0};
+    hb_pass_striped(st, a + (ptrdiff_t)i0 * astep, astep, hs, b, bstep,
+                    c0, jr - c0, t0, top_h, top_d, 1, buf, &top);
+  }
+
+  for(j = 0; j <= n; j++) {
+    bool in = j >= c0 && j <= jr;
+    oc[(ptrdiff_t)j * ostep] = in ? top_h[j] : HB_NEG;
+    od[(ptrdiff_t)j * ostep] = in ? top_d[j] : HB_NEG;
+  }
+  free(top_h);
+}
+
+// Arguments for running hb_pass_striped() or hb_pass_banded() on another
+// thread: banded when dlo <= dhi
 typedef struct {
   hb_state_t *st; const char *a; ptrdiff_t astep; size_t rows;
   const char *b; ptrdiff_t bstep; size_t n; score_t t0;
-  score_t *oc, *od; ptrdiff_t ostep; void *buf;
+  score_t *oc, *od; ptrdiff_t ostep; void *buf; ptrdiff_t dlo, dhi;
 } hb_pass_args_t;
 
 static void* hb_pass_thread(void *ptr)
 {
   hb_pass_args_t *p = ptr;
-  hb_pass_striped(p->st, p->a, p->astep, p->rows, p->b, p->bstep, p->n,
-                  p->t0, p->oc, p->od, p->ostep, p->buf);
+  if(p->dlo <= p->dhi)
+    hb_pass_banded(p->st, p->a, p->astep, p->rows, p->b, p->bstep, p->n,
+                   p->t0, p->oc, p->od, p->ostep, p->buf, p->dlo, p->dhi);
+  else
+    hb_pass_striped(p->st, p->a, p->astep, p->rows, p->b, p->bstep, 0, p->n,
+                    p->t0, p->oc, p->od, p->ostep, p->buf, NULL);
   return NULL;
+}
+
+// Half-width w of the band an m x n sub-problem needs for a path scoring
+// at least `lower`: such a path stays on diagonals j - i from
+// MIN2(0, n-m) - w to MAX2(0, n-m) + w. A path through diagonal d has at
+// least I = |d| + |n-m-d| gap characters and at most (m+n-I)/2 aligned
+// pairs, each scoring at most smax; opening gaps only lowers the score
+// (gap_open <= 0). SIZE_MAX: no useful band
+static size_t hb_band(const hb_state_t *st, size_t m, size_t n,
+                      score_t lower)
+{
+  const double smax = st->smax, h = st->scoring->gap_extend;
+  const double gaps = m > n ? (double)(m - n) : (double)(n - m);
+  const double step = 2 * (smax - 2*h); // each diagonal further out
+  const double room = smax * ((double)m + n - gaps) + 2*h*gaps - 2.0*lower;
+  if(step <= 0) return SIZE_MAX;
+  if(room < 0) return 0;
+  return room / step >= 1e15 ? SIZE_MAX : (size_t)(room / step);
+}
+
+// Is a band of half-width w over n columns narrow enough to be worth it?
+static bool hb_band_pays(size_t m, size_t n, size_t w)
+{
+  if(!hirschberg_band_enabled || w >= n) return false;
+  double cols = (double)(m > n ? m - n : n - m) + 2.0*w + 1;
+  double strip = hirschberg_band_strip_rows ? hirschberg_band_strip_rows
+                                            : MAX2(256, cols / 4);
+  return cols + strip < 0.6 * (double)n;
 }
 
 #endif /* HB_STRIPED */
@@ -403,37 +529,179 @@ bool hirschberg_check_striped = false;
 size_t hirschberg_striped_mismatches = 0;
 
 #ifdef HB_STRIPED
-// Testing aid: redo the passes without SIMD and count any difference
+static score_t hb_midpoint(const hb_state_t *st, size_t n, size_t *midj,
+                           int *type);
+
+// Testing aid: redo the passes without SIMD and count any difference. A
+// banded row may be lower than the scalar one but never higher, and must
+// give the same split
 static void hb_check_striped(hb_state_t *st, const char *a, const char *b,
                              size_t m, size_t n, size_t imid,
-                             score_t tb, score_t te)
+                             score_t tb, score_t te, bool banded)
 {
-  size_t bytes = (n+1) * sizeof(score_t);
+  size_t bytes = (n+1) * sizeof(score_t), j;
   score_t *copy = malloc(4 * bytes);
   if(copy == NULL) {
     fprintf(stderr, "%s:%i: Out of memory\n", __FILE__, __LINE__);
     exit(EXIT_FAILURE);
   }
+  size_t midj, midj2;
+  int type, type2;
+  score_t midc = hb_midpoint(st, n, &midj, &type);
   memcpy(copy, st->cc, bytes);
   memcpy(copy + (n+1), st->dd, bytes);
   memcpy(copy + 2*(n+1), st->rr, bytes);
   memcpy(copy + 3*(n+1), st->ss, bytes);
   hb_passes_scalar(st, a, b, m, n, imid, tb, te);
-  if(memcmp(copy, st->cc, bytes) || memcmp(copy + (n+1), st->dd, bytes) ||
-     memcmp(copy + 2*(n+1), st->rr, bytes) ||
-     memcmp(copy + 3*(n+1), st->ss, bytes))
-  {
-    hirschberg_striped_mismatches++;
+  bool differs;
+  if(banded) {
+    differs = hb_midpoint(st, n, &midj2, &type2) != midc ||
+              midj2 != midj || type2 != type;
+    for(j = 0; j <= n; j++)
+      differs |= copy[j] > st->cc[j] || copy[n+1+j] > st->dd[j] ||
+                 copy[2*(n+1)+j] > st->rr[j] || copy[3*(n+1)+j] > st->ss[j];
+  } else {
+    differs = memcmp(copy, st->cc, bytes) ||
+              memcmp(copy + (n+1), st->dd, bytes) ||
+              memcmp(copy + 2*(n+1), st->rr, bytes) ||
+              memcmp(copy + 3*(n+1), st->ss, bytes);
   }
+  if(differs) hirschberg_striped_mismatches++;
   free(copy);
 }
 #endif
 
+// Where does the best path cross row imid, given the forward and reverse
+// rows? Returns its score; *type 2 means a deletion spans the row: a[imid-1]
+// and a[imid] are both deleted. The first best column wins
+static score_t hb_midpoint(const hb_state_t *st, size_t n, size_t *midj,
+                           int *type)
+{
+  const score_t g = st->scoring->gap_open;
+  const score_t *cc = st->cc, *dd = st->dd, *rr = st->rr, *ss = st->ss;
+  score_t midc = cc[0] + rr[0], c;
+  size_t j;
+  *midj = 0;
+  *type = 1;
+
+  for(j = 0; j <= n; j++)
+  {
+    c = cc[j] + rr[j];
+    if(c > midc) { midc = c; *midj = j; *type = 1; }
+    c = dd[j] + ss[j] - g; // gap open counted on both sides
+    if(c > midc) { midc = c; *midj = j; *type = 2; }
+  }
+  return midc;
+}
+
+#ifdef HB_STRIPED
+// Forward and reverse passes of hb_diff() with SIMD, over diagonals
+// dlo .. dhi only when dlo <= dhi (see hb_pass_banded()). The passes read
+// shared, unchanging data and write different rows, so big ones run at the
+// same time
+static void hb_passes_striped(hb_state_t *st, const char *a, const char *b,
+                              size_t m, size_t n, size_t imid,
+                              score_t tb, score_t te,
+                              ptrdiff_t dlo, ptrdiff_t dhi)
+{
+  // In the reverse pass, diagonal j - i becomes (n - m) - (j - i): the band
+  // around 0 .. n-m maps onto itself
+  hb_pass_args_t fwd = {st, a, 1, imid, b, 1, n, tb,
+                        st->cc, st->dd, 1, st->vbuf, dlo, dhi};
+  hb_pass_args_t rev = {st, a+m-1, -1, m-imid, b+n-1, -1, n, te,
+                        st->rr+n, st->ss+n, -1, st->vbuf2, dlo, dhi};
+  pthread_t thread;
+  if((double)m * (double)n >= HB_THREAD_CELLS &&
+     pthread_create(&thread, NULL, hb_pass_thread, &rev) == 0)
+  {
+    hb_pass_thread(&fwd);
+    pthread_join(thread, NULL);
+  }
+  else
+  {
+    hb_pass_thread(&fwd);
+    hb_pass_thread(&rev);
+  }
+}
+#endif
+
+#ifdef HB_STRIPED
+// Can the SIMD passes be used on an m x n sub-problem? Building the score
+// profile costs O(n x alphabet), so only on those with enough rows to pay
+// for it
+static bool hb_simd_ok(const hb_state_t *st, size_t m, size_t n)
+{
+  return alignment_striped_enabled && st->simd_ok && HB_FAST_VMAX() &&
+         st->scoring->gap_open <= 0 && st->scoring->gap_extend <= 0 &&
+         n >= 2*ALN_VL && m >= 32 && m >= 2*st->table.n;
+}
+
+// Banded forward and reverse passes of hb_diff() (see hb_passes()). Cells
+// too far from the main diagonals to be on a path scoring `lower` are
+// skipped. Banded rows are never too high and are exact along every best
+// path inside the band, so if the best score found (a real alignment's)
+// needs no wider band, the band held every best path and the split is the
+// same as without a band. Otherwise widen it and try again; with no bound
+// to start from, try a narrow band first: it costs little, and its score
+// shows how wide the band must be. Returns false, with nothing
+// usable in the rows, once a band would be too wide to pay
+static bool hb_passes_banded(hb_state_t *st, const char *a, const char *b,
+                             size_t m, size_t n, size_t imid,
+                             score_t tb, score_t te, score_t lower)
+{
+  size_t w = lower == HB_NO_BOUND
+             ? hirschberg_band_min_width
+             : hb_band(st, m, n, lower);
+  const ptrdiff_t D = (ptrdiff_t)n - (ptrdiff_t)m;
+  size_t midj;
+  int type;
+
+  while(hb_band_pays(m, n, w))
+  {
+    hb_passes_striped(st, a, b, m, n, imid, tb, te,
+                      MIN2(0, D) - (ptrdiff_t)w, MAX2(0, D) + (ptrdiff_t)w);
+    if(hirschberg_check_striped) hirschberg_banded_passes++;
+    size_t need = hb_band(st, m, n, hb_midpoint(st, n, &midj, &type));
+    if(need <= w) {
+      if(hirschberg_check_striped)
+        hb_check_striped(st, a, b, m, n, imid, tb, te, true);
+      return true;
+    }
+    w = MAX2(need, 2*w);
+  }
+  return false;
+}
+#endif
+
+// Forward and reverse passes of hb_diff(), into cc, dd (row imid from the
+// top) and rr, ss (from the bottom). lower: see hb_diff()
+static void hb_passes(hb_state_t *st, const char *a, const char *b,
+                      size_t m, size_t n, size_t imid,
+                      score_t tb, score_t te, score_t lower)
+{
+  #ifdef HB_STRIPED
+  if(hb_simd_ok(st, m, n))
+  {
+    if(!hb_passes_banded(st, a, b, m, n, imid, tb, te, lower)) {
+      hb_passes_striped(st, a, b, m, n, imid, tb, te, 0, -1);
+      if(hirschberg_check_striped)
+        hb_check_striped(st, a, b, m, n, imid, tb, te, false);
+    }
+    return;
+  }
+  #endif
+  (void)lower;
+  hb_passes_scalar(st, a, b, m, n, imid, tb, te);
+}
+
 // Align a[0..m) with b[0..n), appending to the output.
 // tb / te: score of opening a deletion that touches the start / end of this
 // sub-problem; 0 if it continues a deletion already paid for by the caller.
+// lower: a score some alignment of this sub-problem reaches (from the
+// caller's split), or HB_NO_BOUND. It narrows the band of the SIMD passes
 static void hb_diff(hb_state_t *st, const char *a, const char *b,
-                    size_t m, size_t n, score_t tb, score_t te)
+                    size_t m, size_t n, score_t tb, score_t te,
+                    score_t lower)
 {
   const scoring_t *scoring = st->scoring;
   const score_t g = scoring->gap_open, h = scoring->gap_extend;
@@ -472,65 +740,28 @@ static void hb_diff(hb_state_t *st, const char *a, const char *b,
     return;
   }
 
-  score_t *cc = st->cc, *dd = st->dd, *rr = st->rr, *ss = st->ss;
-  score_t c;
-  size_t imid = m / 2;
+  const score_t *cc = st->cc, *dd = st->dd, *rr = st->rr, *ss = st->ss;
+  size_t imid = m / 2, midj;
+  int type;
 
-  #ifdef HB_STRIPED
-  // Building the score profile costs O(n x alphabet), so only use SIMD on
-  // sub-problems with enough rows to pay for it
-  if(alignment_striped_enabled && st->simd_ok && HB_FAST_VMAX() &&
-     g <= 0 && h <= 0 &&
-     n >= 2*ALN_VL && m >= 32 && m >= 2*st->table.n)
-  {
-    // The passes read shared, unchanging data and write different rows, so
-    // big ones run at the same time
-    hb_pass_args_t rev = {st, a+m-1, -1, m-imid, b+n-1, -1, n, te,
-                          rr+n, ss+n, -1, st->vbuf2};
-    pthread_t thread;
-    if((double)m * (double)n >= HB_THREAD_CELLS &&
-       pthread_create(&thread, NULL, hb_pass_thread, &rev) == 0)
-    {
-      hb_pass_striped(st, a, 1, imid, b, 1, n, tb, cc, dd, 1, st->vbuf);
-      pthread_join(thread, NULL);
-    }
-    else
-    {
-      hb_pass_striped(st, a, 1, imid, b, 1, n, tb, cc, dd, 1, st->vbuf);
-      hb_pass_thread(&rev);
-    }
-    if(hirschberg_check_striped) hb_check_striped(st, a, b, m, n, imid, tb, te);
-  }
-  else
-  #endif
-  {
-    hb_passes_scalar(st, a, b, m, n, imid, tb, te);
-  }
+  hb_passes(st, a, b, m, n, imid, tb, te, lower);
+  hb_midpoint(st, n, &midj, &type);
 
-  // Where does the optimal path cross row imid? Type 2 means a deletion
-  // spans the row: a[imid-1] and a[imid] are both deleted
-  score_t midc = cc[0] + rr[0];
-  size_t midj = 0;
-  int type = 1;
-
-  for(j = 0; j <= n; j++)
-  {
-    c = cc[j] + rr[j];
-    if(c > midc) { midc = c; midj = j; type = 1; }
-    c = dd[j] + ss[j] - g; // gap open counted on both sides
-    if(c > midc) { midc = c; midj = j; type = 2; }
-  }
-
+  // The best score of each half is known now: a bound for its own band
   if(type == 1)
   {
-    hb_diff(st, a, b, imid, midj, tb, g);
-    hb_diff(st, a+imid, b+midj, m-imid, n-midj, g, te);
+    score_t left = cc[midj], right = rr[midj];
+    hb_diff(st, a, b, imid, midj, tb, g, left);
+    hb_diff(st, a+imid, b+midj, m-imid, n-midj, g, te, right);
   }
   else
   {
-    hb_diff(st, a, b, imid-1, midj, tb, 0);
+    // Without a[imid-1] (opening or extending the deletion) and with the
+    // deletion's end free
+    score_t left = dd[midj] - g - h, right = ss[midj] - g - h;
+    hb_diff(st, a, b, imid-1, midj, tb, 0, left);
     hb_emit_del(st, a+imid-1, 2);
-    hb_diff(st, a+imid+1, b+midj, m-imid-1, n-midj, 0, te);
+    hb_diff(st, a+imid+1, b+midj, m-imid-1, n-midj, 0, te, right);
   }
 }
 
@@ -604,6 +835,22 @@ static void hb_state_init(hb_state_t *st, const char *a, const char *b,
   for(j = 0; j < len_b; j++)
     st->row_b[j] = st->table.code[(unsigned char)b[j]] * st->table.n;
 
+  // Every value the passes compute, and the sum of two at the split, must
+  // fit in an int. Each is a best score, so at least that of deleting and
+  // inserting everything (two gaps), less one more gap open and a gap
+  // extension or substitution; and at most the best substitution score per
+  // step. Penalties large enough to break this are refused
+  #define HB_DABS(x) ((x) < 0 ? -(double)(x) : (double)(x))
+  {
+    double go = HB_DABS(scoring->gap_open), ge = HB_DABS(scoring->gap_extend);
+    double sub = 0, len = (double)len_a + (double)len_b + 2;
+    size_t c;
+    for(c = 0; c < st->table.n * st->table.n; c++)
+      sub = MAX2(sub, HB_DABS(st->table.scores[c]));
+    double lo = 3*go + len*ge + sub, hi = len*sub;
+    st->in_range = 2*lo + go < (double)INT_MAX && 2*hi < (double)INT_MAX;
+  }
+
 #ifdef HB_STRIPED
   // Three striped rows plus a profile row per character code
   size_t seg = (len_b + ALN_VL - 1) / ALN_VL + 1;
@@ -613,12 +860,14 @@ static void hb_state_init(hb_state_t *st, const char *a, const char *b,
   // |gap_extend| or the largest substitution score in magnitude. Beyond a
   // conservative bound use the scalar passes
   {
-    #define HB_DABS(x) ((x) < 0 ? -(double)(x) : (double)(x))
     double gap = HB_DABS(scoring->gap_open) + HB_DABS(scoring->gap_extend);
     double sub = 0;
     size_t c;
-    for(c = 0; c < st->table.n * st->table.n; c++)
+    st->smax = 0;
+    for(c = 0; c < st->table.n * st->table.n; c++) {
       sub = MAX2(sub, HB_DABS(st->table.scores[c]));
+      st->smax = MAX2(st->smax, st->table.scores[c]);
+    }
     double steps = (double)len_a + (double)len_b + ALN_VL + 2;
     st->simd_ok = steps * (gap + sub) < (double)(1 << 27);
   }
@@ -663,14 +912,16 @@ bool hirschberg_align2(const char *a, const char *b,
 {
   if(hb_unsupported(scoring)) return false;
 
-  alignment_ensure_capacity(result, len_a + len_b);
-
   hb_state_t st;
   hb_state_init(&st, a, b, len_a, len_b, scoring);
+  if(!st.in_range) { hb_state_free(&st); return false; }
+
+  alignment_ensure_capacity(result, len_a + len_b);
   st.out_a = result->result_a;
   st.out_b = result->result_b;
 
-  hb_diff(&st, a, b, len_a, len_b, scoring->gap_open, scoring->gap_open);
+  hb_diff(&st, a, b, len_a, len_b, scoring->gap_open, scoring->gap_open,
+          HB_NO_BOUND);
   hb_state_free(&st);
 
   result->result_a[st.pos] = '\0';
@@ -695,26 +946,38 @@ bool hirschberg_score2(const char *a, const char *b,
 
   hb_state_t st;
   hb_state_init(&st, a, b, len_a, len_b, scoring);
+  if(!st.in_range) { hb_state_free(&st); return false; }
+  const score_t g = scoring->gap_open;
 
-  // One forward pass over every row of a: cc[len_b] is then the best score
-  // of aligning all of a with all of b, ending in any state
-  const score_t g = scoring->gap_open, h = scoring->gap_extend;
+  size_t midj;
+  int type;
+
   #ifdef HB_STRIPED
-  if(alignment_striped_enabled && st.simd_ok && HB_FAST_VMAX() &&
-     g <= 0 && h <= 0 && len_b >= 2*ALN_VL)
+  // Banded forward and reverse passes of hb_diff(), which run at the same
+  // time: every alignment crosses the middle row, so the best crossing is
+  // the best score
+  if(hb_simd_ok(&st, len_a, len_b) &&
+     hb_passes_banded(&st, a, b, len_a, len_b, len_a / 2, g, g, HB_NO_BOUND))
   {
-    hb_pass_striped(&st, a, 1, len_a, b, 1, len_b, g, st.cc, st.dd, 1,
-                    st.vbuf);
+    *score = hb_midpoint(&st, len_b, &midj, &type);
+  }
+  // Otherwise one forward pass over every row of a: cc[len_b] is the best
+  // score, ending in any state
+  else if(hb_simd_ok(&st, len_a, len_b))
+  {
+    hb_pass_striped(&st, a, 1, len_a, b, 1, 0, len_b, g, st.cc, st.dd, 1,
+                    st.vbuf, NULL);
+    *score = st.cc[len_b];
   }
   else
   #endif
   {
     // with imid = len_a the reverse pass has no rows
     hb_passes_scalar(&st, a, b, len_a, len_b, len_a, g, g);
+    *score = st.cc[len_b];
   }
-  (void)h;
+  (void)midj; (void)type;
 
-  *score = st.cc[len_b];
   hb_state_free(&st);
   return true;
 }

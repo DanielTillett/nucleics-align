@@ -273,10 +273,12 @@ static void alignment_fill_blocks(aligner_t *aligner, const sub_table_t *table,
     long cpus = sysconf(_SC_NPROCESSORS_ONLN);
     threads = cpus > 1 ? (int)(cpus / 2) : 1;
   }
+  // At least one vector of columns per block, so no block is empty
+  const size_t min_cols = MAX2(alignment_block_min_cols, (size_t)ALN_VL);
   if(threads > 1 && (double)len_i * len_j >= alignment_block_min_cells &&
-     len_i >= 2 * alignment_block_min_cols)
+     len_i >= 2 * min_cols)
   {
-    nblocks = MIN2((size_t)threads, len_i / alignment_block_min_cols);
+    nblocks = MIN2((size_t)threads, len_i / min_cols);
   }
 
   if(nblocks <= 1) {

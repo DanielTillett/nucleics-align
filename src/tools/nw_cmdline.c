@@ -40,7 +40,8 @@ static void nw_align(const char *seq_a, const char *seq_b)
     needleman_wunsch_align(seq_a, seq_b, &scoring, nw, result);
   else if(!hirschberg_align(seq_a, seq_b, &scoring, result))
   {
-    fprintf(stderr, "Error: --linear does not support these scoring options\n");
+    fprintf(stderr, "Error: --linear does not support these scoring options "
+                    "(or penalties this large)\n");
     exit(EXIT_FAILURE);
   }
 }

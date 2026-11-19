@@ -24,7 +24,8 @@ extern "C" {
 // Supports substitution tables, wildcards and affine gaps. Returns false
 // (and leaves result untouched) if gap_open > 0 or any of
 // no_start_gap_penalty, no_end_gap_penalty, no_gaps_in_a/b/longest or
-// no_mismatches is set.
+// no_mismatches is set, or if the penalties are so large that a score could
+// overflow (roughly 3*|gap_open| + (len_a+len_b)*|gap_extend| above 1e9).
 bool hirschberg_align(const char *a, const char *b,
                       const scoring_t *scoring, alignment_t *result);
 
@@ -38,6 +39,16 @@ bool hirschberg_align2(const char *a, const char *b,
 // hirschberg_max_threads per pass (0: half the CPUs). Set before aligning
 extern size_t hirschberg_block_min_cells, hirschberg_block_min_cols;
 extern int hirschberg_max_threads;
+
+// Banded passes: cells that cannot be on a best path are skipped, with the
+// same result. hirschberg_band_enabled (default true) turns them off;
+// hirschberg_band_strip_rows (0: automatic) and hirschberg_band_min_width
+// (first band tried, default 64) are for tuning and tests
+extern bool hirschberg_band_enabled;
+extern size_t hirschberg_band_strip_rows, hirschberg_band_min_width;
+// Testing aid: banded passes run so far (each try of a band counts), while
+// hirschberg_check_striped is set; not safe with alignments on other threads
+extern size_t hirschberg_banded_passes;
 
 // Testing aid: when true, each SIMD pass is redone without SIMD and
 // hirschberg_striped_mismatches counts any row that differs

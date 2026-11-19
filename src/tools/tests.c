@@ -425,6 +425,18 @@ void hb_test_edge_cases()
   scoring.no_gaps_in_longest = true;
   ASSERT(!hirschberg_align("acgt", "acg", &scoring, hb_aln));
 
+  // Penalties large enough for a score to overflow are refused, not
+  // answered wrongly (these used to give 1894967296 and 2094967296)
+  score_t big_score;
+  scoring_init(&scoring, 1, -1, -800000000, 0, false, false, false, false,
+               false, false);
+  ASSERT(!hirschberg_align("AA", "AA", &scoring, hb_aln));
+  ASSERT(!hirschberg_score("AA", "AA", &scoring, &big_score));
+  scoring_init(&scoring, 1, -1, -1100000000, 0, false, false, false, false,
+               false, false);
+  ASSERT(!hirschberg_align("A", "A", &scoring, hb_aln));
+  ASSERT(!hirschberg_score("A", "A", &scoring, &big_score));
+
   alignment_free(nw_aln);
   alignment_free(hb_aln);
   needleman_wunsch_free(nw);
@@ -757,6 +769,88 @@ void simd_test_hirschberg_blocks()
   alignment_free(striped);
 }
 
+/* A copy of in with about per_mille substitutions, a quarter as many
+ * deletions and insertions, and now and then a deleted run of 20 */
+static void hb_mutate(char *out, const char *in, unsigned int per_mille,
+                      const char *alphabet)
+{
+  size_t i, o = 0, len = strlen(in), nalpha = strlen(alphabet);
+  for(i = 0; i < len; i++)
+  {
+    unsigned int r = hb_rand(1000);
+    if(r == 999) i += 20;
+    else if(r < per_mille) out[o++] = alphabet[hb_rand(nalpha)];
+    else if(r < per_mille + per_mille/4 + 1) continue;
+    else if(r < per_mille + per_mille/2 + 2) {
+      out[o++] = in[i];
+      out[o++] = alphabet[hb_rand(nalpha)];
+    }
+    else out[o++] = in[i];
+  }
+  out[o] = '\0';
+}
+
+/* Banded linear-space passes: similar sequences, where the band pays, with
+ * small strips and narrow first bands so that bands are often too narrow
+ * and must be widened. Output must match the scalar code exactly */
+void simd_test_hirschberg_band()
+{
+  size_t strip_rows = hirschberg_band_strip_rows;
+  size_t min_width = hirschberg_band_min_width;
+  size_t min_cells = hirschberg_block_min_cells;
+  size_t min_cols = hirschberg_block_min_cols;
+  int max_threads = hirschberg_max_threads;
+  size_t banded = hirschberg_banded_passes;
+  size_t mismatches = hirschberg_striped_mismatches;
+  alignment_t *scalar = alignment_create(256), *striped = alignment_create(256);
+  static char seqa[1201], seqb[2402];
+  scoring_t scoring;
+  const size_t strips[] = {0, 1, 5, 32};
+  const unsigned int rates[] = {2, 10, 40, 120};
+  size_t s, i;
+
+  for(s = 0; s < sizeof(strips)/sizeof(strips[0]); s++)
+  {
+    hirschberg_band_strip_rows = strips[s];
+    hirschberg_band_min_width = s % 2 ? 1 : 64;
+    if(s == 3) {
+      // Strips split into column blocks on several threads too
+      hirschberg_block_min_cells = 1;
+      hirschberg_block_min_cols = 8;
+      hirschberg_max_threads = 3;
+    }
+    for(i = 0; i < 40; i++)
+    {
+      scoring_init(&scoring, 1 + (int)hb_rand(5), -(int)hb_rand(16),
+                   -(int)hb_rand(11), -(int)hb_rand(6), false, false, false,
+                   false, false, false);
+      hb_rand_seq(seqa, 100 + hb_rand(1101), "acgt");
+      hb_mutate(seqb, seqa, rates[i % 4], "acgt");
+      simd_hb_check(seqa, seqb, &scoring, scalar, striped);
+      simd_hb_check(seqb, seqa, &scoring, scalar, striped);
+    }
+    scoring_system_BLOSUM62(&scoring);
+    for(i = 0; i < 8; i++)
+    {
+      hb_rand_seq(seqa, 100 + hb_rand(1101), "ARNDCQEGHILKMFPSTWYV");
+      hb_mutate(seqb, seqa, rates[i % 4], "ARNDCQEGHILKMFPSTWYV");
+      simd_hb_check(seqa, seqb, &scoring, scalar, striped);
+    }
+  }
+
+  // The band was used, and unbanded passes still matched the scalar ones
+  ASSERT(hirschberg_banded_passes > banded);
+  ASSERT(hirschberg_striped_mismatches == mismatches);
+
+  hirschberg_band_strip_rows = strip_rows;
+  hirschberg_band_min_width = min_width;
+  hirschberg_block_min_cells = min_cells;
+  hirschberg_block_min_cols = min_cols;
+  hirschberg_max_threads = max_threads;
+  alignment_free(scalar);
+  alignment_free(striped);
+}
+
 /* Column-block threading of the full-matrix fill: force small blocks so
  * short sequences are split across several threads */
 void simd_test_fill_blocks()
@@ -811,10 +905,60 @@ void simd_test_fill_blocks()
   aligner_destroy(&striped);
 }
 
+/* Block settings below one vector of columns (or zero) must not make empty
+ * blocks: these used to corrupt the heap or give 37 for a score of 40 */
+void simd_test_tiny_blocks()
+{
+  size_t a_cells = alignment_block_min_cells, a_cols = alignment_block_min_cols;
+  int a_threads = alignment_max_threads;
+  size_t h_cells = hirschberg_block_min_cells, h_cols = hirschberg_block_min_cols;
+  int h_threads = hirschberg_max_threads;
+  bool band = hirschberg_band_enabled;
+  aligner_t scalar, striped;
+  aligner_init(&scalar);
+  aligner_init(&striped);
+  alignment_t *hb_scalar = alignment_create(256);
+  alignment_t *hb_striped = alignment_create(256);
+  char forty[41];
+  scoring_t scoring;
+  const size_t cols[] = {0, 1};
+  const int threads[] = {2, 40};
+  size_t c, t;
+
+  memset(forty, 'A', 40); forty[40] = '\0';
+  scoring_init(&scoring, 1, -1, -3, -1, false, false, false, false,
+               false, false);
+  alignment_block_min_cells = hirschberg_block_min_cells = 1;
+  hirschberg_band_enabled = false;
+
+  for(c = 0; c < 2; c++)
+    for(t = 0; t < 2; t++)
+    {
+      alignment_block_min_cols = hirschberg_block_min_cols = cols[c];
+      alignment_max_threads = hirschberg_max_threads = threads[t];
+      simd_check("AA", "A", &scoring, 0, &scalar, &striped);
+      simd_check(forty, forty, &scoring, 0, &scalar, &striped);
+      simd_hb_check(forty, forty, &scoring, hb_scalar, hb_striped);
+      ASSERT(hb_striped->score == 40);
+    }
+
+  alignment_block_min_cells = a_cells; alignment_block_min_cols = a_cols;
+  alignment_max_threads = a_threads;
+  hirschberg_block_min_cells = h_cells; hirschberg_block_min_cols = h_cols;
+  hirschberg_max_threads = h_threads;
+  hirschberg_band_enabled = band;
+  aligner_destroy(&scalar);
+  aligner_destroy(&striped);
+  alignment_free(hb_scalar);
+  alignment_free(hb_striped);
+}
+
 void test_simd()
 {
   SUITE_START("Striped SIMD fill");
+  simd_test_tiny_blocks();
   simd_test_fill_blocks();
+  simd_test_hirschberg_band();
   simd_test_hirschberg_blocks();
   simd_test_hirschberg();
   simd_test_matches_scalar();
