@@ -77,6 +77,40 @@ void align_from_file(const char *path1, const char *path2,
 // Threads for the command line tools: --threads, or half the CPUs
 unsigned int cmdline_threads(const cmdline_t *cmd);
 
+// A command line tool's aligner and somewhere for its result: one for each
+// thread (see cmdline_run_tool())
+typedef struct
+{
+  void *aligner;
+  alignment_t *result;
+} tool_worker_t;
+
+// What a command line tool does itself; cmdline_run_tool() does the rest
+typedef struct
+{
+  // A new aligner for cmd's options (exits if out of memory), and freeing it
+  void* (*aligner_new)(const cmdline_t *cmd);
+  void (*aligner_free)(void *aligner);
+  // Give the aligner the settings to use
+  void (*set_options)(void *aligner, const alignment_options_t *opts);
+  // Align a pair as alignment number (names NULL if none), printing it to
+  // out and errors to err. Returns 0, or a status to exit with
+  int (*align)(tool_worker_t *wk, const char *seq_a, const char *seq_b,
+               const char *seq_a_name, const char *seq_b_name,
+               size_t number, FILE *out, FILE *err);
+  // The next pair's number, from its sequences (NULL: no numbering)
+  size_t (*number)(const char *seq_a, const char *seq_b);
+  // Called when pairs come from standard input (--stdin); may be NULL
+  void (*on_stdin)(void);
+} cmd_tool_t;
+
+// Run a command line tool once cmdline_new() has read its arguments: the
+// pair given on the command line, then the pairs in the files, several at
+// once on cmdline_threads() threads (one at a time from standard input or
+// when printing matrices). Frees cmd. Exits with the status of a pair that
+// fails; returns EXIT_SUCCESS otherwise
+int cmdline_run_tool(cmdline_t *cmd, const cmd_tool_t *tool);
+
 // Like align_from_file(), but aligns several pairs at once on up to
 // `threads` threads. For each pair, in input order on this thread, number()
 // gives a number for it (may be NULL: the pair's position); then run()

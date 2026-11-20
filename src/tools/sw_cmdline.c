@@ -25,18 +25,11 @@
 #include "smith_waterman.h"
 #include "hirschberg.h"
 
-cmdline_t *cmd;
-scoring_t scoring;
+static cmdline_t *cmd;
+static scoring_t scoring;
 
-// An aligner and somewhere to put its hits: one for each thread
-typedef struct
-{
-  sw_aligner_t *sw;
-  alignment_t *result;
-} sw_worker_t;
-
-size_t alignment_index = 0;
-bool wait_on_keystroke = 0;
+static size_t alignment_index = 0;
+static bool wait_on_keystroke = 0;
 
 static void sw_set_default_scoring(void)
 {
@@ -49,28 +42,30 @@ static void sw_set_default_scoring(void)
   scoring.gap_extend = -1;
 }
 
-static void* sw_worker_new(void)
+static void* sw_aligner_new(const cmdline_t *c)
 {
-  sw_worker_t *wk = malloc(sizeof(sw_worker_t));
-  if(wk == NULL) {
-    fprintf(stderr, "%s:%i: Out of memory\n", __FILE__, __LINE__);
-    exit(EXIT_FAILURE);
-  }
-  wk->sw = smith_waterman_new();
+  sw_aligner_t *sw = smith_waterman_new();
   // Just the best hit: traceback bytes instead of score matrices
-  smith_waterman_set_compact(wk->sw, cmd->max_hits_per_alignment_set &&
-                                     cmd->max_hits_per_alignment == 1 &&
-                                     !cmd->print_matrices);
-  wk->result = alignment_create(256);
-  return wk;
+  smith_waterman_set_compact(sw, c->max_hits_per_alignment_set &&
+                                 c->max_hits_per_alignment == 1 &&
+                                 !c->print_matrices);
+  return sw;
 }
 
-static void sw_worker_free(void *ptr)
+static void sw_aligner_free(void *sw)
 {
-  sw_worker_t *wk = ptr;
-  smith_waterman_free(wk->sw);
-  alignment_free(wk->result);
-  free(wk);
+  smith_waterman_free(sw);
+}
+
+static void sw_set_options(void *sw, const alignment_options_t *opts)
+{
+  smith_waterman_set_options(sw, opts);
+}
+
+// Interactive input: wait for a key after each hit
+static void sw_on_stdin(void)
+{
+  wait_on_keystroke = 1;
 }
 
 // Print one line of an alignment
@@ -151,11 +146,11 @@ static char get_next_hit(void)
 
 // Align two sequences against each other to find local alignments between
 // them, and print them to out (errors to err) as alignment number index
-static int align(sw_worker_t *wk, const char *seq_a, const char *seq_b,
+static int align(tool_worker_t *wk, const char *seq_a, const char *seq_b,
                   const char *seq_a_name, const char *seq_b_name,
                   size_t index, FILE *out, FILE *err)
 {
-  sw_aligner_t *sw = wk->sw;
+  sw_aligner_t *sw = wk->aligner;
   alignment_t *result = wk->result;
 
   if((seq_a_name != NULL || seq_b_name != NULL) && wait_on_keystroke)
@@ -365,33 +360,9 @@ static int align(sw_worker_t *wk, const char *seq_a, const char *seq_b,
 
 // The number of the next alignment: pairs that align() rejects as empty
 // (it reads them as strings) get none
-static size_t number_pair(read_t *read1, read_t *read2)
+static size_t number_pair(const char *seq_a, const char *seq_b)
 {
-  return read1->seq.b[0] == '\0' || read2->seq.b[0] == '\0'
-         ? 0 : alignment_index++;
-}
-
-static int align_pair_run(void *wk, read_t *read1, read_t *read2,
-                          size_t number, const alignment_options_t *opts,
-                          FILE *out, FILE *err)
-{
-  smith_waterman_set_options(((sw_worker_t*)wk)->sw, opts);
-  return align(wk, read1->seq.b, read2->seq.b,
-               (read1->name.end == 0 ? NULL : read1->name.b),
-               (read2->name.end == 0 ? NULL : read2->name.b), number,
-               out, err);
-}
-
-// One pair at a time, on this thread
-static sw_worker_t *main_worker;
-static alignment_options_t main_opts;
-
-static void align_pair_from_file(read_t *read1, read_t *read2)
-{
-  int status = align_pair_run(main_worker, read1, read2,
-                              number_pair(read1, read2), &main_opts,
-                              stdout, stderr);
-  if(status != 0) exit(status);
+  return seq_a[0] == '\0' || seq_b[0] == '\0' ? 0 : alignment_index++;
 }
 
 int main(int argc, char* argv[])
@@ -403,50 +374,8 @@ int main(int argc, char* argv[])
   sw_set_default_scoring();
   cmd = cmdline_new(argc, argv, &scoring, SEQ_ALIGN_SW_CMD);
 
-  // Threads within an alignment, and for pairs from files at once
-  unsigned int threads = cmdline_threads(cmd);
-  alignment_options_default(&main_opts);
-  main_opts.max_threads = main_opts.hb_max_threads = (int)threads;
-
-  // Align!
-  main_worker = sw_worker_new();
-  smith_waterman_set_options(main_worker->sw, &main_opts);
-
-  if(cmd->seq1 != NULL)
-  {
-    // Align seq1 and seq2
-    size_t index = cmd->seq1[0] == '\0' || cmd->seq2[0] == '\0'
-                   ? 0 : alignment_index++;
-    int status = align(main_worker, cmd->seq1, cmd->seq2, NULL, NULL, index,
-                       stdout, stderr);
-    if(status != 0) exit(status);
-  }
-
-  // Align from files
-  size_t i, num_of_file_pairs = cmdline_get_num_of_file_pairs(cmd);
-  for(i = 0; i < num_of_file_pairs; i++)
-  {
-    const char *file1 = cmdline_get_file1(cmd, i);
-    const char *file2 = cmdline_get_file2(cmd, i);
-    if(file1 != NULL && *file1 == '\0' && file2 == NULL) {
-      wait_on_keystroke = 1;
-      file1 = "-";
-    }
-    // Interactive input, and printed matrices, one pair at a time
-    if(threads > 1 && !wait_on_keystroke && !cmd->interactive &&
-       !cmd->print_matrices)
-      align_from_file_threaded(file1, file2, !cmd->interactive, threads,
-                               number_pair, &main_opts,
-                               align_pair_run, sw_worker_new,
-                               sw_worker_free);
-    else
-      align_from_file(file1, file2, &align_pair_from_file, !cmd->interactive);
-  }
-
-  // Free memory for storing alignment results
-  sw_worker_free(main_worker);
-
-  cmdline_free(cmd);
-
-  return EXIT_SUCCESS;
+  static const cmd_tool_t tool = {sw_aligner_new, sw_aligner_free,
+                                  sw_set_options, align, number_pair,
+                                  sw_on_stdin};
+  return cmdline_run_tool(cmd, &tool);
 }

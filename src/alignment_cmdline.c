@@ -997,3 +997,106 @@ void align_from_file_threaded(const char *path1, const char *path2,
   // As one pair at a time: after the failing pair's output
   if(status != 0) exit(status);
 }
+
+// The tool being run by cmdline_run_tool(), for the callbacks below
+static const cmd_tool_t *run_tool;
+static const cmdline_t *run_cmd;
+// One pair at a time, on this thread
+static tool_worker_t *main_worker;
+static alignment_options_t main_opts;
+
+static void* tool_worker_new(void)
+{
+  tool_worker_t *wk = malloc(sizeof(tool_worker_t));
+  if(wk == NULL) {
+    fprintf(stderr, "%s:%i: Out of memory\n", __FILE__, __LINE__);
+    exit(EXIT_FAILURE);
+  }
+  wk->aligner = run_tool->aligner_new(run_cmd);
+  wk->result = alignment_create(256);
+  return wk;
+}
+
+static void tool_worker_free(void *ptr)
+{
+  tool_worker_t *wk = ptr;
+  run_tool->aligner_free(wk->aligner);
+  alignment_free(wk->result);
+  free(wk);
+}
+
+static size_t tool_number(read_t *read1, read_t *read2)
+{
+  return run_tool->number(read1->seq.b, read2->seq.b);
+}
+
+static int tool_run(void *ptr, read_t *read1, read_t *read2, size_t number,
+                    const alignment_options_t *opts, FILE *out, FILE *err)
+{
+  tool_worker_t *wk = ptr;
+  run_tool->set_options(wk->aligner, opts);
+  return run_tool->align(wk, read1->seq.b, read2->seq.b,
+                         (read1->name.end == 0 ? NULL : read1->name.b),
+                         (read2->name.end == 0 ? NULL : read2->name.b),
+                         number, out, err);
+}
+
+static void tool_pair_from_file(read_t *read1, read_t *read2)
+{
+  size_t number = run_tool->number != NULL ? tool_number(read1, read2) : 0;
+  int status = tool_run(main_worker, read1, read2, number, &main_opts,
+                        stdout, stderr);
+  if(status != 0) exit(status);
+}
+
+int cmdline_run_tool(cmdline_t *cmd, const cmd_tool_t *tool)
+{
+  run_tool = tool;
+  run_cmd = cmd;
+
+  // Threads within an alignment, and for pairs from files at once
+  unsigned int threads = cmdline_threads(cmd);
+  alignment_options_default(&main_opts);
+  main_opts.max_threads = main_opts.hb_max_threads = (int)threads;
+
+  // Align!
+  main_worker = tool_worker_new();
+  tool->set_options(main_worker->aligner, &main_opts);
+
+  if(cmd->seq1 != NULL)
+  {
+    // Align seq1 and seq2 pair passed on the command line
+    size_t number = tool->number != NULL ? tool->number(cmd->seq1, cmd->seq2)
+                                         : 0;
+    int status = tool->align(main_worker, cmd->seq1, cmd->seq2, NULL, NULL,
+                             number, stdout, stderr);
+    if(status != 0) exit(status);
+  }
+
+  // Align from files
+  size_t i, num_of_file_pairs = cmdline_get_num_of_file_pairs(cmd);
+  for(i = 0; i < num_of_file_pairs; i++)
+  {
+    const char *file1 = cmdline_get_file1(cmd, i);
+    const char *file2 = cmdline_get_file2(cmd, i);
+    if(file1 != NULL && *file1 == '\0' && file2 == NULL) {
+      file1 = "-";
+      if(tool->on_stdin != NULL) tool->on_stdin();
+    }
+    // Interactive input, and printed matrices, one pair at a time
+    if(threads > 1 && !cmd->interactive && !cmd->print_matrices)
+      align_from_file_threaded(file1, file2, !cmd->interactive, threads,
+                               tool->number != NULL ? tool_number : NULL,
+                               &main_opts, tool_run, tool_worker_new,
+                               tool_worker_free);
+    else
+      align_from_file(file1, file2, &tool_pair_from_file, !cmd->interactive);
+  }
+
+  // Free memory for storing alignment results
+  tool_worker_free(main_worker);
+
+  cmdline_free(cmd);
+
+  return EXIT_SUCCESS;
+}
