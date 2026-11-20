@@ -110,6 +110,13 @@ enum Matrix { MATCH,GAP_A,GAP_B };
 
 #define MATRIX_NAME(x) ((x) == MATCH ? "MATCH" : ((x) == GAP_A ? "GAP_A" : "GAP_B"))
 
+// Ties: every traceback (alignment_reverse_move(), the traceback bytes of
+// every fill, and the walks that read them) steps to the first predecessor,
+// in the order GAP_A, GAP_B, MATCH, whose score plus the step's gives the
+// current score; Needleman-Wunsch starts in the last cell's best matrix in
+// the same order. Any new traceback must keep this to give the same
+// alignments (see the README's notes on equal-scoring alignments)
+
 // Traceback byte value for a step with no valid predecessor
 #define ALN_TRACE_NONE 3
 

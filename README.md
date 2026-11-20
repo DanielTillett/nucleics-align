@@ -155,6 +155,34 @@ out of memory) is made in linear space instead, where that supports the
 scoring. The score is the same, but it may choose another of several
 equal-scoring alignments. `needleman_wunsch --linearfallback` turns it on.
 
+Where several alignments score the same, which one is returned is fixed
+and the same on every path of the full-matrix aligners (score matrices,
+traceback bytes, bands, difference-encoded lanes, and bands or
+Smith-Waterman hits kept in strips, which reproduce the same bytes):
+* The traceback runs from the end of the alignment back to its start.
+  Needleman-Wunsch starts in the matrix of the last cell that holds the
+  best score, preferring GAP_A (a gap in the first sequence, from the cell
+  above), then GAP_B (a gap in the second, from the cell on the left), then
+  MATCH. Smith-Waterman starts in MATCH at the hit's last cell.
+* At each step it moves to the first predecessor, in the same order GAP_A,
+  GAP_B, MATCH, whose score plus the step's score gives the current score.
+  So in GAP_A an extension wins over an opening, but in GAP_B an opening
+  from GAP_A wins over an extension; from MATCH the diagonal cell's gap
+  states win over its MATCH, which tends to put a gap as late in the
+  alignment as it can go (`AAA` against `AA` gives `AA-`, `ACCA` against
+  `ACA` gives `AC-A`). The `nw_ties` and `nw_free_gaps` command line
+  fixtures pin such cases
+* Smith-Waterman hits come out by score, highest first, then by lowest
+  position in the first sequence, then in the second. A hit stops at a
+  cell scoring 0, and one that reaches a cell an earlier hit used is
+  dropped
+* `--linear` (and `hirschberg_align()`) gives the same score but may pick
+  another of the equal-scoring alignments: it splits each sub-problem at
+  the first best crossing of its middle row (a crossing in MATCH or a gap
+  before one inside a deletion), and in a one-row sub-problem puts the
+  first sequence's letter at the first best column, or a deletion next to
+  whichever neighbouring deletion it joins
+
 The aligners above end the program on an error. The `*_checked()` versions
 (`needleman_wunsch_align_checked()`, `smith_waterman_align_checked()`,
 `smith_waterman_fetch_checked()`, `hirschberg_align_checked()`,
