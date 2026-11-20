@@ -395,6 +395,20 @@ Where the speed comes from:
   costs 0-5% (50 kb at 0.5%: 0.069 -> 0.072 s). Larger budgets let it
   finish at 1 Mb and 0.1%, but the exact band was then slower there (4.5
   -> 5.3 s), likely because the narrower band runs on fewer threads
+* Once a band has a lower bound on the best score (the wavefront score, or
+  the score of the alignment a band too narrow found), each strip covers
+  only the diagonals that the cells above it can still reach while
+  scoring that much: a cell's bound is its score plus a match for every
+  letter left of the shorter remainder and a gap extension for the
+  difference. A cell whose bound is below the best score is on no best
+  path and cannot tie with one, so leaving it out changes no cell the
+  traceback reads, and the alignment is the same. This is the
+  computational volume of A*PA2 (see Algorithms below), there for edit
+  distance, here with affine gaps and only between strips. On the 8-core
+  machine below, best of 3: 1 Mb at 1% 13.6 -> 9.9 s, at 2% 26.4 -> 20.6
+  s, at 5% 67.6 -> 55.0 s; 300 kb at 2% 2.71 -> 2.11 s; 100 kb at 1% 0.69
+  -> 0.54 s; 50 kb at 0.5% 0.142 -> 0.100 s. 100 kb at 2% and 300 kb at
+  0.5% were within 4% either way
 * Long global alignments: a band whose traceback bytes would not fit in a
   quarter of the physical memory (`alignment_band_keep_max_cells`) keeps
   only one strip of rows' bytes at a time, and each strip's top row. The
@@ -524,18 +538,19 @@ cores, 16 threads, 62 GB, Linux), one run each:
 
 | Pair | Band, every byte kept | Band kept in strips | `--linear` |
 |---|---|---|---|
-| 100 kb, 1% | 0.63 s, 357 MB | (kept) | 0.59 s, 6 MB |
-| 300 kb, 5% | 5.54 s, 15.0 GB | (kept) | 7.68 s, 19 MB |
-| 1 Mb, 0.1% | 6.48 s, 3.6 GB | (kept) | 6.15 s, 45 MB |
-| 1 Mb, 0.5% | 7.51 s, 17.6 GB | 11.4 s, 302 MB | 11.8 s, 47 MB |
-| 1 Mb, 1% | 13.8 s, 34.7 GB | 18.2 s, 350 MB | 19.4 s, 49 MB |
-| 1 Mb, 2% | out of memory | 33.4 s, 520 MB | 34.7 s, 53 MB |
-| 1 Mb, 5% | out of memory | 79.6 s, 1.2 GB | 77.3 s, 63 MB |
+| 100 kb, 1% | 0.50 s, 268 MB | (kept) | 0.59 s, 6 MB |
+| 300 kb, 5% | 4.40 s, 11.6 GB | (kept) | 7.68 s, 19 MB |
+| 1 Mb, 0.1% | 4.98 s, 2.6 GB | (kept) | 6.15 s, 45 MB |
+| 1 Mb, 0.5% | 7.51 s, 17.6 GB* | 9.55 s, 286 MB | 11.8 s, 47 MB |
+| 1 Mb, 1% | 13.8 s, 34.7 GB* | 14.0 s, 319 MB | 19.4 s, 49 MB |
+| 1 Mb, 2% | out of memory | 27.0 s, 467 MB | 34.7 s, 53 MB |
+| 1 Mb, 5% | out of memory | 65.4 s, 1.1 GB | 77.3 s, 63 MB |
 
-With 62 GB, bands of up to about 15 GB keep every byte. Above that the band
-kept in strips takes about as long as `--linear`, which needs far less
-memory, so `--linear` suits the longest and most divergent pairs. The score
-alone (`--scoreonly`) took 0.05-38 s.
+With 62 GB, bands of up to about 15 GB keep every byte (* those two were
+measured before strips were narrowed, see above; the bands are now kept in
+strips). Above that the band kept in strips takes 15-28% less time than
+`--linear`, which needs far less memory still. The score alone
+(`--scoreonly`) took 0.05-38 s.
 
 Local alignment, best hit only (`smith_waterman --maxhits 1`), 20 kb:
 
@@ -906,6 +921,9 @@ Done:
   match scores converted to penalties as Eizenga & Paten describe (2022,
   bioRxiv 10.1101/2022.01.12.476087, a preprint). Our own code, written
   from the papers
+* Computational volumes, as in A*PA2 (Groot Koerkamp 2024, WABI, LIPIcs
+  312:17), adapted from edit distance to affine gaps, to narrow each strip
+  of a band. Our own code, written from the paper
 
 Algorithms to investigate:
 * Myers' bit-vector algorithm (1999, J ACM 46:395-415). Only computes unit

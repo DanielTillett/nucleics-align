@@ -1633,10 +1633,44 @@ void simd_test_compact_band(bool keep)
     kept += compact->traced && compact->trace_strips != NULL;
   }
 
+  // One long gap, in a or in b: the best path crosses many diagonals in a
+  // strip, which narrowed strips (see alignment_band_narrow()) must hold
+  scoring_init(&scoring, 1, -3, -5, -1, false, false, false, false,
+               false, false);
+  for(i = 0; i < 300; i++)
+  {
+    alignment_band_strip_rows = i % 4 ? 1 + i % 9 : 0;
+    alignment_band_min_width = i % 2 ? 1 : 64;
+    alignment_max_threads = 1 + (int)(i % 2) * 2;
+    alignment_band_wfa_budget = i / 3 % 2 ? 0 : (size_t)1 << 20;
+    hb_rand_seq(seqa, 800 + hb_rand(600), "acgt");
+    size_t len = strlen(seqa), at = hb_rand((unsigned int)len);
+    size_t gap = 1 + hb_rand((unsigned int)len / 10), j, o = 0;
+    char *in = i / 2 % 2 ? seqa : seqb, *out = i / 2 % 2 ? seqb : seqa;
+    if(in == seqb) memcpy(seqb, seqa, len + 1);
+    for(j = 0; j < len; j++) {
+      if(j == at) while(o < at + gap) out[o++] = "acgt"[hb_rand(4)];
+      out[o++] = in[j];
+    }
+    out[o] = '\0';
+    needleman_wunsch_align(seqa, seqb, &scoring, full, r_full);
+    alignment_band_counts(&tries0, &wfa0);
+    needleman_wunsch_align(seqa, seqb, &scoring, compact, r_compact);
+    alignment_band_counts(&tries, &wfa);
+    // Narrowed by the exact score, the band still passes first time
+    if(wfa > wfa0 && compact->trace_banded) {
+      ASSERT(tries == tries0 + 1);
+      sized++;
+    }
+    ASSERT(alignments_equal(r_full, r_compact));
+    banded += compact->traced && compact->trace_banded;
+    kept += compact->traced && compact->trace_strips != NULL;
+  }
+
   // Bands held for many (they need the striped fill), kept in strips only
   // where forced
 #ifdef ALN_STRIPED
-  ASSERT(banded > 400);
+  ASSERT(banded > 500);
   ASSERT(sized > 100);
 #else
   ASSERT(banded == 0 && sized == 0);

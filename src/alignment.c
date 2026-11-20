@@ -1066,12 +1066,13 @@ static bool alignment_score_guess(const sub_table_t *t,
 }
 
 // A band kept in strips (see alignment_band_keep_max_cells): what filling a
-// strip again needs. Strip s holds rows 1 + s*strip .. and the columns
-// alignment_strip() gives it; its top row (row y0-1), columns c0 .. c1,
-// is kept at rows + off[s], 3 x (c1 - c0 + 1) as MATCH, GAP_A, GAP_B
+// strip again needs. Strip s holds rows 1 + s*strip .. and columns c0[s] ..
+// c1 (the band's, see alignment_fill_banded()); its top row (row y0-1),
+// columns c0[s] .. c1, is kept at rows + off[s], 3 x (c1 - c0[s] + 1) as
+// MATCH, GAP_A, GAP_B
 typedef struct {
   size_t strip, nstrips;
-  ptrdiff_t dlo, dhi;
+  size_t *c0;
   score_t min;
   size_t *off;
   score_t *rows;
@@ -1085,6 +1086,7 @@ static void trace_strips_free(trace_strips_t *ts)
 {
   if(ts == NULL) return;
   free(ts->off);
+  free(ts->c0);
   free(ts->rows);
   free(ts->col0);
   free(ts->top);
@@ -1099,10 +1101,10 @@ static bool trace_strips_fill(aligner_t *aligner, trace_strips_t *ts,
 {
   const size_t w = aligner->score_width, h = aligner->score_height;
   const size_t len_i = w - 1, len_j = h - 1;
-  size_t y0 = 1 + s * ts->strip, y1, c0, c1, r, m;
-  alignment_strip(y0, ts->strip, len_i, len_j, ts->dlo, ts->dhi, &y1, &c0, &c1);
-  c1 = MIN2(c1, x);
-  const size_t width = c1 - c0, span = ts->off[s+1] - ts->off[s];
+  const size_t y0 = 1 + s * ts->strip, span = ts->off[s+1] - ts->off[s];
+  const size_t c0 = ts->c0[s], c1 = MIN2(c0 + span / 3 - 1, x);
+  const size_t width = c1 - c0;
+  size_t r, m;
   // Its top row, by column (the kept columns run to the strip's own c1)
   for(m = 0; m < 3; m++)
     memcpy(ts->top + m*w + c0, ts->rows + ts->off[s] + m * (span / 3),
@@ -1149,6 +1151,48 @@ bool alignment_trace_load(aligner_t *aligner, size_t x, size_t y)
   const size_t s = (y - 1) / ts->strip;
   if(s == ts->loaded && y <= ts->loaded_y && x <= ts->loaded_x) return true;
   return trace_strips_fill(aligner, ts, s, y, x);
+}
+
+// The diagonals x - y the strips below row y need, from row y's cells
+// (columns c0+1 .. c1; the rest are outside the band) and a lower bound lb
+// on the best score. A cell scoring v can end no better than its bound,
+// v + smax min(i, j) + e |i - j| (i, j the letters left of each sequence,
+// e the gap extension). A step towards diagonal len_i - len_j does not
+// raise the bound and one away lowers it by at least -2e, so from a cell
+// whose bound is lb + k, cells with bounds of lb or more lie only on the
+// diagonals from it to len_i - len_j and k / -2e beyond. A cell with a
+// bound under lb is on no best path, and could not tie with a cell on one,
+// so leaving it out changes no cell on a best path (the computational
+// volume A*PA2 narrows its band to: Groot Koerkamp 2024, WABI). Narrows
+// *lo .. *hi to those diagonals; no change if the gap extension is 0, or
+// no cell's bound reaches lb
+static void alignment_band_narrow(score_t *const row[3], size_t y,
+                                  size_t c0, size_t c1,
+                                  size_t len_i, size_t len_j, score_t smax,
+                                  int gap_extend, score_t lb,
+                                  ptrdiff_t *lo, ptrdiff_t *hi)
+{
+  if(gap_extend >= 0) return;
+  const long long e2 = -2LL * gap_extend;
+  const ptrdiff_t D = (ptrdiff_t)len_i - (ptrdiff_t)len_j;
+  ptrdiff_t nlo = PTRDIFF_MAX, nhi = PTRDIFF_MIN;
+  size_t x;
+  for(x = c0 + 1; x <= c1; x++) {
+    const long long v = MAX3(row[MATCH][x], row[GAP_A][x], row[GAP_B][x]);
+    const size_t ri = len_i - x, rj = len_j - y;
+    const long long bound = v + (long long)smax * (long long)MIN2(ri, rj) +
+                            (long long)gap_extend *
+                            (long long)(ri > rj ? ri - rj : rj - ri);
+    if(bound < lb) continue;
+    const ptrdiff_t d = (ptrdiff_t)x - (ptrdiff_t)y;
+    const ptrdiff_t k = (ptrdiff_t)MIN2((bound - lb) / e2,
+                                        (long long)(len_i + len_j));
+    nlo = MIN2(nlo, MIN2(d, D) - k);
+    nhi = MAX2(nhi, MAX2(d, D) + k);
+  }
+  if(nlo > nhi) return;
+  *lo = MAX2(*lo, nlo);
+  *hi = MIN2(*hi, nhi);
 }
 
 // Compact Needleman-Wunsch fill of only the cells near the main diagonals.
@@ -1238,6 +1282,9 @@ static fill_result_t alignment_fill_banded(aligner_t *aligner,
                                        len_i, len_j, exact));
     atomic_fetch_add(&alignment_band_wfa_sized, 1);
   }
+  // A lower bound on the best score, once known, narrows strips
+  bool have_lb = have_exact;
+  score_t lb = have_exact ? exact : 0;
   score_t *top = NULL, *lcol = NULL;
   fill_result_t done = FILL_SKIPPED;
 
@@ -1292,8 +1339,9 @@ static fill_result_t alignment_fill_banded(aligner_t *aligner,
       done = FILL_NOMEM;
       break;
     }
-    // Kept strips: room for the biggest strip's bytes, and every strip's
-    // top row (with column 0, which the first strips use)
+    // Room for every strip's bytes, or kept strips: the biggest strip's
+    // bytes, and every strip's top row (with column 0, which the first
+    // strips use). Strips narrowed by a lower bound (below) need less
     size_t cells = 0, kept = 0, nstrips = 0;
     for(y0 = 1; y0 <= len_j; y0 = y1 + 1, nstrips++) {
       alignment_strip(y0, strip, len_i, len_j, dlo, dhi, &y1, &c0, &c1);
@@ -1301,8 +1349,7 @@ static fill_result_t alignment_fill_banded(aligner_t *aligner,
         cells = MAX2(cells, (y1 - y0 + 1) * (c1 - c0));
         kept += 3 * (c1 - c0 + 1);
       }
-      else for(i = y0; i <= y1; i++, cells += c1 - c0)
-        aligner->trace_rows[i] = (ptrdiff_t)cells - (ptrdiff_t)(c0 + 1);
+      else cells += (y1 - y0 + 1) * (c1 - c0);
     }
     trace_strips_free(aligner->trace_strips);
     aligner->trace_strips = NULL;
@@ -1312,8 +1359,7 @@ static fill_result_t alignment_fill_banded(aligner_t *aligner,
       if(ts != NULL) {
         ts->strip = strip;
         ts->nstrips = ts->loaded = nstrips;
-        ts->dlo = dlo;
-        ts->dhi = dhi;
+        ts->c0 = aln_malloc(nstrips * sizeof(size_t));
         ts->min = min;
         ts->off = aln_malloc((nstrips + 1) * sizeof(size_t));
         ts->rows = aln_malloc(kept * sizeof(score_t));
@@ -1321,8 +1367,9 @@ static fill_result_t alignment_fill_banded(aligner_t *aligner,
         ts->top = aln_malloc(3 * w * sizeof(score_t));
         ts->lcol = aln_malloc(3 * (strip + 1) * sizeof(score_t));
       }
-      if(ts == NULL || ts->off == NULL || ts->rows == NULL ||
-         ts->col0 == NULL || ts->top == NULL || ts->lcol == NULL) {
+      if(ts == NULL || ts->off == NULL || ts->c0 == NULL ||
+         ts->rows == NULL || ts->col0 == NULL || ts->top == NULL ||
+         ts->lcol == NULL) {
         trace_strips_free(ts);
         done = FILL_NOMEM;
         break;
@@ -1344,10 +1391,15 @@ static fill_result_t alignment_fill_banded(aligner_t *aligner,
     }
 
     size_t jr_prev = len_i; // the top row is right up to here
-    size_t s = 0;
+    size_t s = 0, used = 0, c0_prev = 0;
+    ptrdiff_t sdlo = dlo, sdhi = dhi; // this strip's diagonals
     for(y0 = 1; y0 <= len_j; y0 = y1 + 1, s++)
     {
-      alignment_strip(y0, strip, len_i, len_j, dlo, dhi, &y1, &c0, &c1);
+      // Not left of the strip above's left column: a path only moves right,
+      // so one reaching a cell there passes left of the strip above too
+      sdlo = MAX2(sdlo, (ptrdiff_t)c0_prev + 1 - (ptrdiff_t)y0);
+      alignment_strip(y0, strip, len_i, len_j, sdlo, sdhi, &y1, &c0, &c1);
+      c0_prev = c0;
       // Columns the strip above did not reach
       for(i = jr_prev + 1; i <= c1; i++)
         topm[MATCH][i] = topm[GAP_A][i] = topm[GAP_B][i] = min;
@@ -1356,6 +1408,7 @@ static fill_result_t alignment_fill_banded(aligner_t *aligner,
         // The strip's top row, and its bytes from the start of trace
         const size_t span = c1 - c0 + 1;
         if(s == 0) ts->off[0] = 0;
+        ts->c0[s] = c0;
         for(m = 0; m < 3; m++)
           memcpy(ts->rows + ts->off[s] + m * span, topm[m] + c0,
                  span * sizeof(score_t));
@@ -1364,6 +1417,8 @@ static fill_result_t alignment_fill_banded(aligner_t *aligner,
           aligner->trace_rows[i] = (ptrdiff_t)((i - y0) * (c1 - c0)) -
                                    (ptrdiff_t)(c0 + 1);
       }
+      else for(i = y0; i <= y1; i++, used += c1 - c0)
+        aligner->trace_rows[i] = (ptrdiff_t)used - (ptrdiff_t)(c0 + 1);
 
       alignment_block_t tmpl = {
         .aligner = aligner, .table = table, .min = min,
@@ -1384,6 +1439,15 @@ static fill_result_t alignment_fill_banded(aligner_t *aligner,
         }
       }
       if(!alignment_fill_blocks(&tmpl)) break;
+      // Column c0 of the last row is outside the band, for a strip below
+      // with the same left column
+      if(c0 > 0)
+        topm[MATCH][c0] = topm[GAP_A][c0] = topm[GAP_B][c0] = min;
+      sdlo = dlo;
+      sdhi = dhi;
+      if(have_lb)
+        alignment_band_narrow(topm, y1, c0, c1, len_i, len_j, smax,
+                              scoring->gap_extend, lb, &sdlo, &sdhi);
     }
     if(y0 <= len_j) {
       trace_strips_free(ts);
@@ -1409,6 +1473,8 @@ static fill_result_t alignment_fill_banded(aligner_t *aligner,
     else {
       trace_strips_free(ts);
       bw = MAX2(need, 2*bw);
+      have_lb = true; // a real alignment's score
+      lb = best;
     }
   }
 
