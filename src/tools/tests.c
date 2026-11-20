@@ -1543,9 +1543,12 @@ void simd_test_rect_gap_score()
 
 /* Banded compact Needleman-Wunsch fills give the same alignment as the
  * score matrices: narrow first bands (widened when the score found needs
- * it), strips of a few rows, threaded strips, DNA and protein */
-void simd_test_compact_band()
+ * it), strips of a few rows, threaded strips, DNA and protein. With keep
+ * false, every band keeps one strip's bytes at a time, filled again as the
+ * traceback reaches it */
+void simd_test_compact_band(bool keep)
 {
+  size_t keep_cells = alignment_band_keep_max_cells;
   size_t min_cells = alignment_block_min_cells;
   size_t min_cols = alignment_block_min_cols;
   int max_threads = alignment_max_threads;
@@ -1557,11 +1560,12 @@ void simd_test_compact_band()
   scoring_t scoring;
   const size_t strips[] = {1, 5, 32, 0};
   const unsigned int rates[] = {0, 5, 30, 120};
-  size_t s, i, banded = 0;
+  size_t s, i, banded = 0, kept = 0;
 
   compact->compact = true;
   alignment_block_min_cells = 1;
   alignment_block_min_cols = 8;
+  if(!keep) alignment_band_keep_max_cells = 1;
 
   for(s = 0; s < 4; s++)
   {
@@ -1585,6 +1589,7 @@ void simd_test_compact_band()
       needleman_wunsch_align(seqa, seqb, &scoring, compact, r_compact);
       ASSERT(alignments_equal(r_full, r_compact));
       banded += compact->traced && compact->trace_banded;
+      kept += compact->traced && compact->trace_strips != NULL;
     }
   }
   // Tight bounds: no gap open, and b is a with one base moved, so the band
@@ -1609,14 +1614,18 @@ void simd_test_compact_band()
     needleman_wunsch_align(seqa, seqb, &scoring, compact, r_compact);
     ASSERT(alignments_equal(r_full, r_compact));
     banded += compact->traced && compact->trace_banded;
+    kept += compact->traced && compact->trace_strips != NULL;
   }
 
-  // Bands held for many (they need the striped fill)
+  // Bands held for many (they need the striped fill), kept in strips only
+  // where forced
 #ifdef ALN_STRIPED
   ASSERT(banded > 400);
 #else
   ASSERT(banded == 0);
 #endif
+  ASSERT(keep ? kept == 0 : kept == banded);
+  alignment_band_keep_max_cells = keep_cells;
 
   alignment_block_min_cells = min_cells;
   alignment_block_min_cols = min_cols;
@@ -1639,7 +1648,8 @@ void test_simd()
   simd_test_rect_gap_score();
   simd_test_narrow(16);
   simd_test_narrow(8);
-  simd_test_compact_band();
+  simd_test_compact_band(true);
+  simd_test_compact_band(false);
   simd_test_compact();
   simd_test_tiny_blocks();
   simd_test_fill_blocks();
@@ -2147,6 +2157,7 @@ void test_out_of_memory()
   // is cheap enough that a band this wide would not pay at some lane
   // counts), and the whole fill with difference-encoded lanes on blocks
   many.diff = false;
+  many.band_keep_max_cells = 1; // bands kept in strips
   alignment_options_t whole = many;
   whole.band = whole.hb_band = false;
   whole.diff = true;

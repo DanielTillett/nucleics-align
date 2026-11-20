@@ -87,7 +87,10 @@ static void _nw_finish(const nw_aligner_t *nw, alignment_t *result,
 
 // The traceback below, from the traceback bytes of a compact fill. Returns
 // false at a step with no valid predecessor, for the matrices to report
-static bool _nw_follow_trace(const nw_aligner_t *nw, alignment_t *result)
+// Returns 1, or 0 if a step has no predecessor (the caller then fills the
+// matrices, to report it), or -1 if out of memory (filling a band's strip
+// again, see alignment_trace_load())
+static int _nw_follow_trace(nw_aligner_t *nw, alignment_t *result)
 {
   const size_t w = nw->score_width;
   size_t longest_alignment = w-1 + nw->score_height-1;
@@ -111,17 +114,18 @@ static bool _nw_follow_trace(const nw_aligner_t *nw, alignment_t *result)
     result->result_a[next_char] = curr_matrix == GAP_A ? '-' : nw->seq_a[score_x-1];
     result->result_b[next_char] = curr_matrix == GAP_B ? '-' : nw->seq_b[score_y-1];
 
+    if(!alignment_trace_load(nw, score_x, score_y)) return -1;
     int next = alignment_trace_next(nw,
                                     alignment_trace_index(nw, score_x, score_y),
                                     curr_matrix);
-    if(next == ALN_TRACE_NONE) return false;
+    if(next == ALN_TRACE_NONE) return 0;
     if(curr_matrix != GAP_A) score_x--;
     if(curr_matrix != GAP_B) score_y--;
     curr_matrix = (enum Matrix)next;
   }
 
   _nw_finish(nw, result, score_x, score_y, next_char, longest_alignment);
-  return true;
+  return 1;
 }
 
 aln_status_t needleman_wunsch_align_checked(const char *a, const char *b,
@@ -177,7 +181,9 @@ static aln_status_t _nw_align(const char *a, const char *b,
   if(!alignment_reserve(result, longest_alignment)) return ALN_ERR_NOMEM;
 
   if(nw->traced) {
-    if(_nw_follow_trace(nw, result)) return ALN_OK;
+    const int followed = _nw_follow_trace(nw, result);
+    if(followed > 0) return ALN_OK;
+    if(followed < 0) return ALN_ERR_NOMEM;
     // Fill the matrices, so the traceback below reports the failed step
     nw->compact = false;
     status = aligner_align_checked(nw, a, b, len_a, len_b, scoring, 0);

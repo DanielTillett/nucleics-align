@@ -127,6 +127,7 @@ int alignment_max_threads = 0; // 0: half the CPUs
 bool alignment_band_enabled = true;
 size_t alignment_band_strip_rows = 0; // 0: automatic
 size_t alignment_band_min_width = 64;
+size_t alignment_band_keep_max_cells = 0; // 0: a quarter of the memory
 
 // 8- and 16-bit lanes for Smith-Waterman fills (see alignment_narrow_limit())
 bool alignment_narrow_enabled = true, alignment_byte_enabled = true;
@@ -179,6 +180,7 @@ void alignment_options_default(alignment_options_t *opts)
   opts->block_min_cols = alignment_block_min_cols;
   opts->band_strip_rows = alignment_band_strip_rows;
   opts->band_min_width = alignment_band_min_width;
+  opts->band_keep_max_cells = alignment_band_keep_max_cells;
   opts->sw_rect_min_cells = smith_waterman_rect_min_cells;
   opts->sw_strip_min_cells = smith_waterman_strip_min_cells;
   opts->hb_max_threads = hirschberg_max_threads;
@@ -986,6 +988,91 @@ static void alignment_strip(size_t y0, size_t strip, size_t len_i,
   *c1 = hi >= (ptrdiff_t)len_i ? len_i : (size_t)hi;
 }
 
+// A band kept in strips (see alignment_band_keep_max_cells): what filling a
+// strip again needs. Strip s holds rows 1 + s*strip .. and the columns
+// alignment_strip() gives it; its top row (row y0-1), columns c0 .. c1,
+// is kept at rows + off[s], 3 x (c1 - c0 + 1) as MATCH, GAP_A, GAP_B
+typedef struct {
+  size_t strip, nstrips;
+  ptrdiff_t dlo, dhi;
+  score_t min;
+  size_t *off;
+  score_t *rows;
+  score_t *col0; // column 0, 3 x score_height, for strips that reach it
+  score_t *top; // 3 x score_width: a strip's top row by column
+  score_t *lcol; // 3 x (strip + 1): its left column
+  size_t loaded, loaded_y, loaded_x; // the strip in trace, to row, column
+} trace_strips_t;
+
+static void trace_strips_free(trace_strips_t *ts)
+{
+  if(ts == NULL) return;
+  free(ts->off);
+  free(ts->rows);
+  free(ts->col0);
+  free(ts->top);
+  free(ts->lcol);
+  free(ts);
+}
+
+// Fill strip s of a band again, rows y0 .. y (y in the strip) and its
+// columns up to x, into trace from its kept top row
+static bool trace_strips_fill(aligner_t *aligner, trace_strips_t *ts,
+                              size_t s, size_t y, size_t x)
+{
+  const size_t w = aligner->score_width, h = aligner->score_height;
+  const size_t len_i = w - 1, len_j = h - 1;
+  size_t y0 = 1 + s * ts->strip, y1, c0, c1, r, m;
+  alignment_strip(y0, ts->strip, len_i, len_j, ts->dlo, ts->dhi, &y1, &c0, &c1);
+  c1 = MIN2(c1, x);
+  const size_t width = c1 - c0, span = ts->off[s+1] - ts->off[s];
+  // Its top row, by column (the kept columns run to the strip's own c1)
+  for(m = 0; m < 3; m++)
+    memcpy(ts->top + m*w + c0, ts->rows + ts->off[s] + m * (span / 3),
+           (width + 1) * sizeof(score_t));
+  const score_t *top[3] = {ts->top, ts->top + w, ts->top + 2*w};
+  for(r = y0; r <= y; r++)
+    aligner->trace_rows[r] = (ptrdiff_t)((r - y0) * width) -
+                             (ptrdiff_t)(c0 + 1);
+  sub_table_t table;
+  if(!sub_table_build(&table, aligner->scoring, aligner->seq_a, len_i,
+                      aligner->seq_b, len_j)) return false;
+  alignment_block_t tmpl = {
+    .aligner = aligner, .table = &table, .min = ts->min,
+    .c0 = c0, .width = width, .y0 = y0, .y1 = y,
+    .r0 = {top[MATCH], top[GAP_A], top[GAP_B]}, .lstride = 1,
+    .trace = aligner->trace, .trace_rows = aligner->trace_rows};
+  for(m = 0; m < 3; m++) {
+    if(c0 == 0) tmpl.lc[m] = ts->col0 + m*h;
+    else {
+      // As the fill set it: the cell above the strip, then min
+      score_t *lcm = ts->lcol + m * (ts->strip + 1);
+      lcm[0] = top[m][c0];
+      for(r = 1; r <= y - y0 + 1; r++) lcm[r] = ts->min;
+      tmpl.lc[m] = lcm;
+      tmpl.ly0 = y0 - 1;
+    }
+  }
+  bool filled = alignment_fill_blocks(&tmpl);
+  sub_table_free(&table);
+  if(filled) {
+    ts->loaded = s;
+    ts->loaded_y = y;
+    ts->loaded_x = c1;
+  }
+  else ts->loaded = ts->nstrips; // none
+  return filled;
+}
+
+bool alignment_trace_load(aligner_t *aligner, size_t x, size_t y)
+{
+  trace_strips_t *ts = aligner->trace_strips;
+  if(ts == NULL || y == 0) return true;
+  const size_t s = (y - 1) / ts->strip;
+  if(s == ts->loaded && y <= ts->loaded_y && x <= ts->loaded_x) return true;
+  return trace_strips_fill(aligner, ts, s, y, x);
+}
+
 // Compact Needleman-Wunsch fill of only the cells near the main diagonals.
 // A path through a cell far from them needs many gap characters, which caps
 // its score (alignment_band_width()). The rows run in strips, each over
@@ -997,7 +1084,10 @@ static void alignment_strip(size_t y0, size_t strip, size_t len_i,
 // outside could tie with one on a best path, and the traceback takes the
 // same steps as with every cell filled. Otherwise the band is widened and
 // filled again. Returns false, with nothing done, once a band would not be
-// faster than the whole fill on its threads
+// faster than the whole fill on its threads. A band of more than
+// band_keep_max_cells cells keeps one strip's bytes at a time, and each
+// strip's top row (aligner->trace_strips, see alignment_trace_load()), in
+// strips of at most about sqrt(12 x rows) rows
 static fill_result_t alignment_fill_banded(aligner_t *aligner,
                                            const sub_table_t *table,
                                            score_t min, score_t *const row0[3],
@@ -1037,9 +1127,27 @@ static fill_result_t alignment_fill_banded(aligner_t *aligner,
     // Columns per row, plus the strip height the window grows by
     if(bw >= len_i) break;
     const double cols = (double)(D < 0 ? -D : D) + 2.0*bw + 1;
-    const size_t strip = aligner->opts.band_strip_rows
-                         ? aligner->opts.band_strip_rows
-                         : MAX2(64, (size_t)(cols / 4));
+    size_t strip = aligner->opts.band_strip_rows
+                   ? aligner->opts.band_strip_rows
+                   : MAX2(64, (size_t)(cols / 4));
+    double keep_max = (double)aligner->opts.band_keep_max_cells;
+    if(keep_max == 0) {
+      // A quarter of the physical memory (or 1 GB if unknown): the strips
+      // cost a second fill of the band as the traceback reaches them
+      long pages = sysconf(_SC_PHYS_PAGES), page = sysconf(_SC_PAGESIZE);
+      keep_max = pages > 0 && page > 0 ? (double)pages * (double)page / 4
+                                       : (double)((size_t)1 << 30);
+    }
+    const bool keep = (double)len_j * (cols + (double)strip) > keep_max;
+    if(keep && !aligner->opts.band_strip_rows) {
+      // At most about sqrt(12 x rows) rows, so a wide band's one strip of
+      // bytes stays small; a narrow band keeps its usual strips (taller
+      // ones would reach further across: 300 kb at 0.1%, 0.68 -> 2.0 s),
+      // and their top rows take only about 60 bytes per row
+      size_t most;
+      for(most = 64; most * most < 12 * len_j; most++) {}
+      strip = MIN2(strip, most);
+    }
     // A fill on t threads runs about max(1, t/2) times faster (16 threads:
     // 6-8x); a narrow band runs on one
     const double band_threads =
@@ -1064,13 +1172,46 @@ static fill_result_t alignment_fill_banded(aligner_t *aligner,
       done = FILL_NOMEM;
       break;
     }
-    size_t cells = 0;
-    for(y0 = 1; y0 <= len_j; y0 = y1 + 1) {
+    // Kept strips: room for the biggest strip's bytes, and every strip's
+    // top row (with column 0, which the first strips use)
+    size_t cells = 0, kept = 0, nstrips = 0;
+    for(y0 = 1; y0 <= len_j; y0 = y1 + 1, nstrips++) {
       alignment_strip(y0, strip, len_i, len_j, dlo, dhi, &y1, &c0, &c1);
-      for(i = y0; i <= y1; i++, cells += c1 - c0)
+      if(keep) {
+        cells = MAX2(cells, (y1 - y0 + 1) * (c1 - c0));
+        kept += 3 * (c1 - c0 + 1);
+      }
+      else for(i = y0; i <= y1; i++, cells += c1 - c0)
         aligner->trace_rows[i] = (ptrdiff_t)cells - (ptrdiff_t)(c0 + 1);
     }
+    trace_strips_free(aligner->trace_strips);
+    aligner->trace_strips = NULL;
+    trace_strips_t *ts = NULL;
+    if(keep) {
+      ts = aln_calloc(1, sizeof(trace_strips_t));
+      if(ts != NULL) {
+        ts->strip = strip;
+        ts->nstrips = ts->loaded = nstrips;
+        ts->dlo = dlo;
+        ts->dhi = dhi;
+        ts->min = min;
+        ts->off = aln_malloc((nstrips + 1) * sizeof(size_t));
+        ts->rows = aln_malloc(kept * sizeof(score_t));
+        ts->col0 = aln_malloc(3 * h * sizeof(score_t));
+        ts->top = aln_malloc(3 * w * sizeof(score_t));
+        ts->lcol = aln_malloc(3 * (strip + 1) * sizeof(score_t));
+      }
+      if(ts == NULL || ts->off == NULL || ts->rows == NULL ||
+         ts->col0 == NULL || ts->top == NULL || ts->lcol == NULL) {
+        trace_strips_free(ts);
+        done = FILL_NOMEM;
+        break;
+      }
+      for(m = 0; m < 3; m++)
+        memcpy(ts->col0 + m*h, col0[m], h * sizeof(score_t));
+    }
     if(!alignment_trace_capacity(aligner, cells)) {
+      trace_strips_free(ts);
       done = FILL_NOMEM;
       break;
     }
@@ -1083,13 +1224,26 @@ static fill_result_t alignment_fill_banded(aligner_t *aligner,
     }
 
     size_t jr_prev = len_i; // the top row is right up to here
-    for(y0 = 1; y0 <= len_j; y0 = y1 + 1)
+    size_t s = 0;
+    for(y0 = 1; y0 <= len_j; y0 = y1 + 1, s++)
     {
       alignment_strip(y0, strip, len_i, len_j, dlo, dhi, &y1, &c0, &c1);
       // Columns the strip above did not reach
       for(i = jr_prev + 1; i <= c1; i++)
         topm[MATCH][i] = topm[GAP_A][i] = topm[GAP_B][i] = min;
       jr_prev = c1;
+      if(keep) {
+        // The strip's top row, and its bytes from the start of trace
+        const size_t span = c1 - c0 + 1;
+        if(s == 0) ts->off[0] = 0;
+        for(m = 0; m < 3; m++)
+          memcpy(ts->rows + ts->off[s] + m * span, topm[m] + c0,
+                 span * sizeof(score_t));
+        ts->off[s+1] = ts->off[s] + 3 * span;
+        for(i = y0; i <= y1; i++)
+          aligner->trace_rows[i] = (ptrdiff_t)((i - y0) * (c1 - c0)) -
+                                   (ptrdiff_t)(c0 + 1);
+      }
 
       alignment_block_t tmpl = {
         .aligner = aligner, .table = table, .min = min,
@@ -1111,6 +1265,7 @@ static fill_result_t alignment_fill_banded(aligner_t *aligner,
       if(!alignment_fill_blocks(&tmpl)) break;
     }
     if(y0 <= len_j) {
+      trace_strips_free(ts);
       done = FILL_NOMEM;
       break;
     }
@@ -1120,8 +1275,20 @@ static fill_result_t alignment_fill_banded(aligner_t *aligner,
                         aligner->final_scores[GAP_B]);
     size_t need = alignment_band_width(smax, scoring->gap_extend,
                                        len_i, len_j, best);
-    if(need <= bw) done = FILL_DONE;
-    else bw = MAX2(need, 2*bw);
+    if(need <= bw) {
+      done = FILL_DONE;
+      if(ts != NULL) {
+        // The last strip's bytes are in trace, for the start of the walk
+        ts->loaded = nstrips - 1;
+        ts->loaded_y = len_j;
+        ts->loaded_x = len_i;
+        aligner->trace_strips = ts;
+      }
+    }
+    else {
+      trace_strips_free(ts);
+      bw = MAX2(need, 2*bw);
+    }
   }
 
   free(top);
@@ -1190,6 +1357,8 @@ static fill_result_t alignment_fill_trace(aligner_t *aligner, char is_sw)
     return FILL_NOMEM;
   }
   aligner->trace_banded = false;
+  trace_strips_free(aligner->trace_strips);
+  aligner->trace_strips = NULL;
   fill_result_t done = FILL_SKIPPED;
   if(!is_sw) done = alignment_fill_banded(aligner, &table, min, row0, col0);
   if(done == FILL_SKIPPED && !alignment_trace_capacity(aligner, w * h))
@@ -1417,6 +1586,7 @@ aln_status_t aligner_align_checked(aligner_t *aligner,
 
 void aligner_destroy(aligner_t *aligner)
 {
+  trace_strips_free(aligner->trace_strips);
   free(aligner->trace);
   free(aligner->trace_rows);
   if(aligner->capacity > 0) {

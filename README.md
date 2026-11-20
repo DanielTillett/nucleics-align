@@ -333,6 +333,14 @@ Where the speed comes from:
   10% 0.40 -> 0.20 s, unrelated 0.28 -> 0.18 s. Bands are filled in strips
   of at least 64 rows (was 256), which makes a band 6-30% quicker and a
   first band that proves too narrow cheaper
+* Long global alignments: a band whose traceback bytes would not fit in a
+  quarter of the physical memory (`alignment_band_keep_max_cells`) keeps
+  only one strip of rows' bytes at a time, and each strip's top row. The
+  traceback fills a strip again from its top row when it reaches it, only
+  up to the column it has reached, so the bytes and the alignment are the
+  same. The band is filled about twice, so smaller bands keep every byte.
+  1 Mb pairs at 1% divergence: 34.7 GB -> 350 MB (13.8 -> 18.2 s); at 2%
+  and 5% they no longer run out of memory (see Long pairs below)
 * Strip alignments: a compact best hit whose region (the rectangle, or the
   whole matrix where a hit spans the sequences) has more than 2^28 cells
   keeps no traceback bytes for it. The scan for the best cell also keeps
@@ -447,6 +455,25 @@ Global alignment score only (every tool under 40 MB):
 | parasail | 0.18 s | 0.17 s | 0.07 s | 1.14 s | 1.00 s | 0.45 s |
 | ksw2 | 0.10 s | 0.10 s | 0.10 s | 0.63 s | 0.62 s | 0.61 s |
 | WFA2 | <0.01 s | 0.46 s | 8.47 s | 0.03 s | 2.74 s | 49.5 s |
+
+Long pairs, global alignment with the alignment returned
+(`needleman_wunsch`), measured on another machine (AMD Ryzen 7 5700G, 8
+cores, 16 threads, 62 GB, Linux), one run each:
+
+| Pair | Band, every byte kept | Band kept in strips | `--linear` |
+|---|---|---|---|
+| 100 kb, 1% | 0.63 s, 357 MB | (kept) | 0.59 s, 6 MB |
+| 300 kb, 5% | 5.54 s, 15.0 GB | (kept) | 7.68 s, 19 MB |
+| 1 Mb, 0.1% | 6.48 s, 3.6 GB | (kept) | 6.15 s, 45 MB |
+| 1 Mb, 0.5% | 7.51 s, 17.6 GB | 11.4 s, 302 MB | 11.8 s, 47 MB |
+| 1 Mb, 1% | 13.8 s, 34.7 GB | 18.2 s, 350 MB | 19.4 s, 49 MB |
+| 1 Mb, 2% | out of memory | 33.4 s, 520 MB | 34.7 s, 53 MB |
+| 1 Mb, 5% | out of memory | 79.6 s, 1.2 GB | 77.3 s, 63 MB |
+
+With 62 GB, bands of up to about 15 GB keep every byte. Above that the band
+kept in strips takes about as long as `--linear`, which needs far less
+memory, so `--linear` suits the longest and most divergent pairs. The score
+alone (`--scoreonly`) took 0.05-38 s.
 
 Local alignment, best hit only (`smith_waterman --maxhits 1`), 20 kb:
 

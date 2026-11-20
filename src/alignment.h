@@ -40,6 +40,7 @@ typedef struct
   int max_threads; // full-matrix fills (0: half the CPUs)
   bool striped, band, narrow, byte, diff;
   size_t block_min_cells, block_min_cols, band_strip_rows, band_min_width;
+  size_t band_keep_max_cells; // see alignment_band_keep_max_cells
   size_t sw_rect_min_cells; // see smith_waterman_rect_min_cells
   size_t sw_strip_min_cells; // see smith_waterman_strip_min_cells
   // Linear space (hirschberg.h)
@@ -74,6 +75,10 @@ typedef struct
   bool trace_banded;
   ptrdiff_t *trace_rows;
   size_t trace_rows_capacity;
+  // A band too big to keep (see alignment_band_keep_max_cells): trace and
+  // trace_rows hold one strip of rows at a time, which alignment_trace_load()
+  // fills again as needed (private; NULL otherwise)
+  void *trace_strips;
 } aligner_t;
 
 // Store alignment result here
@@ -206,6 +211,14 @@ extern int alignment_max_threads;
 // tuning and tests
 extern bool alignment_band_enabled;
 extern size_t alignment_band_strip_rows, alignment_band_min_width;
+// Bands of more than this many cells (0, the default: a quarter of the
+// physical memory, one traceback byte per cell) keep only one strip of
+// rows' bytes at a time, and each strip's top row: the traceback fills a
+// strip again when it reaches it (see alignment_trace_load()). Same
+// alignment, in at most about sqrt(12 x rows) rows' worth of bytes (1 Mb at
+// 1% divergence: 35 GB -> 350 MB), but the band is filled about twice. For
+// tuning and tests
+extern size_t alignment_band_keep_max_cells;
 
 // Smith-Waterman fills and scans use 8-bit lanes (4 times as many) or
 // 16-bit lanes (twice as many) where the scores allow, and start again
@@ -269,6 +282,13 @@ bool alignment_sw_trace_rows(const char *a, size_t len_a,
                              const alignment_options_t *opts,
                              const score_t *row, size_t y0, size_t y1,
                              size_t xmax, uint8_t *trace);
+
+// Before reading the traceback byte of cell (x, y) of a band kept in strips
+// (aligner->trace_strips set), fill again the strip holding row y, up to
+// column x, from the row kept above it: the same bytes as the whole band
+// had. Does nothing otherwise, or if that strip is loaded. Returns false if
+// out of memory
+bool alignment_trace_load(aligner_t *aligner, size_t x, size_t y);
 
 // Constructors/Destructors for alignment. alignment_create() and
 // alignment_ensure_capacity() exit if out of memory; alignment_reserve()
