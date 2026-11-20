@@ -1230,6 +1230,89 @@ void simd_test_strips()
   alignment_free(r_strips);
 }
 
+/* Needleman-Wunsch traceback bytes from difference-encoded lanes are those
+ * of the absolute 32-bit fill, cell for cell, with the same final scores:
+ * scorings within the 8-bit range, at its edge, in the 16-bit range and
+ * beyond it (absolute lanes then), on one thread and on column blocks */
+void simd_test_diff()
+{
+  alignment_options_t on, off;
+  alignment_options_default(&on);
+  on.band = false; // the whole fill
+  on.block_min_cells = 1;
+  on.block_min_cols = 8;
+  off = on;
+  off.diff = false;
+  aligner_t al_on, al_off;
+  aligner_init(&al_on);
+  aligner_init(&al_off);
+  al_on.compact = al_off.compact = true;
+  al_on.options = &on;
+  al_off.options = &off;
+  static char seqa[1201], seqb[2001], core[1001];
+  scoring_t scoring;
+  const unsigned int rates[] = {0, 20, 100, 400};
+  size_t i, x, y, fills = alignment_diff_count(), traced = 0;
+
+  for(i = 0; i < 300; i++)
+  {
+    on.max_threads = off.max_threads = 1 + (int)(i % 4);
+    const char *alpha = i % 2 ? "acgt" : "ac";
+    switch(i % 5) {
+      case 0: // DNA-like, well within 8 bits
+        scoring_init(&scoring, 1 + (int)hb_rand(2), -(int)hb_rand(4),
+                     -(int)hb_rand(8), -(int)hb_rand(3), false, false, false,
+                     false, false, false);
+        break;
+      case 1: // near the 8-bit limits, either side
+        scoring_init(&scoring, 1 + (int)hb_rand(12), -(int)hb_rand(20),
+                     -(int)hb_rand(16), -(int)hb_rand(6), false, false, false,
+                     false, false, false);
+        break;
+      case 2: // 16 bits
+        scoring_init(&scoring, 1 + (int)hb_rand(300), -(int)hb_rand(600),
+                     -(int)hb_rand(900), -(int)hb_rand(300), false, false,
+                     false, false, false, false);
+        break;
+      case 3: // a gap scoring above 0: absolute lanes
+        scoring_init(&scoring, 1 + (int)hb_rand(3), -(int)hb_rand(4),
+                     (int)hb_rand(3), (int)hb_rand(3) - 1, false, false,
+                     false, false, false, false);
+        break;
+      default:
+        scoring_system_BLOSUM62(&scoring);
+        alpha = "ARNDCQEGHILKMFPSTWYV";
+    }
+    hb_rand_seq(core, 1 + hb_rand(800), alpha);
+    hb_rand_seq(seqa, hb_rand(100), alpha);
+    strcat(seqa, core);
+    hb_mutate(seqb, core, rates[i % 4], alpha);
+    hb_rand_seq(seqb + strlen(seqb), hb_rand(100), alpha);
+    const size_t la = strlen(seqa), lb = strlen(seqb);
+
+    aligner_align(&al_on, seqa, seqb, la, lb, &scoring, 0);
+    aligner_align(&al_off, seqa, seqb, la, lb, &scoring, 0);
+    ASSERT(al_on.traced == al_off.traced);
+    if(!al_on.traced || !al_off.traced) continue;
+    traced++;
+    bool same = true;
+    for(y = 1; y <= lb; y++)
+      for(x = 1; x <= la; x++)
+        same &= al_on.trace[y*(la+1) + x] == al_off.trace[y*(la+1) + x];
+    ASSERT(same);
+    ASSERT(memcmp(al_on.final_scores, al_off.final_scores,
+                  sizeof(al_on.final_scores)) == 0);
+  }
+  ASSERT(traced > 250);
+#ifdef ALN_STRIPED
+  ASSERT(alignment_diff_count() - fills > 150); // the 8- and 16-bit fills
+#else
+  ASSERT(alignment_diff_count() == fills);
+#endif
+  aligner_destroy(&al_on);
+  aligner_destroy(&al_off);
+}
+
 /* The rectangle's first scan gives up on a hit spanning the sequences, and
  * otherwise finds what the full scan finds */
 void simd_test_scan_short()
@@ -1552,6 +1635,7 @@ void test_simd()
   simd_test_compact_rect();
   simd_test_scan_short();
   simd_test_strips();
+  simd_test_diff();
   simd_test_rect_gap_score();
   simd_test_narrow(16);
   simd_test_narrow(8);
@@ -2059,6 +2143,14 @@ void test_out_of_memory()
   many.sw_rect_min_cells = many.sw_strip_min_cells = 0;
   many.band_strip_rows = many.hb_band_strip_rows = 8;
   many.band_min_width = many.hb_band_min_width = 4;
+  // Bands with absolute lanes (with difference-encoded ones the whole fill
+  // is cheap enough that a band this wide would not pay at some lane
+  // counts), and the whole fill with difference-encoded lanes on blocks
+  many.diff = false;
+  alignment_options_t whole = many;
+  whole.band = whole.hb_band = false;
+  whole.diff = true;
+  const alignment_options_t *sets[] = {NULL, &many, &whole};
   scoring_t scoring;
   scoring_system_default(&scoring);
   oom_case_t c = {a, b, NULL, &scoring, NULL, NULL, NULL};
@@ -2066,8 +2158,8 @@ void test_out_of_memory()
   size_t n;
 
   for(kind = 0; kind < OOM_KINDS; kind++) {
-    for(o = 0; o < 2; o++) {
-      c.opts = o ? &many : NULL;
+    for(o = 0; o < 3; o++) {
+      c.opts = sets[o];
       for(n = 0; ; n++) {
         // New aligners each time, so every allocation is made again
         c.nw = needleman_wunsch_new();

@@ -23,6 +23,8 @@ extern "C" {
 // 16- or 32-bit ones)
 void alignment_narrow_counts(size_t *fills, size_t *retries);
 void alignment_byte_counts(size_t *fills, size_t *retries);
+// Difference-encoded fills since the program began
+size_t alignment_diff_count(void);
 
 // When true, each SIMD pass of hirschberg.c is redone without SIMD and
 // hirschberg_striped_mismatches counts any row that differs. While it is

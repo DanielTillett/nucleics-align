@@ -319,6 +319,20 @@ Where the speed comes from:
   of more than 2^24 cells (was 2^30) start with it: 20 kb unrelated
   `smith_waterman --maxhits 1` 0.09 -> 0.01 s and 448 -> 5 MB, with related
   pairs as before
+* Needleman-Wunsch traceback bytes are filled with difference-encoded lanes
+  (after Suzuki & Kasahara 2018, as ksw2 does) where the whole matrix is
+  filled: each cell is kept as its difference from the cell above, which
+  stays small at any length, so 8-bit lanes (4 times as many as 32-bit
+  ones) hold them with DNA scoring and 16-bit lanes with BLOSUM62. Every
+  traceback byte comes from comparing values with the same reference, so
+  the bytes, and the alignment, are those of the 32-bit fill. More lanes
+  made the lazy F loop wrap more (gap_b carried across 4 times as many lane
+  boundaries: 20 kb at 10%, 12 sweeps of each row instead of 3), so what
+  each lane passes to the next is found first, by a scan over the lanes
+  in absolute scores, and one pass then applies it. One thread, 20 kb fill:
+  10% 0.40 -> 0.20 s, unrelated 0.28 -> 0.18 s. Bands are filled in strips
+  of at least 64 rows (was 256), which makes a band 6-30% quicker and a
+  first band that proves too narrow cheaper
 * Strip alignments: a compact best hit whose region (the rectangle, or the
   whole matrix where a hit spans the sequences) has more than 2^28 cells
   keeps no traceback bytes for it. The scan for the best cell also keeps
@@ -398,16 +412,16 @@ The tools:
 
 Nucleics Align was run through `needleman_wunsch` and `smith_waterman`, and the
 others through a small C program that reads the two sequences and aligns them
-once. The Nucleics Align rows were measured again after the traceback bytes and
-8-lane vectors were added; the other rows are from the earlier run, on the
-same sequences and machine.
+once. The Nucleics Align rows were measured again after each change that
+affects them (most recently the difference-encoded lanes, best of 5); the
+other rows are from the earlier run, on the same sequences and machine.
 
 Global alignment with the alignment returned, 20 kb:
 
 | Tool | 1% | 10% | Unrelated | Peak memory |
 |---|---|---|---|---|
 | seq-align before this fork | 9.55 s | 9.75 s | 10.56 s | 4.6 GB |
-| Nucleics Align, full matrix | 0.03 s | 0.07 s (0.8 s) | 0.06 s (0.7 s) | 19 - 388 MB |
+| Nucleics Align, full matrix | 0.01 s | 0.05 s (0.8 s) | 0.05 s (0.7 s) | 13 - 388 MB |
 | Nucleics Align `--linear` | 0.05 s | 0.12 s | 0.08 s (0.29 s) | 7 MB |
 | parasail | 1.17 s | 1.28 s | 0.76 s | 1.5 GB |
 | ksw2 | 0.33 s | 0.35 s | 0.34 s | 524 MB |
@@ -418,7 +432,7 @@ Global alignment, 50 kb (the original would need ~30 GB, so was not run):
 
 | Tool | 1% | 10% | Unrelated | Peak memory |
 |---|---|---|---|---|
-| Nucleics Align, full matrix | 0.14 s | 0.17 s (1.7 s) | 0.36 s (5.3 s) | 93 MB - 2.4 GB |
+| Nucleics Align, full matrix | 0.10 s | 0.15 s (1.3 s) | 0.26 s (3.9 s) | 71 MB - 2.4 GB |
 | Nucleics Align `--linear` | 0.18 s (0.23 s) | 0.41 s (1.2 s) | 0.31 s (1.8 s) | 7 MB |
 | parasail | 10.1 s | 8.74 s | 5.25 s | 9.5 GB |
 | ksw2 | 1.77 s | 1.78 s | 1.71 s | 2.8 GB |
@@ -460,14 +474,17 @@ In short:
   140-320x faster with 12-240x less memory, and the best local hit
   550-3,400x faster with over 250x less memory
 * For global alignment Nucleics Align has the lowest wall time of the exact
-  aligners tested, except WFA2 on near-identical sequences: 0.03-0.07 s for
+  aligners tested, except WFA2 on near-identical sequences: 0.01-0.05 s for
   the full-matrix aligner at 20 kb against 0.33-0.35 s for ksw2. WFA2's time
   grows with the number of differences, so it is far slower on divergent or
   unrelated pairs. `--linear` needs only megabytes at any length
-* On divergent and unrelated pairs Nucleics Align uses more CPU time than ksw2:
-  0.7-0.8 s at 20 kb for the full-matrix aligner against ksw2's 0.33 s. Its
-  lead in wall time there comes from threads. On similar pairs
-  banding skips most cells (20 kb at 1%: 0.02 s of CPU)
+* On one core Nucleics Align is now faster than ksw2 too: `needleman_wunsch
+  --threads 1` takes 0.11 s on the 20 kb 10% pair and 0.19 s on the
+  unrelated one, against ksw2's 0.35 s and 0.34 s. The CPU times in brackets
+  above come from the default 16 threads, which mostly wait for their
+  neighbours (16 threads are only 4x faster than one); `--threads 4` takes
+  0.07 s and 0.28 s of CPU on the unrelated pair. On similar pairs banding
+  skips most cells (20 kb at 1%: 0.01 s of CPU)
 * For the best local hit Nucleics Align is now faster than parasail and SSW
   in wall time, on unrelated pairs too (0.01 s and 5 MB against SSW's 0.03 s
   and 7 MB), and needs 23 MB where a 20 kb hit spans the sequences (SSW 7

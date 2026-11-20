@@ -38,7 +38,7 @@
 typedef struct
 {
   int max_threads; // full-matrix fills (0: half the CPUs)
-  bool striped, band, narrow, byte;
+  bool striped, band, narrow, byte, diff;
   size_t block_min_cells, block_min_cols, band_strip_rows, band_min_width;
   size_t sw_rect_min_cells; // see smith_waterman_rect_min_cells
   size_t sw_strip_min_cells; // see smith_waterman_strip_min_cells
@@ -213,6 +213,12 @@ extern size_t alignment_band_strip_rows, alignment_band_min_width;
 // bits. alignment_byte_enabled and alignment_narrow_enabled (default true)
 // turn off the 8- and 16-bit lanes, for tests
 extern bool alignment_narrow_enabled, alignment_byte_enabled;
+
+// Needleman-Wunsch traceback-byte fills that are not banded keep each cell
+// as its difference from the cell above, in 8- or 16-bit lanes where the
+// scores allow (same bytes, so the same alignment). alignment_diff_enabled
+// (default true) turns that off, for tests
+extern bool alignment_diff_enabled;
 
 // The default settings, from the variables above (and their hirschberg_*
 // and smith_waterman_* counterparts) as they are now

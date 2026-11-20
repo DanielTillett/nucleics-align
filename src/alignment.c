@@ -133,6 +133,15 @@ bool alignment_narrow_enabled = true, alignment_byte_enabled = true;
 static atomic_size_t alignment_narrow_fills, alignment_narrow_retries;
 static atomic_size_t alignment_byte_fills, alignment_byte_retries;
 
+// Difference-encoded Needleman-Wunsch fills (see alignment_diff_bits())
+bool alignment_diff_enabled = true;
+static atomic_size_t alignment_diff_fills;
+
+size_t alignment_diff_count(void)
+{
+  return atomic_load(&alignment_diff_fills);
+}
+
 void alignment_narrow_counts(size_t *fills, size_t *retries)
 {
   *fills = atomic_load(&alignment_narrow_fills);
@@ -165,6 +174,7 @@ void alignment_options_default(alignment_options_t *opts)
   opts->band = alignment_band_enabled;
   opts->narrow = alignment_narrow_enabled;
   opts->byte = alignment_byte_enabled;
+  opts->diff = alignment_diff_enabled;
   opts->block_min_cells = alignment_block_min_cells;
   opts->block_min_cols = alignment_block_min_cols;
   opts->band_strip_rows = alignment_band_strip_rows;
@@ -258,6 +268,11 @@ typedef struct {
   // the fill is done again with wider lanes
   int bits;
   score_t narrow_limit;
+  // Needleman-Wunsch traceback bytes from difference-encoded lanes of diff
+  // bits (8 or 16; 0: absolute scores), with floor for -infinity and
+  // ceiling above any real difference (see alignment_diff.inc)
+  int diff;
+  score_t floor, ceiling;
   // Shared by the blocks of a fill: *stop is set when one stops early (the
   // others then stop too), and also *nomem if it ran out of memory
   atomic_bool *stop, *nomem;
@@ -283,6 +298,47 @@ typedef struct {
 #define ALN_K_NARROW 1
 #define ALN_K_BYTE 1
 #include "alignment_kernel.inc"
+
+#define ALN_D_SUFFIX 8
+#define ALN_D_S int8_t
+#define ALN_D_VL (4 * ALN_VL)
+#include "alignment_diff.inc"
+
+#define ALN_D_SUFFIX 16
+#define ALN_D_S int16_t
+#define ALN_D_VL (2 * ALN_VL)
+#include "alignment_diff.inc"
+
+// Lanes for a difference-encoded Needleman-Wunsch fill with this table:
+// 8 or 16 bits, or 0 where neither applies, with the floor that stands for
+// -infinity in *floor and the most a cell lies above the one above it in
+// *ceiling. With p the gap open penalty (gap_open + gap_extend)
+// and e the gap extension penalty, both negated (gaps must not score above
+// 0), and s+ and s- the highest and the most negative substitution scores
+// (at least 0): a cell and the cell above or beside it differ by at most
+// s+ + p, so every real difference lies within K = s- + 2 s+ + 5 p + e of
+// 0. The floor must stay below every real value after one step adds to it
+// (at most s+ + p), and no sum may leave the lane type: the most taken off
+// in one go is e + s+ + p
+static int alignment_diff_bits(const sub_table_t *table,
+                               const scoring_t *scoring, score_t *floor,
+                               score_t *ceiling)
+{
+  if(scoring->gap_open > 0 || scoring->gap_extend > 0) return 0;
+  const long long p = -((long long)scoring->gap_open + scoring->gap_extend);
+  const long long e = -(long long)scoring->gap_extend;
+  long long smax = 0, smin = 0;
+  size_t i;
+  for(i = 0; i < table->n * table->n; i++) {
+    smax = MAX2(smax, (long long)table->scores[i]);
+    smin = MAX2(smin, -(long long)table->scores[i]);
+  }
+  const long long K = smin + 2*smax + 5*p + e, step = smax + p;
+  *ceiling = (score_t)step; // no cell is more than this above the one above
+  if(K + step < 100 && e + step <= 28) { *floor = -100; return 8; }
+  if(K + step < 16000 && e + step <= 16000) { *floor = -16000; return 16; }
+  return 0;
+}
 
 // Whether a Smith-Waterman fill of len_i columns with this table may use
 // lanes of `bits` bits (8 or 16), and the highest row best (*limit) that
@@ -335,7 +391,9 @@ static void alignment_lanes(alignment_block_t *tmpl,
 static void* alignment_block_thread(void *ptr)
 {
   alignment_block_t *p = ptr;
-  if(p->bits == 8) alignment_fill_striped_8(p);
+  if(p->diff == 8) alignment_fill_diff_8(p);
+  else if(p->diff == 16) alignment_fill_diff_16(p);
+  else if(p->bits == 8) alignment_fill_striped_8(p);
   else if(p->bits == 16) alignment_fill_striped_16(p);
   else alignment_fill_striped_32(p);
   return NULL;
@@ -387,6 +445,7 @@ static bool alignment_fill_blocks(alignment_block_t *tmpl)
   atomic_init(&gave_up, false);
   if(tmpl->bits == 8) atomic_fetch_add(&alignment_byte_fills, 1);
   if(tmpl->bits == 16) atomic_fetch_add(&alignment_narrow_fills, 1);
+  if(tmpl->diff != 0) atomic_fetch_add(&alignment_diff_fills, 1);
 
   // With trace, each block's last column goes here for the next block
   score_t *cols = NULL;
@@ -959,6 +1018,16 @@ static fill_result_t alignment_fill_banded(aligner_t *aligner,
   score_t smax = 0;
   for(i = 0; i < table->n * table->n; i++) smax = MAX2(smax, table->scores[i]);
 
+  // A band must cost under this much of the whole fill, whose difference-
+  // encoded lanes (where they apply) take about 0.6 of the time per cell
+  // of the band's absolute ones: banding at 20 kb and 3-20% divergence
+  // found the band too narrow and filled the whole matrix anyway, 0.033 ->
+  // 0.044 s
+  score_t floor, ceiling;
+  const double pays = aligner->opts.diff &&
+                      alignment_diff_bits(table, scoring, &floor, &ceiling)
+                      ? 0.35 : 0.6;
+
   size_t bw = aligner->opts.band_min_width;
   score_t *top = NULL, *lcol = NULL;
   fill_result_t done = FILL_SKIPPED;
@@ -970,14 +1039,14 @@ static fill_result_t alignment_fill_banded(aligner_t *aligner,
     const double cols = (double)(D < 0 ? -D : D) + 2.0*bw + 1;
     const size_t strip = aligner->opts.band_strip_rows
                          ? aligner->opts.band_strip_rows
-                         : MAX2(256, (size_t)(cols / 4));
+                         : MAX2(64, (size_t)(cols / 4));
     // A fill on t threads runs about max(1, t/2) times faster (16 threads:
     // 6-8x); a narrow band runs on one
     const double band_threads =
       (double)alignment_fill_threads(&aligner->opts,
                                      (size_t)cols + strip, strip);
     if((cols + strip) / MAX2(1.0, band_threads / 2) >=
-       0.6 * (double)len_i / MAX2(1.0, full_threads / 2)) break;
+       pays * (double)len_i / MAX2(1.0, full_threads / 2)) break;
 
     const ptrdiff_t dlo = MIN2(0, D) - (ptrdiff_t)bw;
     const ptrdiff_t dhi = MAX2(0, D) + (ptrdiff_t)bw;
@@ -1134,6 +1203,9 @@ static fill_result_t alignment_fill_trace(aligner_t *aligner, char is_sw)
       .trace = aligner->trace, .track_best = is_sw,
       .width = len_i, .y0 = 1, .y1 = len_j};
     if(is_sw) alignment_lanes(&tmpl, &aligner->opts, scoring, len_i);
+    else if(aligner->opts.diff)
+      tmpl.diff = alignment_diff_bits(&table, scoring, &tmpl.floor,
+                                      &tmpl.ceiling);
     done = alignment_fill_blocks(&tmpl) ? FILL_DONE : FILL_NOMEM;
   }
   sub_table_free(&table);
