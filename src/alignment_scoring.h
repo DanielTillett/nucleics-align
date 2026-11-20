@@ -52,7 +52,6 @@ typedef struct
 #ifndef bitset32_get
   #define bitset32_get(arr,idx)   (((arr)[(idx)>>5] >> ((idx)&31)) & 0x1U)
   #define bitset32_set(arr,idx)   ((arr)[(idx)>>5] |=   (1U<<((idx)&31)))
-  #define bitset32_clear(arr,idx) ((arr)[(idx)>>5] &=  ~(1U<<((idx)&31)))
 #endif
 
 // Characters are cast to unsigned char so bytes >= 0x80 index tables safely

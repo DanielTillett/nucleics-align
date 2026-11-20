@@ -21,10 +21,6 @@ static void print_usage(char **argv)
 {
   fprintf(stderr, "%s [options] <sequence>\n", argv[0]);
   fprintf(stderr, "  Print substrings in decreasing order of length\n");
-//   fprintf(stderr, "Options:\n"
-// "  -c,--case-insensitive  Case insensitive matching\n"
-// "  -C,--case-sensitive    Case sensitive matching [default]\n"
-// "  -p,--positions         Print positions\n");
   exit(EXIT_FAILURE);
 }
 

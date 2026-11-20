@@ -22,7 +22,7 @@
 #include "seq_file/seq_file.h"
 #include "alignment.h"
 
-enum SeqAlignCmdType {SEQ_ALIGN_SW_CMD, SEQ_ALIGN_NW_CMD, SEQ_ALIGN_LCS_CMD};
+enum SeqAlignCmdType {SEQ_ALIGN_SW_CMD, SEQ_ALIGN_NW_CMD};
 
 typedef struct
 {
@@ -32,7 +32,6 @@ typedef struct
 
   // All values initially 0
   bool case_sensitive;
-  int match, mismatch, gap_open, gap_extend;
 
   // SW specific
   score_t min_score;
@@ -41,7 +40,6 @@ typedef struct
   bool print_seq;
 
   // NW specific
-  bool freestartgap_set, freeendgap_set;
   bool print_matrices, print_scores;
   bool zam_stle_output;
   bool linear_space; // Hirschberg / Myers-Miller
@@ -55,10 +53,6 @@ typedef struct
 
   // General output
   bool print_fasta, print_pretty, print_colour;
-
-  // Experimental
-  bool no_gaps_in1, no_gaps_in2;
-  bool no_mismatches;
 
   // Pair of sequences to align
   const char *seq1, *seq2;

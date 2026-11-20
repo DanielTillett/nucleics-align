@@ -768,7 +768,6 @@ static int _follow_hit(sw_aligner_t* sw, size_t arr_index,
 
     if(curr_score == 0) break;
 
-    //printf(" %i (%i, %i)\n", length, score_x, score_y);
 
     // The current matrix fixes which cell comes next, so check it before
     // working out the move: most rejected walks stop after a step or two
@@ -938,7 +937,6 @@ static int _sw_fetch(sw_aligner_t *sw, alignment_t *result,
   while(hist->next_hit < hist->num_of_hits)
   {
     size_t arr_index = hist->sorted_match_indices[hist->next_hit++];
-    // printf("hit %lu/%lu\n", hist->next_hit, hist->num_of_hits);
 
     if(!bitset32_get(hist->match_scores_mask.b, arr_index)) {
       found = _follow_hit(sw, arr_index, result);

@@ -320,7 +320,6 @@ cmdline_t* cmdline_new(int argc, char **argv, scoring_t *scoring,
       else if(strcasecmp(argv[argi], "--case_sensitive") == 0)
       {
         // Already dealt with
-        //case_sensitive = true;
       }
       else if(strcasecmp(argv[argi], "--printseq") == 0)
       {

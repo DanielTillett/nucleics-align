@@ -1722,8 +1722,6 @@ void alignment_reverse_move(enum Matrix *curr_matrix, score_t *curr_score,
       exit(EXIT_FAILURE);
   }
 
-  // *arr_index = ARR_2D_INDEX(aligner->score_width, *score_x, *score_y);
-
   if((!no_gaps_in_a || *score_x == 0 || *score_x == len_i) &&
      aligner->gap_a_scores[*arr_index] + prev_gap_a_penalty == *curr_score)
   {

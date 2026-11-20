@@ -171,10 +171,6 @@ void scoring_lookup(const scoring_t* scoring, char a, char b,
     b = (char)tolower((unsigned char)b);
   }
 
-  //#ifdef SEQ_ALIGN_VERBOSE
-  //printf(" scoring_lookup(%c,%c)\n", a, b);
-  //#endif
-
   *is_match = (a == b);
 
   if(scoring->no_mismatches && !*is_match)
