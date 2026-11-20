@@ -34,6 +34,9 @@ usage: ./bin/needleman_wunsch [OPTIONS] [seq1 seq2]
     --zam                A funky type of output
     --linear             Align in linear memory (Hirschberg, Myers-Miller)
     --scoreonly          Print only the score (fast, linear memory)
+    --linearfallback     Align in linear memory where too big for the matrices
+                         (same score, but may pick another equal-scoring
+                         alignment)
     --printmatrices      Print dynamic programming matrices
     --printfasta         Print fasta header lines
     --pretty             Print with a descriptor line

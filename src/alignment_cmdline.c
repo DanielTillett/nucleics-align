@@ -148,7 +148,10 @@ static void print_usage(enum SeqAlignCmdType cmd_type, score_t defaults[4],
 "    --printscores        Print optimal alignment scores\n"
 "    --zam                A funky type of output\n"
 "    --linear             Align in linear memory (Hirschberg, Myers-Miller)\n"
-"    --scoreonly          Print only the score (fast, linear memory)\n");
+"    --scoreonly          Print only the score (fast, linear memory)\n"
+"    --linearfallback     Align in linear memory where too big for the matrices\n"
+"                         (same score, but may pick another equal-scoring\n"
+"                         alignment)\n");
   }
 
   fprintf(stderr,
@@ -347,6 +350,12 @@ cmdline_t* cmdline_new(int argc, char **argv, scoring_t *scoring,
         if(cmd_type != SEQ_ALIGN_NW_CMD)
           usage("--linear only valid with Needleman-Wunsch");
         cmd->linear_space = true;
+      }
+      else if(strcasecmp(argv[argi], "--linearfallback") == 0)
+      {
+        if(cmd_type != SEQ_ALIGN_NW_CMD)
+          usage("--linearfallback only valid with Needleman-Wunsch");
+        cmd->linear_fallback = true;
       }
       else if(strcasecmp(argv[argi], "--stdin") == 0)
       {

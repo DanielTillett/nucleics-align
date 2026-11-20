@@ -236,6 +236,7 @@ int main(int argc, char* argv[])
 
   nw_set_default_scoring();
   cmd = cmdline_new(argc, argv, &scoring, SEQ_ALIGN_NW_CMD);
+  alignment_linear_fallback = cmd->linear_fallback;
 
   static const cmd_tool_t tool = {nw_aligner_new, nw_aligner_free,
                                   nw_set_options, align, NULL, NULL};

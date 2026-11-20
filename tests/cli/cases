@@ -66,3 +66,5 @@ nw_pairs_bad     | -     | ./bin/needleman_wunsch --substitution_pairs @/bad_pai
 nw_scoring_bad   | -     | ./bin/needleman_wunsch --scoring PAM31 ACGT AGT
 nw_scoring_case  | -     | ./bin/needleman_wunsch --scoring blosum62 --printscores --file @/protein.fa
 nw_scoring_twice | -     | ./bin/needleman_wunsch --scoring PAM30 --scoring PAM70 ACGT AGT
+nw_linearfallback | -    | ./bin/needleman_wunsch --linearfallback --printscores --file @/ties.fa
+sw_linearfallback | -    | ./bin/smith_waterman --linearfallback ACGT AGT

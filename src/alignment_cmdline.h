@@ -44,6 +44,7 @@ typedef struct
   bool zam_stle_output;
   bool linear_space; // Hirschberg / Myers-Miller
   bool score_only; // print the score without the alignment
+  bool linear_fallback; // linear space if too big for the matrices
 
   // Turns off zlib for stdin
   bool interactive;

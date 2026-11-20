@@ -39,6 +39,10 @@ typedef struct
 {
   int max_threads; // full-matrix fills (0: half the CPUs)
   bool striped, band, narrow, byte, diff;
+  // Needleman-Wunsch too big for the matrices (too long, or out of memory):
+  // align in linear space instead (see alignment_linear_fallback). The one
+  // setting that can change a result
+  bool linear_fallback;
   size_t block_min_cells, block_min_cols, band_strip_rows, band_min_width;
   size_t band_keep_max_cells; // see alignment_band_keep_max_cells
   size_t sw_rect_min_cells; // see smith_waterman_rect_min_cells
@@ -232,6 +236,13 @@ extern bool alignment_narrow_enabled, alignment_byte_enabled;
 // scores allow (same bytes, so the same alignment). alignment_diff_enabled
 // (default true) turns that off, for tests
 extern bool alignment_diff_enabled;
+
+// Needleman-Wunsch alignments too big for the score matrices or traceback
+// bytes (ALN_ERR_TOO_LONG, or ALN_ERR_NOMEM) are made in linear space
+// instead (hirschberg_align_opts()) where it supports the scoring: the same
+// optimal score, but it may choose another of several equal-scoring
+// alignments. Default false
+extern bool alignment_linear_fallback;
 
 // The default settings, from the variables above (and their hirschberg_*
 // and smith_waterman_* counterparts) as they are now

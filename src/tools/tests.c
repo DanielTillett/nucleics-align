@@ -2225,6 +2225,46 @@ void test_out_of_memory()
   free(text);
 }
 
+/* With linear_fallback, a Needleman-Wunsch alignment too big for the
+ * matrices (here: out of memory) is made in linear space, the same as
+ * hirschberg_align_opts() makes it; without it the error comes back */
+void test_linear_fallback()
+{
+  nw_aligner_t *nw = needleman_wunsch_new();
+  alignment_t *aln = alignment_create(16), *lin = alignment_create(16);
+  alignment_options_t opts;
+  scoring_t scoring;
+  aln_error_t e;
+  const char *a = "ACGTTGCAACGTAGCTAGCTAGGATCC", *b = "ACGTGCAACGTAGTAGCTAGGTTCC";
+  const size_t la = strlen(a), lb = strlen(b);
+  alignment_options_default(&opts);
+  scoring_system_default(&scoring);
+  nw->options = &opts;
+  ASSERT(hirschberg_align_checked(a, b, la, lb, &scoring, &opts, lin,
+                                  NULL) == ALN_OK);
+
+  // The first allocation is a score matrix
+  opts.linear_fallback = false;
+  alignment_alloc_fail(1);
+  ASSERT(needleman_wunsch_align_checked(a, b, la, lb, &scoring, nw, aln,
+                                        &e) == ALN_ERR_NOMEM);
+  alignment_alloc_fail(0);
+  ASSERT(e.status == ALN_ERR_NOMEM);
+
+  opts.linear_fallback = true;
+  alignment_alloc_fail(1);
+  ASSERT(needleman_wunsch_align_checked(a, b, la, lb, &scoring, nw, aln,
+                                        &e) == ALN_OK);
+  alignment_alloc_fail(0);
+  ASSERT(e.status == ALN_OK);
+  ASSERT(aln->score == lin->score && strcmp(aln->result_a, lin->result_a) == 0 &&
+         strcmp(aln->result_b, lin->result_b) == 0);
+
+  needleman_wunsch_free(nw);
+  alignment_free(aln);
+  alignment_free(lin);
+}
+
 /* Rounding sizes up to a power of two never wraps to a smaller size */
 void alignment_test_roundup()
 {
@@ -2249,6 +2289,7 @@ void test_misc()
   test_options();
   test_checked();
   test_out_of_memory();
+  test_linear_fallback();
 
   SUITE_END();
 }

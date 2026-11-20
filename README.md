@@ -148,6 +148,13 @@ defaults apply: `alignment_options_default()` reads them from the
 variables, which keep their old meaning (e.g. `alignment_striped_enabled =
 false` switches SIMD off everywhere).
 
+One setting can change a result, and is off by default: with
+`linear_fallback` (`alignment_linear_fallback`), a Needleman-Wunsch
+alignment too big for the score matrices or traceback bytes (too long, or
+out of memory) is made in linear space instead, where that supports the
+scoring. The score is the same, but it may choose another of several
+equal-scoring alignments. `needleman_wunsch --linearfallback` turns it on.
+
 The aligners above end the program on an error. The `*_checked()` versions
 (`needleman_wunsch_align_checked()`, `smith_waterman_align_checked()`,
 `smith_waterman_fetch_checked()`, `hirschberg_align_checked()`,
@@ -704,6 +711,9 @@ Needleman-Wunsch
         --zam                A funky type of output
         --linear             Align in linear memory (Hirschberg, Myers-Miller)
         --scoreonly          Print only the score (fast, linear memory)
+        --linearfallback     Align in linear memory where too big for the matrices
+                             (same score, but may pick another equal-scoring
+                             alignment)
         --printmatrices      Print dynamic programming matrices
         --printfasta         Print fasta header lines
         --pretty             Print with a descriptor line

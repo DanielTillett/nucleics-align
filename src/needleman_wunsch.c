@@ -11,6 +11,7 @@
 #include <string.h>
 
 #include "needleman_wunsch.h"
+#include "hirschberg.h"
 
 nw_aligner_t* needleman_wunsch_new(void)
 {
@@ -41,6 +42,26 @@ static aln_status_t _nw_align(const char *a, const char *b,
                               size_t len_a, size_t len_b,
                               const scoring_t *scoring,
                               nw_aligner_t *nw, alignment_t *result);
+
+// Too big for the matrices (status): align in linear space instead, if the
+// options ask (alignment_linear_fallback) and it supports the scoring.
+// Returns true if that worked
+static bool _nw_linear(const char *a, const char *b, size_t len_a,
+                       size_t len_b, const scoring_t *scoring,
+                       const nw_aligner_t *nw, alignment_t *result,
+                       aln_status_t status)
+{
+  alignment_options_t defaults;
+  const alignment_options_t *opts = nw->options;
+  if(opts == NULL) {
+    alignment_options_default(&defaults);
+    opts = &defaults;
+  }
+  return (status == ALN_ERR_TOO_LONG || status == ALN_ERR_NOMEM) &&
+         opts->linear_fallback &&
+         hirschberg_align_checked(a, b, len_a, len_b, scoring, opts, result,
+                                  NULL) == ALN_OK;
+}
 
 static void _nw_finish(const nw_aligner_t *nw, alignment_t *result,
                        size_t score_x, size_t score_y, size_t next_char,
@@ -141,6 +162,10 @@ aln_status_t needleman_wunsch_align_checked(const char *a, const char *b,
     status = _nw_align(a, b, len_a, len_b, scoring, nw, result);
     if(err != NULL) err->status = status;
   }
+  if(_nw_linear(a, b, len_a, len_b, scoring, nw, result, status)) {
+    status = ALN_OK;
+    if(err != NULL) err->status = status;
+  }
   return status;
 }
 
@@ -151,6 +176,8 @@ void needleman_wunsch_align2(const char *a, const char *b,
 {
   aln_error_t e = {ALN_OK, 0, 0};
   e.status = _nw_align(a, b, len_a, len_b, scoring, nw, result);
+  if(_nw_linear(a, b, len_a, len_b, scoring, nw, result, e.status))
+    e.status = ALN_OK;
   if(e.status != ALN_OK) {
     alignment_fprint_error(stderr, &e);
     exit(EXIT_FAILURE);
