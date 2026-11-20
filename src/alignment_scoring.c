@@ -13,6 +13,7 @@
 #include <stdio.h>
 #include <limits.h> // INT_MAX
 #include <string.h> // memset
+#include <strings.h> // strcasecmp
 #include <ctype.h> // tolower
 
 #include "alignment_scoring.h"
@@ -346,60 +347,41 @@ static const int sub_matrix[64] =
  -4,-4,-4,-4,-4,-4, 2, 2,
  -4,-4,-4,-4,-4,-4, 2, 2};
 
+// A built-in scoring system: the scores of the matrix over alphabet, and
+// match/mismatch for other pairs where use_match_mismatch (no free end
+// gaps, case insensitive)
+static void scoring_system_matrix(scoring_t *scoring, int match, int mismatch,
+                                  int gap_open, int gap_extend,
+                                  const char *alphabet, const int *matrix,
+                                  char use_match_mismatch)
+{
+  scoring_init(scoring, match, mismatch, gap_open, gap_extend,
+               0, 0, 0, 0, 0, 0);
+  scoring_add_mutations(scoring, alphabet, matrix, use_match_mismatch);
+}
+
 // Scoring for protein comparisons of length <35bp
 void scoring_system_PAM30(scoring_t* scoring)
 {
-  // *->* match: 1
-  // *->* mismatch: -17
-  // Gap open -9, gap extend -1
-  // no_start_gap_penalty, no_end_gap_penalty = 0
-  // case_sensitive = 0
-  scoring_init(scoring, 1, -17, -9, -1, 0, 0, 0, 0, 0, 0);
-
-  // use_match_mismatch=1
-  scoring_add_mutations(scoring, amino_acids, pam30, 1);
+  scoring_system_matrix(scoring, 1, -17, -9, -1, amino_acids, pam30, 1);
 }
 
 // Scoring for protein comparisons of length 35-50
 void scoring_system_PAM70(scoring_t* scoring)
 {
-  // *->* match: 1
-  // *->* mismatch: -11
-  // Gap open -10, gap extend -1
-  // no_start_gap_penalty, no_end_gap_penalty = 0
-  // case_sensitive = 0
-  scoring_init(scoring, 1, -11, -10, -1, 0, 0, 0, 0, 0, 0);
-
-  // use_match_mismatch=1
-  scoring_add_mutations(scoring, amino_acids, pam70, 1);
+  scoring_system_matrix(scoring, 1, -11, -10, -1, amino_acids, pam70, 1);
 }
 
 // Scoring for protein comparisons of length 50-85
 void scoring_system_BLOSUM80(scoring_t* scoring)
 {
-  // *->* match: 1
-  // *->* mismatch: -8
-  // Gap open -10, gap extend -1
-  // no_start_gap_penalty, no_end_gap_penalty = 0
-  // case_sensitive = 0
-  scoring_init(scoring, 1, -8, -10, -1, 0, 0, 0, 0, 0, 0);
-
-  // use_match_mismatch=1
-  scoring_add_mutations(scoring, amino_acids, blosum80, 1);
+  scoring_system_matrix(scoring, 1, -8, -10, -1, amino_acids, blosum80, 1);
 }
 
 // Scoring for protein comparisons of length >85
 void scoring_system_BLOSUM62(scoring_t* scoring)
 {
-  // *->* match: 1
-  // *->* mismatch: -4
-  // Gap open -10, gap extend -1
-  // no_start_gap_penalty, no_end_gap_penalty = 0
-  // case_sensitive = 0
-  scoring_init(scoring, 1, -4, -10, -1, 0, 0, 0, 0, 0, 0);
-
-  // use_match_mismatch=1
-  scoring_add_mutations(scoring, amino_acids, blosum62, 1);
+  scoring_system_matrix(scoring, 1, -4, -10, -1, amino_acids, blosum62, 1);
 }
 
 // Scoring system for predicting DNA hybridization
@@ -408,15 +390,47 @@ void scoring_system_BLOSUM62(scoring_t* scoring)
 // http://www.ncbi.nlm.nih.gov/pmc/articles/PMC2831327/
 void scoring_system_DNA_hybridization(scoring_t* scoring)
 {
-  // match: 0
-  // mismatch: 0
-  // Gap open -10, gap extend -10
-  // no_start_gap_penalty, no_end_gap_penalty = 0
-  // case_sensitive = 0
-  scoring_init(scoring, 0, 0, -10, -10, 0, 0, 0, 0, 0, 0);
+  // match and mismatch 0: only the matrix's pairs are scored
+  scoring_system_matrix(scoring, 0, 0, -10, -10, dna_bases, sub_matrix, 0);
+}
 
-  // use_match_mismatch=0
-  scoring_add_mutations(scoring, dna_bases, sub_matrix, 0);
+// The built-in scoring systems by name (--scoring)
+static const struct {
+  const char *name;
+  void (*set)(scoring_t *scoring);
+} scoring_systems[] = {
+  {"PAM30", scoring_system_PAM30},
+  {"PAM70", scoring_system_PAM70},
+  {"BLOSUM80", scoring_system_BLOSUM80},
+  {"BLOSUM62", scoring_system_BLOSUM62},
+  {"DNA_HYBRIDIZATION", scoring_system_DNA_hybridization}
+};
+
+#define NUM_SCORING_SYSTEMS (sizeof(scoring_systems) / sizeof(scoring_systems[0]))
+
+bool scoring_system_by_name(scoring_t *scoring, const char *name)
+{
+  size_t i;
+  for(i = 0; i < NUM_SCORING_SYSTEMS; i++) {
+    if(strcasecmp(name, scoring_systems[i].name) == 0) {
+      scoring_systems[i].set(scoring);
+      return true;
+    }
+  }
+  return false;
+}
+
+const char* scoring_system_names(void)
+{
+  // Long enough for every name and a separator after each
+  static char names[128];
+  if(names[0] == '\0') {
+    size_t i, len = 0;
+    for(i = 0; i < NUM_SCORING_SYSTEMS; i++)
+      len += (size_t)snprintf(names + len, sizeof(names) - len, "%s%s",
+                              i ? "|" : "", scoring_systems[i].name);
+  }
+  return names;
 }
 
 // Default

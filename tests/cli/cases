@@ -63,3 +63,6 @@ nw_matrix_sep    | -     | ./bin/needleman_wunsch --substitution_matrix @/bad_ma
 nw_matrix_empty  | -     | ./bin/needleman_wunsch --substitution_matrix @/empty.txt ACGT AGT
 nw_matrix_none   | -     | ./bin/needleman_wunsch --substitution_matrix @/no_such_file.txt ACGT AGT
 nw_pairs_bad     | -     | ./bin/needleman_wunsch --substitution_pairs @/bad_pairs.txt ACGT AGT
+nw_scoring_bad   | -     | ./bin/needleman_wunsch --scoring PAM31 ACGT AGT
+nw_scoring_case  | -     | ./bin/needleman_wunsch --scoring blosum62 --printscores --file @/protein.fa
+nw_scoring_twice | -     | ./bin/needleman_wunsch --scoring PAM30 --scoring PAM70 ACGT AGT

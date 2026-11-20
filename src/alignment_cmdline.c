@@ -114,7 +114,7 @@ static void print_usage(enum SeqAlignCmdType cmd_type, score_t defaults[4],
 "    --gapopen <score>    [default: %i]\n"
 "    --gapextend <score>  [default: %i]\n"
 "\n"
-"    --scoring <PAM30|PAM70|BLOSUM80|BLOSUM62|DNA_HYBRIDIZATION>\n"
+"    --scoring <%s>\n"
 "    --substitution_matrix <file>  see details for formatting\n"
 "    --substitution_pairs <file>   see details for formatting\n"
 "\n"
@@ -123,7 +123,7 @@ static void print_usage(enum SeqAlignCmdType cmd_type, score_t defaults[4],
 "    --threads <n>        Threads to use, within an alignment and for aligning\n"
 "                         pairs from a file at once [default: half the CPUs]\n\n",
           defaults[0], defaults[1],
-          defaults[2], defaults[3]);
+          defaults[2], defaults[3], scoring_system_names());
 
   if(cmd_type == SEQ_ALIGN_SW_CMD)
   {
@@ -246,29 +246,10 @@ cmdline_t* cmdline_new(int argc, char **argv, scoring_t *scoring,
         usage("--scoring requires an argument");
       }
 
-      if(strcasecmp(argv[argi+1], "PAM30") == 0)
+      if(!scoring_system_by_name(scoring, argv[argi+1]))
       {
-        scoring_system_PAM30(scoring);
-      }
-      else if(strcasecmp(argv[argi+1], "PAM70") == 0)
-      {
-        scoring_system_PAM70(scoring);
-      }
-      else if(strcasecmp(argv[argi+1], "BLOSUM80") == 0)
-      {
-        scoring_system_BLOSUM80(scoring);
-      }
-      else if(strcasecmp(argv[argi+1], "BLOSUM62") == 0)
-      {
-        scoring_system_BLOSUM62(scoring);
-      }
-      else if(strcasecmp(argv[argi+1], "DNA_HYBRIDIZATION") == 0)
-      {
-        scoring_system_DNA_hybridization(scoring);
-      }
-      else {
-        usage("Unknown --scoring choice, not one of "
-              "PAM30|PAM70|BLOSUM80|BLOSUM62|DNA_HYBRIDIZATION");
+        usage("Unknown --scoring choice, not one of %s",
+              scoring_system_names());
       }
 
       scoring_set = 1;

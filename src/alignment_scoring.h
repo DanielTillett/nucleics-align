@@ -100,6 +100,12 @@ void scoring_system_BLOSUM62(scoring_t *scoring);
 void scoring_system_DNA_hybridization(scoring_t *scoring);
 void scoring_system_default(scoring_t *scoring); // DNA/RNA default
 
+// Set one of the systems above by name, ignoring case (PAM30, PAM70,
+// BLOSUM80, BLOSUM62, DNA_HYBRIDIZATION); false if there is none
+bool scoring_system_by_name(scoring_t *scoring, const char *name);
+// Their names, separated by '|'
+const char* scoring_system_names(void);
+
 #ifdef __cplusplus
 }
 #endif
