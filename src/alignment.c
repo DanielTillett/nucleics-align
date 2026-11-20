@@ -1001,6 +1001,60 @@ static void alignment_strip(size_t y0, size_t strip, size_t len_i,
   *c1 = hi >= (ptrdiff_t)len_i ? len_i : (size_t)hi;
 }
 
+// A guess at the best global alignment score, meant to be no lower than it,
+// for deciding whether a band is worth trying (the alignment never depends
+// on it): words of a few letters of a are looked for near where they would
+// lie in b, and the share found (each found with chance about p^K, for a
+// share p of letters that match) gives p; the rest count as mismatches,
+// with no gaps but one for the difference in length. Returns false for
+// short sequences, where a first, narrow band costs little
+static bool alignment_score_guess(const sub_table_t *t,
+                                  const scoring_t *scoring,
+                                  const char *a, size_t len_a,
+                                  const char *b, size_t len_b, double *guess)
+{
+  enum { K = 12, SAMPLES = 128, WINDOW = 256 };
+  if(len_a < 64 * K || len_b < 64 * K) return false;
+  size_t s, i, j, found = 0;
+  for(s = 0; s < SAMPLES; s++) {
+    i = (len_a - K) * s / (SAMPLES - 1);
+    const size_t at = (size_t)((double)i * (double)(len_b - K) /
+                               (double)(len_a - K));
+    const size_t lo = at > WINDOW ? at - WINDOW : 0;
+    const size_t hi = MIN2(len_b - K, at + WINDOW);
+    for(j = lo; j <= hi; j++)
+      if(memcmp(a + i, b + j, K) == 0) { found++; break; }
+  }
+  // p^K is the share found, taken high so the guess stays high (a band
+  // wrongly skipped costs more than one wrongly tried: 50 kb at 3%, 0.16
+  // -> 0.19 s): two of the largest standard errors 128 samples can have
+  // (0.5 / sqrt(128) = 0.044), and one sample more
+  const double f = MIN2(1.0, (double)found / SAMPLES + 0.1);
+  double plo = 0, phi = 1, p, pk;
+  for(s = 0; s < 40; s++) {
+    p = (plo + phi) / 2;
+    for(pk = 1, i = 0; i < K; i++) pk *= p;
+    if(pk < f) plo = p; else phi = p;
+  }
+  p = (plo + phi) / 2;
+  // Mean scores of matching and of mismatching pairs
+  double match = 0, mismatch = 0;
+  size_t nmatch = 0, nmismatch = 0;
+  for(i = 0; i < t->n * t->n; i++) {
+    if(t->is_match[i]) { match += t->scores[i]; nmatch++; }
+    else { mismatch += t->scores[i]; nmismatch++; }
+  }
+  if(nmatch == 0) return false;
+  match /= (double)nmatch;
+  mismatch = nmismatch ? mismatch / (double)nmismatch : match;
+  const size_t L = MIN2(len_a, len_b);
+  const size_t D = len_a > len_b ? len_a - len_b : len_b - len_a;
+  *guess = (double)L * (p * match + (1 - p) * mismatch) +
+           (D ? (double)scoring->gap_open + (double)D * scoring->gap_extend
+              : 0);
+  return true;
+}
+
 // A band kept in strips (see alignment_band_keep_max_cells): what filling a
 // strip again needs. Strip s holds rows 1 + s*strip .. and the columns
 // alignment_strip() gives it; its top row (row y0-1), columns c0 .. c1,
@@ -1131,6 +1185,32 @@ static fill_result_t alignment_fill_banded(aligner_t *aligner,
   const double pays = aligner->opts.diff &&
                       alignment_diff_bits(table, scoring, &floor, &ceiling)
                       ? 0.35 : 0.6;
+
+  // Skip the band if even a high guess at the best score needs one too
+  // wide to pay (the cost rule below): the first, narrow band would only
+  // find that out (20 kb at 3-20% divergence: 0.044 -> 0.033 s)
+  double guess;
+  if(alignment_score_guess(table, scoring, aligner->seq_a, len_i,
+                           aligner->seq_b, len_j, &guess) &&
+     guess > (double)INT_MIN && guess < (double)INT_MAX) {
+    const size_t need = alignment_band_width(smax, scoring->gap_extend,
+                                             len_i, len_j, (score_t)guess);
+    if(need >= len_i) return FILL_SKIPPED;
+    // The least any band at least that wide could cost by the rule below. A
+    // wider band can get more threads and so cost less than a narrower one
+    // (50 kb at 3%), so: on one thread, its columns per row; on several,
+    // at least twice the columns per block, and its columns shared by as
+    // many threads as the whole fill has
+    const double gcols = (double)(D < 0 ? -D : D) + 2.0*need + 1;
+    const size_t gstrip = aligner->opts.band_strip_rows
+                          ? aligner->opts.band_strip_rows
+                          : MAX2(64, (size_t)(gcols / 4));
+    const double one = gcols + (double)gstrip;
+    const double several = MAX2(2.0 * (double)aligner->opts.block_min_cols,
+                                one / MAX2(1.0, full_threads / 2));
+    if(MIN2(one, several) >=
+       pays * (double)len_i / MAX2(1.0, full_threads / 2)) return FILL_SKIPPED;
+  }
 
   size_t bw = aligner->opts.band_min_width;
   score_t *top = NULL, *lcol = NULL;

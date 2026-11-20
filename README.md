@@ -340,6 +340,19 @@ Where the speed comes from:
   10% 0.40 -> 0.20 s, unrelated 0.28 -> 0.18 s. Bands are filled in strips
   of at least 64 rows (was 256), which makes a band 6-30% quicker and a
   first band that proves too narrow cheaper
+* A fill across the whole width takes column blocks of at least 2,048
+  columns (twice `block_min_cols`), so a 20 kb pair runs on about 10 threads
+  instead of 16: the extra threads finished each row too soon after the
+  block on their left and mostly waited. The same wall time with 40-45% less
+  CPU (20 kb: Needleman-Wunsch at 10% 0.83 -> 0.48 s of CPU, the best local
+  hit at 1% 0.92 -> 0.53 s). A band's strips keep 1,024, or narrow bands
+  lose their threads (50 kb at 10%: 0.15 -> 0.29 s)
+* Before banding, 128 words of 12 letters of the first sequence are looked
+  for near where they would lie in the second, for a high guess at the best
+  score. If even the band that guess needs could not pay, the band is not
+  tried: 20 kb at 10-20% divergence and unrelated 0.048-0.053 -> 0.040-0.047
+  s, 50 kb at 20% and unrelated about 10% quicker. The guess only decides
+  whether to try a band, never the alignment
 * Long global alignments: a band whose traceback bytes would not fit in a
   quarter of the physical memory (`alignment_band_keep_max_cells`) keeps
   only one strip of rows' bytes at a time, and each strip's top row. The
