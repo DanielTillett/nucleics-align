@@ -259,6 +259,9 @@ typedef struct {
   // from a sixteenth of the rows on (0: never; see alignment_sw_scan_short())
   double giveup_rate;
   atomic_bool *gave_up;
+  // A strip of a band, which takes thinner blocks than other fills (see
+  // alignment_fill_threads())
+  bool band;
   bool given_up; // the fill gave up (set by alignment_fill_blocks())
   // Scans: row k*ckpt_every of the three matrices goes to ckpt (see
   // alignment_sw_rows()); NULL for none
@@ -402,8 +405,14 @@ static void* alignment_block_thread(void *ptr)
 }
 
 // Threads (column blocks) for a striped fill of width x rows cells
+// A fill across the whole width (whole: every fill but a band's strips)
+// takes blocks of at least twice block_min_cols columns: thinner blocks
+// finish a row too soon after the block on their left, so threads mostly
+// wait (20 kb: 16 threads no faster than 10, with 0.79 -> 0.44 s of CPU).
+// A band's strips keep the minimum, or narrow bands would lose their
+// threads and stop paying (50 kb at 10%: 0.15 -> 0.29 s)
 static size_t alignment_fill_threads(const alignment_options_t *o,
-                                    size_t width, size_t rows)
+                                    size_t width, size_t rows, bool whole)
 {
   int threads = o->max_threads;
   if(threads <= 0) {
@@ -411,7 +420,8 @@ static size_t alignment_fill_threads(const alignment_options_t *o,
     threads = cpus > 1 ? (int)(cpus / 2) : 1;
   }
   // At least one vector of columns per block, so no block is empty
-  const size_t min_cols = MAX2(o->block_min_cols, (size_t)ALN_VL);
+  const size_t min_cols = MAX2(whole ? 2 * o->block_min_cols
+                                     : o->block_min_cols, (size_t)ALN_VL);
   if(threads > 1 && (double)width * rows >= o->block_min_cells &&
      width >= 2 * min_cols)
     return MIN2((size_t)threads, width / min_cols);
@@ -431,7 +441,8 @@ static bool alignment_fill_blocks(alignment_block_t *tmpl)
   aligner_t *aligner = tmpl->aligner;
   const size_t w = aligner->score_width, h = aligner->score_height;
   const size_t len_i = tmpl->width, len_j = tmpl->y1 - tmpl->y0 + 1;
-  const size_t nblocks = alignment_fill_threads(&aligner->opts, len_i, len_j);
+  const size_t nblocks = alignment_fill_threads(&aligner->opts, len_i, len_j,
+                                                !tmpl->band);
   size_t i, m;
 
   // Blocks of equal width (a multiple of ALN_VL); the last takes the rest
@@ -1041,6 +1052,7 @@ static bool trace_strips_fill(aligner_t *aligner, trace_strips_t *ts,
     .aligner = aligner, .table = &table, .min = ts->min,
     .c0 = c0, .width = width, .y0 = y0, .y1 = y,
     .r0 = {top[MATCH], top[GAP_A], top[GAP_B]}, .lstride = 1,
+    .band = true,
     .trace = aligner->trace, .trace_rows = aligner->trace_rows};
   for(m = 0; m < 3; m++) {
     if(c0 == 0) tmpl.lc[m] = ts->col0 + m*h;
@@ -1099,7 +1111,7 @@ static fill_result_t alignment_fill_banded(aligner_t *aligner,
   const ptrdiff_t D = (ptrdiff_t)len_i - (ptrdiff_t)len_j;
   // The whole fill's threads, or one for a narrow band
   const double full_threads =
-    (double)alignment_fill_threads(&aligner->opts, len_i, len_j);
+    (double)alignment_fill_threads(&aligner->opts, len_i, len_j, true);
   size_t i, m, y0, y1, c0, c1;
 
   if(!aligner->opts.band || scoring->gap_open > 0 ||
@@ -1152,7 +1164,7 @@ static fill_result_t alignment_fill_banded(aligner_t *aligner,
     // 6-8x); a narrow band runs on one
     const double band_threads =
       (double)alignment_fill_threads(&aligner->opts,
-                                     (size_t)cols + strip, strip);
+                                     (size_t)cols + strip, strip, false);
     if((cols + strip) / MAX2(1.0, band_threads / 2) >=
        pays * (double)len_i / MAX2(1.0, full_threads / 2)) break;
 
@@ -1249,6 +1261,7 @@ static fill_result_t alignment_fill_banded(aligner_t *aligner,
         .aligner = aligner, .table = table, .min = min,
         .c0 = c0, .width = c1 - c0, .y0 = y0, .y1 = y1,
         .r0 = {topm[MATCH], topm[GAP_A], topm[GAP_B]}, .lstride = 1,
+        .band = true,
         .trace = aligner->trace, .trace_rows = aligner->trace_rows,
         .lastrow = {topm[MATCH], topm[GAP_A], topm[GAP_B]}};
       for(m = 0; m < 3; m++) {
