@@ -45,6 +45,7 @@ typedef struct
   bool linear_fallback;
   size_t block_min_cells, block_min_cols, band_strip_rows, band_min_width;
   size_t band_keep_max_cells; // see alignment_band_keep_max_cells
+  size_t band_wfa_budget; // see alignment_band_wfa_budget
   size_t sw_rect_min_cells; // see smith_waterman_rect_min_cells
   size_t sw_strip_min_cells; // see smith_waterman_strip_min_cells
   // Linear space (hirschberg.h)
@@ -205,6 +206,16 @@ bool sub_table_build(sub_table_t *t, const scoring_t *scoring,
                      const char *b, size_t len_b);
 void sub_table_free(sub_table_t *t);
 
+// The best global alignment's score by the wavefront algorithm (see
+// alignment_wfa.c), for a table built for these sequences. Returns false,
+// setting nothing, unless both are non-empty and the scoring has one match
+// and one mismatch score, gap penalties and no other rules; or past budget
+// diagonal updates; or if out of memory
+bool alignment_wfa_score(const sub_table_t *table, const scoring_t *scoring,
+                         const char *seq_a, size_t len_a,
+                         const char *seq_b, size_t len_b,
+                         size_t budget, score_t *score);
+
 // Use the striped SIMD fill where it applies (default true). It gives the
 // same matrices as the scalar fill; turning it off is for tests/benchmarks
 extern bool alignment_striped_enabled;
@@ -230,6 +241,13 @@ extern size_t alignment_band_strip_rows, alignment_band_min_width;
 // 1% divergence: 35 GB -> 350 MB), but the band is filled about twice. For
 // tuning and tests
 extern size_t alignment_band_keep_max_cells;
+// Before a band, the best score is worked out by the wavefront algorithm
+// (alignment_wfa_score()) where the scoring allows, in up to this many
+// diagonal updates per letter of a (default 16; 0: none).
+// If it finishes, the score gives the band that passes on its first fill,
+// or shows that no band pays; if not, bands start narrow and widen as
+// before. Same alignment either way. For tuning and tests
+extern size_t alignment_band_wfa_budget;
 
 // Smith-Waterman fills and scans use 8-bit lanes (4 times as many) or
 // 16-bit lanes (twice as many) where the scores allow, and start again

@@ -25,6 +25,9 @@ void alignment_narrow_counts(size_t *fills, size_t *retries);
 void alignment_byte_counts(size_t *fills, size_t *retries);
 // Difference-encoded fills since the program began
 size_t alignment_diff_count(void);
+// Band fills since the program began (each width tried), and bands whose
+// width came from the wavefront score (see alignment_band_wfa_budget)
+void alignment_band_counts(size_t *tries, size_t *wfa_sized);
 
 // When true, each SIMD pass of hirschberg.c is redone without SIMD and
 // hirschberg_striped_mismatches counts any row that differs. While it is

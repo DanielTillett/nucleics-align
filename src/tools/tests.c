@@ -1549,6 +1549,7 @@ void simd_test_rect_gap_score()
 void simd_test_compact_band(bool keep)
 {
   size_t keep_cells = alignment_band_keep_max_cells;
+  size_t wfa_budget = alignment_band_wfa_budget;
   size_t min_cells = alignment_block_min_cells;
   size_t min_cols = alignment_block_min_cols;
   int max_threads = alignment_max_threads;
@@ -1560,7 +1561,7 @@ void simd_test_compact_band(bool keep)
   scoring_t scoring;
   const size_t strips[] = {1, 5, 32, 0};
   const unsigned int rates[] = {0, 5, 30, 120};
-  size_t s, i, banded = 0, kept = 0;
+  size_t s, i, banded = 0, kept = 0, sized = 0, tries, wfa, tries0, wfa0;
 
   compact->compact = true;
   alignment_block_min_cells = 1;
@@ -1574,6 +1575,7 @@ void simd_test_compact_band(bool keep)
     for(i = 0; i < 150; i++)
     {
       alignment_band_min_width = i % 2 ? 1 : 1 + hb_rand(16);
+      alignment_band_wfa_budget = i % 3 ? 0 : (size_t)1 << 20;
       const char *alpha = "acgt";
       if(i % 5 == 4) {
         scoring_system_BLOSUM62(&scoring);
@@ -1586,7 +1588,14 @@ void simd_test_compact_band(bool keep)
       hb_mutate(seqb, seqa, rates[i % 4], alpha);
 
       needleman_wunsch_align(seqa, seqb, &scoring, full, r_full);
+      alignment_band_counts(&tries0, &wfa0);
       needleman_wunsch_align(seqa, seqb, &scoring, compact, r_compact);
+      alignment_band_counts(&tries, &wfa);
+      // A band sized by the wavefront score passes on its first fill
+      if(wfa > wfa0 && compact->trace_banded) {
+        ASSERT(tries == tries0 + 1);
+        sized++;
+      }
       ASSERT(alignments_equal(r_full, r_compact));
       banded += compact->traced && compact->trace_banded;
       kept += compact->traced && compact->trace_strips != NULL;
@@ -1602,6 +1611,7 @@ void simd_test_compact_band(bool keep)
   {
     alignment_band_strip_rows = 1 + i % 7;
     alignment_max_threads = 1 + (int)(i % 2) * 2;
+    alignment_band_wfa_budget = i % 3 ? 0 : (size_t)1 << 20;
     hb_rand_seq(seqa, 100 + hb_rand(600), "acgt");
     size_t len = strlen(seqa), from = hb_rand((unsigned int)len);
     size_t to = hb_rand((unsigned int)len), j, o = 0;
@@ -1611,7 +1621,13 @@ void simd_test_compact_band(bool keep)
     }
     seqb[o] = '\0';
     needleman_wunsch_align(seqa, seqb, &scoring, full, r_full);
+    alignment_band_counts(&tries0, &wfa0);
     needleman_wunsch_align(seqa, seqb, &scoring, compact, r_compact);
+    alignment_band_counts(&tries, &wfa);
+    if(wfa > wfa0 && compact->trace_banded) {
+      ASSERT(tries == tries0 + 1);
+      sized++;
+    }
     ASSERT(alignments_equal(r_full, r_compact));
     banded += compact->traced && compact->trace_banded;
     kept += compact->traced && compact->trace_strips != NULL;
@@ -1621,11 +1637,13 @@ void simd_test_compact_band(bool keep)
   // where forced
 #ifdef ALN_STRIPED
   ASSERT(banded > 400);
+  ASSERT(sized > 100);
 #else
-  ASSERT(banded == 0);
+  ASSERT(banded == 0 && sized == 0);
 #endif
   ASSERT(keep ? kept == 0 : kept == banded);
   alignment_band_keep_max_cells = keep_cells;
+  alignment_band_wfa_budget = wfa_budget;
 
   alignment_block_min_cells = min_cells;
   alignment_block_min_cols = min_cols;
@@ -2265,6 +2283,96 @@ void test_linear_fallback()
   alignment_free(lin);
 }
 
+/* The wavefront score is the full fill's best global score (Hirschberg's
+ * here, which matches it), or it declines */
+static void wfa_check(const char *a, const char *b, const scoring_t *scoring,
+                      size_t budget, size_t *scored)
+{
+  const size_t la = strlen(a), lb = strlen(b);
+  sub_table_t table;
+  score_t wfa, full;
+  ASSERT(sub_table_build(&table, scoring, a, la, b, lb));
+  if(alignment_wfa_score(&table, scoring, a, la, b, lb, budget, &wfa)) {
+    ASSERT(hirschberg_score(a, b, scoring, &full));
+    ASSERT(wfa == full);
+    if(wfa != full) printf("  wfa %i full %i: %s %s\n", wfa, full, a, b);
+    (*scored)++;
+  }
+  sub_table_free(&table);
+}
+
+void test_wfa_score()
+{
+  scoring_t scoring;
+  char seqa[1024], seqb[1024], base[1024];
+  size_t p, la, lb, xa, xb, k, scored = 0;
+  const size_t big = (size_t)1 << 30;
+
+  // Every pair over {a,c} up to length 5, under several penalties
+  const int penalties[][4] = {{1, -1, -1, -1}, {1, -15, -10, -1},
+                              {2, -3, 0, -2}, {1, -5, -10, -5},
+                              {3, 0, -6, -1}, {1, -20, -2, -1},
+                              {0, -1, -2, -1}, {5, -4, -10, -1}};
+  for(p = 0; p < sizeof(penalties)/sizeof(penalties[0]); p++) {
+    scoring_init(&scoring, penalties[p][0], penalties[p][1],
+                 penalties[p][2], penalties[p][3],
+                 false, false, false, false, false, true);
+    for(la = 1; la <= 5; la++)
+      for(xa = 0; xa < (1UL << la); xa++)
+        for(lb = 1; lb <= 5; lb++)
+          for(xb = 0; xb < (1UL << lb); xb++) {
+            for(k = 0; k < la; k++) seqa[k] = (xa >> k) & 1 ? 'c' : 'a';
+            for(k = 0; k < lb; k++) seqb[k] = (xb >> k) & 1 ? 'c' : 'a';
+            seqa[la] = seqb[lb] = '\0';
+            wfa_check(seqa, seqb, &scoring, big, &scored);
+          }
+  }
+  ASSERT(scored == 8 * (62 * 62 - 50)); // not a's only against c's only
+
+  // Random scorings and pairs, related and not, in either case
+  for(p = 0; p < 3000; p++) {
+    const int match = (int)hb_rand(6), mismatch = match - 1 - (int)hb_rand(8);
+    const int gap_open = -(int)hb_rand(13);
+    const int gap_extend = -(int)hb_rand(5) - (match == 0);
+    scoring_init(&scoring, match, mismatch, gap_open, gap_extend,
+                 false, false, false, false, false, hb_rand(2) == 0);
+    la = 1 + hb_rand(p % 10 == 0 ? 400 : 60);
+    hb_rand_seq(base, la, p % 3 == 0 ? "acgtACGT" : "acgt");
+    if(hb_rand(4) == 0) {
+      hb_rand_seq(seqb, 1 + hb_rand(400), "acgtn");
+      strcpy(seqa, base);
+    }
+    else {
+      hb_mutate(seqa, base, hb_rand(300), "acgt");
+      hb_mutate(seqb, base, hb_rand(300), "acgt");
+    }
+    if(seqa[0] == '\0' || seqb[0] == '\0') continue;
+    wfa_check(seqa, seqb, &scoring, big, &scored);
+    wfa_check(seqa, seqb, &scoring, 50, &scored); // gives up, or exact
+  }
+  ASSERT(scored > 8 * (62 * 62 - 50) + 3000); // nearly all, and some at 50
+
+  // Declines what it does not handle
+  sub_table_t table;
+  score_t s;
+  scoring_init(&scoring, 1, -2, -4, -1, false, false, false, false, false, true);
+  ASSERT(sub_table_build(&table, &scoring, "acgt", 4, "acgt", 4));
+  ASSERT(alignment_wfa_score(&table, &scoring, "acgt", 4, "acgt", 4, big, &s) &&
+         s == 4);
+  ASSERT(!alignment_wfa_score(&table, &scoring, "acgt", 4, "", 0, big, &s));
+  scoring.no_end_gap_penalty = true;
+  ASSERT(!alignment_wfa_score(&table, &scoring, "acgt", 4, "acgt", 4, big, &s));
+  sub_table_free(&table);
+  scoring_init(&scoring, 1, -2, -4, -1, false, false, false, false, false, true);
+  scoring_add_wildcard(&scoring, 'n', 0);
+  ASSERT(sub_table_build(&table, &scoring, "acgn", 4, "acgt", 4));
+  ASSERT(!alignment_wfa_score(&table, &scoring, "acgn", 4, "acgt", 4, big, &s));
+  sub_table_free(&table);
+  ASSERT(sub_table_build(&table, &scoring, "aaaa", 4, "cccc", 4));
+  ASSERT(!alignment_wfa_score(&table, &scoring, "aaaa", 4, "cccc", 4, big, &s));
+  sub_table_free(&table);
+}
+
 /* Rounding sizes up to a power of two never wraps to a smaller size */
 void alignment_test_roundup()
 {
@@ -2290,6 +2398,7 @@ void test_misc()
   test_checked();
   test_out_of_memory();
   test_linear_fallback();
+  test_wfa_score();
 
   SUITE_END();
 }

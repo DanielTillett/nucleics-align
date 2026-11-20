@@ -128,6 +128,7 @@ bool alignment_band_enabled = true;
 size_t alignment_band_strip_rows = 0; // 0: automatic
 size_t alignment_band_min_width = 64;
 size_t alignment_band_keep_max_cells = 0; // 0: a quarter of the memory
+size_t alignment_band_wfa_budget = 16;
 
 // 8- and 16-bit lanes for Smith-Waterman fills (see alignment_narrow_limit())
 bool alignment_narrow_enabled = true, alignment_byte_enabled = true;
@@ -138,6 +139,14 @@ static atomic_size_t alignment_byte_fills, alignment_byte_retries;
 bool alignment_diff_enabled = true;
 bool alignment_linear_fallback = false;
 static atomic_size_t alignment_diff_fills;
+// Band fills (each width tried), and bands sized by alignment_wfa_score()
+static atomic_size_t alignment_band_tries, alignment_band_wfa_sized;
+
+void alignment_band_counts(size_t *tries, size_t *wfa_sized)
+{
+  *tries = atomic_load(&alignment_band_tries);
+  *wfa_sized = atomic_load(&alignment_band_wfa_sized);
+}
 
 size_t alignment_diff_count(void)
 {
@@ -183,6 +192,7 @@ void alignment_options_default(alignment_options_t *opts)
   opts->band_strip_rows = alignment_band_strip_rows;
   opts->band_min_width = alignment_band_min_width;
   opts->band_keep_max_cells = alignment_band_keep_max_cells;
+  opts->band_wfa_budget = alignment_band_wfa_budget;
   opts->sw_rect_min_cells = smith_waterman_rect_min_cells;
   opts->sw_strip_min_cells = smith_waterman_strip_min_cells;
   opts->hb_max_threads = hirschberg_max_threads;
@@ -1186,12 +1196,22 @@ static fill_result_t alignment_fill_banded(aligner_t *aligner,
                       alignment_diff_bits(table, scoring, &floor, &ceiling)
                       ? 0.35 : 0.6;
 
-  // Skip the band if even a high guess at the best score needs one too
-  // wide to pay (the cost rule below): the first, narrow band would only
-  // find that out (20 kb at 3-20% divergence: 0.044 -> 0.033 s)
+  // The best score itself where the wavefront algorithm finds it within
+  // its budget (close pairs): then the band it needs is filled once (50 kb
+  // at 0.1%: 0.040 -> 0.018 s). Otherwise skip the band if even a high
+  // guess at the best score needs one too wide to pay (the cost rule
+  // below): the first, narrow band would only find that out (20 kb at
+  // 3-20% divergence: 0.044 -> 0.033 s)
   double guess;
-  if(alignment_score_guess(table, scoring, aligner->seq_a, len_i,
-                           aligner->seq_b, len_j, &guess) &&
+  score_t exact;
+  const size_t budget = aligner->opts.band_wfa_budget;
+  const bool have_exact = budget > 0 && len_i <= SIZE_MAX / budget &&
+    alignment_wfa_score(table, scoring, aligner->seq_a, len_i,
+                        aligner->seq_b, len_j, budget * len_i, &exact);
+  if(have_exact) guess = exact;
+  if((have_exact ||
+      alignment_score_guess(table, scoring, aligner->seq_a, len_i,
+                            aligner->seq_b, len_j, &guess)) &&
      guess > (double)INT_MIN && guess < (double)INT_MAX) {
     const size_t need = alignment_band_width(smax, scoring->gap_extend,
                                              len_i, len_j, (score_t)guess);
@@ -1213,6 +1233,11 @@ static fill_result_t alignment_fill_banded(aligner_t *aligner,
   }
 
   size_t bw = aligner->opts.band_min_width;
+  if(have_exact) {
+    bw = MAX2(bw, alignment_band_width(smax, scoring->gap_extend,
+                                       len_i, len_j, exact));
+    atomic_fetch_add(&alignment_band_wfa_sized, 1);
+  }
   score_t *top = NULL, *lcol = NULL;
   fill_result_t done = FILL_SKIPPED;
 
@@ -1250,6 +1275,7 @@ static fill_result_t alignment_fill_banded(aligner_t *aligner,
     if((cols + strip) / MAX2(1.0, band_threads / 2) >=
        pays * (double)len_i / MAX2(1.0, full_threads / 2)) break;
 
+    atomic_fetch_add(&alignment_band_tries, 1);
     const ptrdiff_t dlo = MIN2(0, D) - (ptrdiff_t)bw;
     const ptrdiff_t dhi = MAX2(0, D) + (ptrdiff_t)bw;
 

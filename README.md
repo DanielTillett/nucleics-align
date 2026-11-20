@@ -381,6 +381,20 @@ Where the speed comes from:
   tried: 20 kb at 10-20% divergence and unrelated 0.048-0.053 -> 0.040-0.047
   s, 50 kb at 20% and unrelated about 10% quicker. The guess only decides
   whether to try a band, never the alignment
+* Before that, with one match and one mismatch score and nothing else
+  changed (no free end gaps, wildcards or gap rules), a score-only
+  wavefront alignment (WFA, see Algorithms below) looks for the best score
+  itself, for up to 16 diagonal updates per letter
+  (`alignment_band_wfa_budget`). Its time grows with the square of the
+  divergence, so it finishes only for close pairs, and then the band that
+  score needs is filled once, instead of a 64-wide band first and wider
+  ones after. Otherwise the guess and the narrow band go on as before. The
+  band proof is unchanged, so the alignment is the same either way. 0.1%
+  divergence: 50 kb 0.040 -> 0.018 s, 100 kb 0.098 -> 0.060 s, 300 kb
+  0.51 -> 0.41 s; 20 kb at 0.5% 0.017 -> 0.011 s. Where it gives up it
+  costs 0-5% (50 kb at 0.5%: 0.069 -> 0.072 s). Larger budgets let it
+  finish at 1 Mb and 0.1%, but the exact band was then slower there (4.5
+  -> 5.3 s), likely because the narrower band runs on fewer threads
 * Long global alignments: a band whose traceback bytes would not fit in a
   quarter of the physical memory (`alignment_band_keep_max_cells`) keeps
   only one strip of rows' bytes at a time, and each strip's top row. The
@@ -887,6 +901,11 @@ Done:
   and `needleman_wunsch --linear`
 * Striped SIMD matrix fill (Farrar 2007, Bioinformatics 23:156-161), for
   the full matrices and the linear-space aligner
+* Wavefront alignment (WFA: Marco-Sola et al. 2021, Bioinformatics
+  37:456-463), score only, to size the band of a global alignment, with
+  match scores converted to penalties as Eizenga & Paten describe (2022,
+  bioRxiv 10.1101/2022.01.12.476087, a preprint). Our own code, written
+  from the papers
 
 Algorithms to investigate:
 * Myers' bit-vector algorithm (1999, J ACM 46:395-415). Only computes unit
