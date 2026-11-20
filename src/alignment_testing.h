@@ -34,6 +34,9 @@ void alignment_band_counts(size_t *tries, size_t *wfa_sized);
 // set, hirschberg_banded_passes counts banded passes (each try of a band)
 extern bool hirschberg_check_striped;
 extern size_t hirschberg_striped_mismatches, hirschberg_banded_passes;
+// Passes of hirschberg.c skipped by reusing a saved row (see
+// hirschberg_reuse_depth)
+extern size_t hirschberg_reused_rows;
 
 // Rows per strip of a strip alignment (see smith_waterman_strip_min_cells;
 // 0: automatic)

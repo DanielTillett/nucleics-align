@@ -56,6 +56,13 @@ extern int hirschberg_max_threads;
 extern bool hirschberg_band_enabled;
 extern size_t hirschberg_band_strip_rows, hirschberg_band_min_width;
 
+// Rows reused down the recursion: a pass over all columns also saves the
+// rows the next hirschberg_reuse_depth (default 2; 0: none) sub-problems on
+// its side will need, if they have at least hirschberg_reuse_min_rows rows
+// (default 32), so they skip that pass. Each level can hold up to four more
+// rows of scores (the passes use four). The result is the same
+extern size_t hirschberg_reuse_depth, hirschberg_reuse_min_rows;
+
 // Whether this build and CPU run the SIMD passes (and so banding)
 bool hirschberg_simd_available(void);
 

@@ -53,6 +53,7 @@ typedef struct
   bool hb_band;
   size_t hb_block_min_cells, hb_block_min_cols;
   size_t hb_band_strip_rows, hb_band_min_width;
+  size_t hb_reuse_depth, hb_reuse_min_rows; // see hirschberg_reuse_depth
 } alignment_options_t;
 
 typedef struct

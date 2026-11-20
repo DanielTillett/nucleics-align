@@ -131,7 +131,9 @@ Link against `src/libalign.a` (and `libs/string_buffer/libstrbuf.a`, `-lz`,
   (tunable with `hirschberg_block_min_cells`, `hirschberg_block_min_cols`
   and `hirschberg_max_threads`, shared by the two passes). Passes skip cells
   that cannot be on a best
-  path (`hirschberg_band_enabled`, default true), with the same result
+  path (`hirschberg_band_enabled`, default true), and sub-problems reuse rows
+  saved by the passes above them (`hirschberg_reuse_depth`, default 2; 0
+  turns it off), with the same result
 * `hirschberg_score()` (`src/hirschberg.h`): only the global alignment score,
   in O(n) memory; same options as `hirschberg_align()`
 * `scoring_init()` and the `scoring_system_*()` functions
@@ -452,6 +454,20 @@ Where the speed comes from:
   the same. For similar sequences most cells are skipped: 50 kb at 1%
   divergence 0.9 -> 0.18 s and ~10 s -> 0.25 s of CPU; for unrelated ones
   the narrow first try costs a few milliseconds
+* Rows reused down the linear-space recursion: each split runs a forward
+  pass over the top half of its rows and a reverse pass over the bottom
+  half, and its first half then needs a forward pass from the same corner
+  (its second half a reverse pass). A forward row depends only on the rows
+  above it and the columns to its left, so the split's own row, cut to the
+  half's columns, is exactly the row the half would make. A pass over all
+  columns now also saves the rows the next two levels on its side will
+  need (`hirschberg_reuse_depth`), and those levels skip that pass. Banded
+  passes save nothing, as their rows are exact only along best paths. The
+  alignments are the same. 400 kb pairs at 30% divergence 11.8 -> 9.5 s,
+  unrelated 9.1 -> 7.5 s; 50 kb unrelated 0.31 -> 0.25 s; similar pairs,
+  which are mostly banded, 1-5% faster. Peak memory is about the same (at
+  most four more rows per level kept). Saving three levels was slower
+  (10.2 s), as each pass is cut into more pieces
 * `--scoreonly` (`hirschberg_score()`): no alignment, no matrices. With a
   band, the forward and reverse passes run at the same time and meet in the
   middle row; otherwise one forward pass over every row

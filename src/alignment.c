@@ -201,6 +201,8 @@ void alignment_options_default(alignment_options_t *opts)
   opts->hb_block_min_cols = hirschberg_block_min_cols;
   opts->hb_band_strip_rows = hirschberg_band_strip_rows;
   opts->hb_band_min_width = hirschberg_band_min_width;
+  opts->hb_reuse_depth = hirschberg_reuse_depth;
+  opts->hb_reuse_min_rows = hirschberg_reuse_min_rows;
 }
 
 // A path through diagonal d has at least I = |d| + |n-m-d| gap characters

@@ -855,6 +855,101 @@ void simd_test_hirschberg_band()
   alignment_free(striped);
 }
 
+/* Rows reused down the linear-space recursion (hirschberg_reuse_depth):
+ * every depth gives exactly the alignment without reuse, with and without
+ * SIMD, bands, column blocks, and deletions across the middle row (which
+ * shift the halves' rows so saved ones go unused) */
+static void hb_reuse_check(const char *a, const char *b,
+                           const scoring_t *scoring, size_t depth,
+                           alignment_t *ref, alignment_t *aln)
+{
+  hirschberg_reuse_depth = 0;
+  ASSERT(hirschberg_align(a, b, scoring, ref));
+  hirschberg_reuse_depth = depth;
+  hirschberg_check_striped = true; // reused rows must match the scalar ones
+  ASSERT(hirschberg_align(a, b, scoring, aln));
+  hirschberg_check_striped = false;
+  ASSERT(aln->score == ref->score);
+  ASSERT(strcmp(aln->result_a, ref->result_a) == 0);
+  ASSERT(strcmp(aln->result_b, ref->result_b) == 0);
+}
+
+void simd_test_hirschberg_reuse()
+{
+  size_t depth = hirschberg_reuse_depth, min_rows = hirschberg_reuse_min_rows;
+  size_t min_cells = hirschberg_block_min_cells;
+  size_t min_cols = hirschberg_block_min_cols;
+  int max_threads = hirschberg_max_threads;
+  bool band = hirschberg_band_enabled, striped = alignment_striped_enabled;
+  size_t reused = hirschberg_reused_rows;
+  size_t mismatches = hirschberg_striped_mismatches;
+  alignment_t *ref = alignment_create(256), *aln = alignment_create(256);
+  static char seqa[701], seqb[1402];
+  scoring_t scoring;
+  const size_t depths[] = {1, 2, 3, 8, 50};
+  const unsigned int rates[] = {0, 30, 150, 400};
+  size_t i;
+
+  for(i = 0; i < 480; i++)
+  {
+    hirschberg_reuse_min_rows = i % 3 ? 2 : 1 + hb_rand(40);
+    hirschberg_band_enabled = i % 4 == 0;
+    alignment_striped_enabled = i % 5 != 0;
+    if(i % 6 == 0) {
+      // Passes split into column blocks on several threads
+      hirschberg_block_min_cells = 1;
+      hirschberg_block_min_cols = 8;
+      hirschberg_max_threads = 2 + (int)hb_rand(3);
+    } else {
+      hirschberg_block_min_cells = min_cells;
+      hirschberg_block_min_cols = min_cols;
+      hirschberg_max_threads = max_threads;
+    }
+    // Costly gap opens, so deletions often span the middle row
+    scoring_init(&scoring, 1 + (int)hb_rand(5), -(int)hb_rand(16),
+                 -(int)hb_rand(i % 2 ? 11 : 40), -(int)hb_rand(6),
+                 false, false, false, false, false, false);
+    hb_rand_seq(seqa, hb_rand(701), "acgt");
+    if(i % 8 == 7) hb_rand_seq(seqb, hb_rand(701), "acgt");
+    else hb_mutate(seqb, seqa, rates[i % 4], "acgt");
+    hb_reuse_check(seqa, seqb, &scoring, depths[i % 5], ref, aln);
+    hb_reuse_check(seqb, seqa, &scoring, depths[(i+2) % 5], ref, aln);
+  }
+
+  alignment_striped_enabled = true;
+  hirschberg_band_enabled = false;
+  scoring_system_BLOSUM62(&scoring);
+  for(i = 0; i < 40; i++)
+  {
+    hirschberg_reuse_min_rows = 2;
+    hb_rand_seq(seqa, hb_rand(701), "ARNDCQEGHILKMFPSTWYV");
+    hb_mutate(seqb, seqa, rates[i % 4], "ARNDCQEGHILKMFPSTWYV");
+    hb_reuse_check(seqa, seqb, &scoring, depths[i % 5], ref, aln);
+  }
+
+  // A deletion across the middle row of a long run
+  memset(seqa, 'a', 600); seqa[600] = 0;
+  memset(seqb, 'a', 300); seqb[300] = 0;
+  scoring_init(&scoring, 1, -4, -30, -1, false, false, false, false,
+               false, false);
+  hb_reuse_check(seqa, seqb, &scoring, 2, ref, aln);
+  hb_reuse_check(seqb, seqa, &scoring, 2, ref, aln);
+
+  // Rows were reused, and every SIMD pass matched the scalar one
+  ASSERT(hirschberg_reused_rows > reused + 1000);
+  ASSERT(hirschberg_striped_mismatches == mismatches);
+
+  hirschberg_reuse_depth = depth;
+  hirschberg_reuse_min_rows = min_rows;
+  hirschberg_block_min_cells = min_cells;
+  hirschberg_block_min_cols = min_cols;
+  hirschberg_max_threads = max_threads;
+  hirschberg_band_enabled = band;
+  alignment_striped_enabled = striped;
+  alignment_free(ref);
+  alignment_free(aln);
+}
+
 /* Column-block threading of the full-matrix fill: force small blocks so
  * short sequences are split across several threads */
 void simd_test_fill_blocks()
@@ -1706,6 +1801,7 @@ void test_simd()
   simd_test_tiny_blocks();
   simd_test_fill_blocks();
   simd_test_hirschberg_band();
+  simd_test_hirschberg_reuse();
   simd_test_hirschberg_blocks();
   simd_test_hirschberg();
   simd_test_matches_scalar();
@@ -2205,6 +2301,7 @@ void test_out_of_memory()
   many.sw_rect_min_cells = many.sw_strip_min_cells = 0;
   many.band_strip_rows = many.hb_band_strip_rows = 8;
   many.band_min_width = many.hb_band_min_width = 4;
+  many.hb_reuse_min_rows = 2; // rows reused down the recursion
   // Bands with absolute lanes (with difference-encoded ones the whole fill
   // is cheap enough that a band this wide would not pay at some lane
   // counts), and the whole fill with difference-encoded lanes on blocks
