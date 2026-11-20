@@ -468,6 +468,18 @@ Where the speed comes from:
   which are mostly banded, 1-5% faster. Peak memory is about the same (at
   most four more rows per level kept). Saving three levels was slower
   (10.2 s), as each pass is cut into more pieces
+* The lazy F loop finds its carries first. Along a band, every cell right
+  of the best path is best reached by an insertion gap from the left, so
+  Farrar's loop carried each row's gap round all the lanes, one lane per
+  sweep: about 8 sweeps of the segment per row against 1 for the fill
+  itself. What lane l passes to lane l+1 is now found with a scan over the
+  lanes (the better of its own and what it was passed, less a gap
+  extension per cell crossed), as Block Aligner does with prefix scans
+  (Liu & Steinegger 2023, Bioinformatics 39:btad487), and each lane takes
+  its carry once. The values are the same, so are the alignments. 100 kb
+  pairs: `--linear` 1% 0.50 -> 0.25 s and 5% 0.84 -> 0.38 s; `--scoreonly`
+  1% 0.17 -> 0.08 s; the banded fill 1% 0.35 -> 0.25 s. Unrelated pairs
+  and Smith-Waterman, where the carries rarely reach far, are unchanged
 * `--scoreonly` (`hirschberg_score()`): no alignment, no matrices. With a
   band, the forward and reverse passes run at the same time and meet in the
   middle row; otherwise one forward pass over every row
@@ -550,23 +562,25 @@ Global alignment score only (every tool under 40 MB):
 
 Long pairs, global alignment with the alignment returned
 (`needleman_wunsch`), measured on another machine (AMD Ryzen 7 5700G, 8
-cores, 16 threads, 62 GB, Linux), one run each:
+cores, 16 threads, 62 GB, Linux), one run each, on 21 Nov 2026 (after the
+lazy F scan and row reuse, see above):
 
 | Pair | Band, every byte kept | Band kept in strips | `--linear` |
 |---|---|---|---|
-| 100 kb, 1% | 0.50 s, 268 MB | (kept) | 0.59 s, 6 MB |
-| 300 kb, 5% | 4.40 s, 11.6 GB | (kept) | 7.68 s, 19 MB |
-| 1 Mb, 0.1% | 4.98 s, 2.6 GB | (kept) | 6.15 s, 45 MB |
-| 1 Mb, 0.5% | 7.51 s, 17.6 GB* | 9.55 s, 286 MB | 11.8 s, 47 MB |
-| 1 Mb, 1% | 13.8 s, 34.7 GB* | 14.0 s, 319 MB | 19.4 s, 49 MB |
-| 1 Mb, 2% | out of memory | 27.0 s, 467 MB | 34.7 s, 53 MB |
-| 1 Mb, 5% | out of memory | 65.4 s, 1.1 GB | 77.3 s, 63 MB |
+| 100 kb, 1% | 0.35 s, 268 MB | (kept) | 0.27 s, 6 MB |
+| 300 kb, 5% | 2.77 s, 11.6 GB | (kept) | 2.47 s, 20 MB |
+| 1 Mb, 0.1% | 3.46 s, 2.6 GB | (kept) | 2.86 s, 45 MB |
+| 1 Mb, 0.5% | (in strips) | 5.36 s, 287 MB | 4.19 s, 47 MB |
+| 1 Mb, 1% | (in strips) | 7.92 s, 319 MB | 6.33 s, 49 MB |
+| 1 Mb, 2% | out of memory | 15.8 s, 467 MB | 10.6 s, 53 MB |
+| 1 Mb, 5% | out of memory | 43.3 s, 1.1 GB | 23.6 s, 63 MB |
 
-With 62 GB, bands of up to about 15 GB keep every byte (* those two were
-measured before strips were narrowed, see above; the bands are now kept in
-strips). Above that the band kept in strips takes 15-28% less time than
-`--linear`, which needs far less memory still. The score alone
-(`--scoreonly`) took 0.05-38 s.
+With 62 GB, bands of up to about 15 GB keep every byte; larger ones are
+kept in strips. `--linear` is now the fastest on every pair here (1.1 to
+1.8 times the speed of the band) and needs far less memory: the lazy F
+scan sped up its passes more than the band fill (1 Mb at 1%: 19.2 -> 6.3 s
+against 9.9 -> 7.9 s). Its alignment can differ where several share the
+best score (see above). The score alone (`--scoreonly`) took 0.09-11.8 s.
 
 Local alignment, best hit only (`smith_waterman --maxhits 1`), 20 kb:
 
@@ -931,7 +945,9 @@ Done:
   Myers & Miller (1988, Comput Appl Biosci 4:11-17): `hirschberg_align()`
   and `needleman_wunsch --linear`
 * Striped SIMD matrix fill (Farrar 2007, Bioinformatics 23:156-161), for
-  the full matrices and the linear-space aligner
+  the full matrices and the linear-space aligner, with the lazy F carries
+  found by a scan over the lanes, as Block Aligner uses prefix scans (Liu &
+  Steinegger 2023, Bioinformatics 39:btad487). Our own code
 * Wavefront alignment (WFA: Marco-Sola et al. 2021, Bioinformatics
   37:456-463), score only, to size the band of a global alignment, with
   match scores converted to penalties as Eizenga & Paten describe (2022,

@@ -223,15 +223,26 @@ static void KN(alignment_fill_striped)(alignment_block_t *p)
       }
     }
 
-    // Lazy F: carry gap_b across segment boundaries while it improves a cell,
-    // starting with what each lane's last cell passes to the next lane
+    // Lazy F with the carries found first: what lane l passes to lane l+1
+    // is the better of what its last cell passes on and what it was
+    // passed, less seg gap extensions (a scan over the lanes, as in
+    // alignment_diff.inc; a carry below min loses to the lane's own, which
+    // is at least min). Each lane then takes its carry along its cells
+    // while it improves one, once, rather than the carries going round the
+    // lanes until they stop. A carry stopped early can never win later:
+    // the lane's own gap_b, from the cell it stopped at, already beats it
     KV vf = KN(kmax)(KN(kmax)(KN(kshift)(vx, (KS)min) + vopen,
                               KN(kshift)(vb, (KS)min) + vext), vmin);
+    for(l = 2; l < ALN_K_VL; l++) {
+      long long carry = (long long)vf[l-1] +
+                        (long long)seg * scoring->gap_extend;
+      if(carry > vf[l]) vf[l] = (KS)carry;
+    }
     k = 0;
     while(KN(kany)(vf > cB[k])) {
       cB[k] = KN(kmax)(cB[k], vf);
+      if(++k == seg) break;
       vf = KN(kmax)(vf + vext, vmin);
-      if(++k == seg) { k = 0; vf = KN(kmax)(KN(kshift)(vf, (KS)min), vmin); }
     }
 
     if(full)

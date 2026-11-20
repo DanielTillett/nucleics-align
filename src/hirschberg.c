@@ -251,7 +251,8 @@ typedef struct {
 // (ending in a deletion) for column p in pass order; the first block also
 // writes column p = 0.
 // The insertion (horizontal) gap feeds back into the best score of the same
-// row, so Farrar's lazy F loop carries it across segment boundaries. That is
+// row, so Farrar's lazy F loop carries it across segment boundaries (with
+// the carries found first, see the loop). That is
 // exact only for gap_open <= 0 and gap_extend <= 0, which the caller checks.
 // left / right are the boundaries shared with neighbouring blocks (NULL at
 // the ends). A block with a right neighbour must have width a multiple of
@@ -342,18 +343,25 @@ static void hb_block_pass(hb_state_t *st, const char *a, ptrdiff_t astep,
     // Insertion gap leaving the last lane: into the next block
     score_t fout = vf[ALN_VL-1];
 
-    // Lazy F: carry the insertion gap across segment boundaries while it
-    // could still raise a best score
+    // Lazy F with the carries found first: what lane l passes to lane l+1
+    // is the better of its own and what it was passed, less seg gap
+    // extensions (a scan over the lanes, as in alignment_diff.inc). Each
+    // lane then takes its carry along its cells while it could still raise
+    // a best score, once, rather than the carries going round the lanes
+    // until they stop (up to ALN_VL-1 times). A carry stopped early can
+    // never win later: the gap leaving that cell already beats it
     vf = vshift(vf, HB_NEG);
+    for(l = 2; l < ALN_VL; l++) {
+      long long carry = (long long)vf[l-1] + (long long)seg * h;
+      if(carry > vf[l]) vf[l] = (score_t)carry;
+    }
+    fout = (score_t)MAX2((long long)fout,
+                         (long long)vf[ALN_VL-1] + (long long)seg * h);
     k = 0;
     while(vany(vf > Hn[k] + vg)) {
       Hn[k] = vmax(Hn[k], vf);
+      if(++k == seg) break;
       vf = vmax(vf + vh, vneg);
-      if(++k == seg) {
-        fout = MAX2(fout, vf[ALN_VL-1]);
-        k = 0;
-        vf = vshift(vf, HB_NEG);
-      }
     }
 
     if(right != NULL) {

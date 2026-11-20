@@ -109,7 +109,8 @@ void sub_table_free(sub_table_t *t)
 // gap_a only depend on the previous row, so they are computed a vector at a
 // time. gap_b depends on the cell to its left: it is first computed within
 // each segment, then corrected by Farrar's 'lazy F' loop, which carries
-// values across segment boundaries until they stop improving any cell.
+// values across segment boundaries while they improve a cell (what each
+// lane passes on is found first, with a scan over the lanes).
 // Every value is identical to the scalar recurrence, including the clamp at
 // min, so traceback and Smith-Waterman hit order are unchanged.
 // Vector helpers are in alignment_simd.h.
