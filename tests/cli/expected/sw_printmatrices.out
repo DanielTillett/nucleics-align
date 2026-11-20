@@ -1,0 +1,29 @@
+== Alignment 0 lengths (6, 4):
+seq_a: ACGTTG
+seq_b: CGTT
+match_scores:
+  0:	  0	  0	  0	  0	  0	  0	  0
+  1:	  0	  0	  2	  0	  0	  0	  0
+  2:	  0	  0	  0	  4	  0	  0	  2
+  3:	  0	  0	  0	  0	  6	  3	  0
+  4:	  0	  0	  0	  0	  3	  8	  1
+gap_a_scores:
+  0:	  0	  0	  0	  0	  0	  0	  0
+  1:	  0	  0	  0	  0	  0	  0	  0
+  2:	  0	  0	  0	  0	  0	  0	  0
+  3:	  0	  0	  0	  1	  0	  0	  0
+  4:	  0	  0	  0	  0	  3	  0	  0
+gap_b_scores:
+  0:	  0	  0	  0	  0	  0	  0	  0
+  1:	  0	  0	  0	  0	  0	  0	  0
+  2:	  0	  0	  0	  0	  1	  0	  0
+  3:	  0	  0	  0	  0	  0	  3	  2
+  4:	  0	  0	  0	  0	  0	  0	  5
+match: 2 mismatch: -2 gapopen: -2 gapexend: -1
+
+
+hit 0.0 score: 8
+  CGTT  [pos: 1; len: 4]
+  CGTT  [pos: 0; len: 4]
+
+==

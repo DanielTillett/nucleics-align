@@ -1,0 +1,86 @@
+== Alignment 0 lengths (10, 9):
+
+hit 0.0 score: 15
+  ACGTTGCAAC  [pos: 0; len: 10]
+  ACGT-GCAAC  [pos: 0; len: 9]
+
+hit 0.1 score: 4
+  AC  [pos: 0; len: 2]
+  AC  [pos: 7; len: 2]
+
+hit 0.2 score: 4
+  AC  [pos: 8; len: 2]
+  AC  [pos: 0; len: 2]
+
+hit 0.3 score: 2
+  A  [pos: 0; len: 1]
+  A  [pos: 6; len: 1]
+
+hit 0.4 score: 2
+  C  [pos: 1; len: 1]
+  C  [pos: 5; len: 1]
+
+hit 0.5 score: 2
+  G  [pos: 2; len: 1]
+  G  [pos: 4; len: 1]
+
+hit 0.6 score: 2
+  G  [pos: 5; len: 1]
+  G  [pos: 2; len: 1]
+
+hit 0.7 score: 2
+  C  [pos: 6; len: 1]
+  C  [pos: 1; len: 1]
+
+hit 0.8 score: 2
+  A  [pos: 7; len: 1]
+  A  [pos: 0; len: 1]
+
+==
+== Alignment 1 lengths (10, 10):
+
+hit 1.0 score: 16
+  GGATCCTTAA  [pos: 0; len: 10]
+  GGATCGTTAA  [pos: 0; len: 10]
+
+hit 1.1 score: 2
+  G  [pos: 0; len: 1]
+  G  [pos: 1; len: 1]
+
+hit 1.2 score: 2
+  G  [pos: 0; len: 1]
+  G  [pos: 5; len: 1]
+
+hit 1.3 score: 2
+  G  [pos: 1; len: 1]
+  G  [pos: 0; len: 1]
+
+hit 1.4 score: 2
+  G  [pos: 1; len: 1]
+  G  [pos: 5; len: 1]
+
+hit 1.5 score: 2
+  A  [pos: 2; len: 1]
+  A  [pos: 8; len: 1]
+
+hit 1.6 score: 2
+  A  [pos: 2; len: 1]
+  A  [pos: 9; len: 1]
+
+hit 1.7 score: 2
+  T  [pos: 3; len: 1]
+  T  [pos: 7; len: 1]
+
+hit 1.8 score: 2
+  T  [pos: 7; len: 1]
+  T  [pos: 3; len: 1]
+
+hit 1.9 score: 2
+  A  [pos: 8; len: 1]
+  A  [pos: 2; len: 1]
+
+hit 1.10 score: 2
+  A  [pos: 9; len: 1]
+  A  [pos: 2; len: 1]
+
+==

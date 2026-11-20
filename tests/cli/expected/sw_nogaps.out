@@ -1,0 +1,46 @@
+== Alignment 0 lengths (8, 8):
+
+hit 0.0 score: 12
+  ACGTACGT  [pos: 0; len: 8]
+  ACGAACGT  [pos: 0; len: 8]
+
+hit 0.1 score: 8
+  ACGT  [pos: 0; len: 4]
+  ACGT  [pos: 4; len: 4]
+
+hit 0.2 score: 6
+  ACG  [pos: 4; len: 3]
+  ACG  [pos: 0; len: 3]
+
+hit 0.3 score: 2
+  A  [pos: 0; len: 1]
+  A  [pos: 3; len: 1]
+
+hit 0.4 score: 2
+  A  [pos: 4; len: 1]
+  A  [pos: 3; len: 1]
+
+==
+== Alignment 1 lengths (8, 9):
+
+hit 1.0 score: 10
+  TACGT  [pos: 3; len: 5]
+  TACGT  [pos: 4; len: 5]
+
+hit 1.1 score: 8
+  ACGT  [pos: 0; len: 4]
+  ACGT  [pos: 0; len: 4]
+
+hit 1.2 score: 8
+  ACGT  [pos: 0; len: 4]
+  ACGT  [pos: 5; len: 4]
+
+hit 1.3 score: 8
+  ACGT  [pos: 4; len: 4]
+  ACGT  [pos: 0; len: 4]
+
+hit 1.4 score: 2
+  T  [pos: 7; len: 1]
+  T  [pos: 4; len: 1]
+
+==

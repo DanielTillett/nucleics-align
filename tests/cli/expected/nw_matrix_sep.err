@@ -1,0 +1,3 @@
+Error: substitution matrix : Numbers (0-9) and dashes (-) do not make good separators
+File: tests/cli/input/bad_matrix_sep.txt
+Line: 1

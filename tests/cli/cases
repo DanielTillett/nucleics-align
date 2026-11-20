@@ -36,3 +36,30 @@ sw_overflow      | -     | ./bin/smith_waterman --match 500000000 --mismatch -1 
 nw_gap_overflow  | -     | ./bin/needleman_wunsch --printscores --gapextend -500000000 AAAAA A
 nw_unused_score  | -     | ./bin/needleman_wunsch --printscores --wildcard X 536870911 A A
 nw_case_mixed    | -     | ./bin/needleman_wunsch --printscores --scoring BLOSUM62 --case_sensitive A c
+# Characterisation of the original (2017) code paths, recorded before
+# refactoring it: matrices, standard input, --files, the other built-in
+# scoring systems, the experimental options, SW usage, matrix files and
+# loader errors
+nw_printmatrices | -     | ./bin/needleman_wunsch --printmatrices --printscores ACGT AGT
+sw_printmatrices | -     | ./bin/smith_waterman --printmatrices ACGTTG CGTT
+nw_stdin         | -     | ./bin/needleman_wunsch --printscores --stdin < @/ties.fa
+sw_interactive   | -     | ./bin/smith_waterman --stdin < @/sw_interactive_seqs.txt
+sw_interact_fa   | -     | ./bin/smith_waterman --stdin < @/sw_interactive_fasta.txt
+nw_files         | -     | ./bin/needleman_wunsch --printscores --files @/files_a.fa @/files_b.fa
+sw_files         | -     | ./bin/smith_waterman --minscore 1 --files @/files_a.fa @/files_b.fa
+nw_pam70         | -     | ./bin/needleman_wunsch --scoring PAM70 --printscores --file @/protein.fa
+nw_blosum80      | -     | ./bin/needleman_wunsch --scoring BLOSUM80 --printscores --file @/protein.fa
+nw_dna_hybrid    | -     | ./bin/needleman_wunsch --scoring DNA_HYBRIDIZATION --printscores --file @/nogaps.fa
+nw_nomismatches  | -     | ./bin/needleman_wunsch --nomismatches --printscores --file @/nogaps.fa
+nw_nogaps        | -     | ./bin/needleman_wunsch --nogaps --printscores --file @/nogaps.fa
+nw_nogapsin2     | -     | ./bin/needleman_wunsch --nogapsin2 --printscores --file @/nogaps.fa
+nw_nogapslongest | -     | ./bin/needleman_wunsch --nogapsinlongest --printscores --file @/nogaps.fa
+sw_nomismatches  | -     | ./bin/smith_waterman --nomismatches --minscore 1 --file @/nogaps.fa
+sw_nogaps        | -     | ./bin/smith_waterman --nogaps --minscore 1 --file @/nogaps.fa
+sw_usage         | -     | ./bin/smith_waterman --nonsense
+nw_matrix_comma  | -     | ./bin/needleman_wunsch --substitution_matrix @/comma_matrix.txt --printscores --file @/nogaps.fa
+nw_matrix_short  | -     | ./bin/needleman_wunsch --substitution_matrix @/bad_matrix_short.txt ACGT AGT
+nw_matrix_sep    | -     | ./bin/needleman_wunsch --substitution_matrix @/bad_matrix_sep.txt ACGT AGT
+nw_matrix_empty  | -     | ./bin/needleman_wunsch --substitution_matrix @/empty.txt ACGT AGT
+nw_matrix_none   | -     | ./bin/needleman_wunsch --substitution_matrix @/no_such_file.txt ACGT AGT
+nw_pairs_bad     | -     | ./bin/needleman_wunsch --substitution_pairs @/bad_pairs.txt ACGT AGT
