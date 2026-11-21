@@ -46,6 +46,9 @@ typedef struct
   // result
   bool linear_fallback;
   size_t linear_above;
+  // Needleman-Wunsch by the wavefront algorithm where it applies (see
+  // alignment_wfa_alignment): the same score, perhaps another alignment
+  bool wfa_align;
   size_t block_min_cells, block_min_cols, band_strip_rows, band_min_width;
   size_t band_keep_max_cells; // see alignment_band_keep_max_cells
   size_t band_wfa_budget; // see alignment_band_wfa_budget
@@ -220,6 +223,18 @@ bool alignment_wfa_score(const sub_table_t *table, const scoring_t *scoring,
                          const char *seq_b, size_t len_b,
                          size_t budget, score_t *score);
 
+// The best global alignment itself by the wavefront algorithm, keeping
+// every wavefront (at most budget cells), for a table built for these
+// sequences: the same score as needleman_wunsch_align(), but where several
+// alignments share it, perhaps another of them. ALN_ERR_UNSUPPORTED if the
+// scoring is not one match and one mismatch score with gap penalties, or
+// past the budget; ALN_ERR_NOMEM if out of memory
+aln_status_t alignment_wfa_align(const sub_table_t *table,
+                                 const scoring_t *scoring,
+                                 const char *seq_a, size_t len_a,
+                                 const char *seq_b, size_t len_b,
+                                 size_t budget, alignment_t *result);
+
 // The best global alignment's score under unit costs (match 0, mismatch and
 // gap letter -1, gap open 0: minus the edit distance) by Myers' bit-vector
 // algorithm (see alignment_myers.c), for a table built for these
@@ -290,6 +305,14 @@ extern bool alignment_linear_fallback;
 // less memory for long pairs, with the same score, but it may choose
 // another of several equal-scoring alignments. Default 0 (never)
 extern size_t alignment_linear_above;
+// Needleman-Wunsch alignments are made by the wavefront algorithm
+// (alignment_wfa_align()) where the scoring is one match and one mismatch
+// score with gap penalties and the pair is similar enough to finish within
+// 64 cells per letter (at most 2^25 cells, about 400 MB), and with the
+// matrices otherwise: much faster for near-identical pairs, with the same
+// score, but it may choose another of several equal-scoring alignments.
+// Default false
+extern bool alignment_wfa_alignment;
 
 // The default settings, from the variables above (and their hirschberg_*
 // and smith_waterman_* counterparts) as they are now

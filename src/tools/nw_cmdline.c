@@ -238,6 +238,7 @@ int main(int argc, char* argv[])
   cmd = cmdline_new(argc, argv, &scoring, NUCLEICS_ALIGN_NW_CMD);
   alignment_linear_fallback = cmd->linear_fallback;
   alignment_linear_above = cmd->linear_above;
+  alignment_wfa_alignment = cmd->wfa_align;
 
   static const cmd_tool_t tool = {nw_aligner_new, nw_aligner_free,
                                   nw_set_options, align, NULL, NULL};

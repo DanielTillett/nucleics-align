@@ -2665,6 +2665,69 @@ void test_linear_above()
   alignment_free(mat);
 }
 
+/* Without its gaps, an alignment string is the sequence aligned */
+static bool wfa_same_letters(const char *aligned, const char *seq)
+{
+  for(; *aligned != '\0'; aligned++) {
+    if(*aligned == '-') continue;
+    if(*aligned != *seq++) return false;
+  }
+  return *seq == '\0';
+}
+
+/* With wfa_align, an alignment by the wavefront algorithm: the matrices'
+ * score, a real alignment of the two sequences scoring that, and the
+ * matrices where the scoring does not suit it */
+void test_wfa_align()
+{
+  nw_aligner_t *nw = needleman_wunsch_new();
+  alignment_t *aln = alignment_create(16), *mat = alignment_create(16);
+  alignment_options_t opts;
+  scoring_t scoring;
+  static char seqa[900], seqb[1800];
+  const unsigned int rates[] = {0, 5, 30, 150, 400};
+  size_t i, used = 0;
+  alignment_options_default(&opts);
+  nw->options = &opts;
+
+  for(i = 0; i < 400; i++)
+  {
+    scoring_init(&scoring, 1 + (int)hb_rand(4), -(int)hb_rand(8),
+                 -(int)hb_rand(10), -1 - (int)hb_rand(4), false, false,
+                 false, false, false, i % 2 == 0);
+    hb_rand_seq(seqa, 1 + hb_rand(800), i % 2 ? "acgt" : "ACgt");
+    if(i % 6 == 5) hb_rand_seq(seqb, 1 + hb_rand(800), "acgt");
+    else hb_mutate(seqb, seqa, rates[i % 5], "acgt");
+    if(seqb[0] == '\0') strcpy(seqb, "a");
+
+    opts.wfa_align = false;
+    needleman_wunsch_align(seqa, seqb, &scoring, nw, mat);
+    opts.wfa_align = true;
+    ASSERT(needleman_wunsch_align_checked(seqa, seqb, strlen(seqa),
+                                          strlen(seqb), &scoring, nw, aln,
+                                          NULL) == ALN_OK);
+    ASSERT(aln->score == mat->score);
+    ASSERT(hirschberg_score_alignment(aln->result_a, aln->result_b,
+                                      &scoring) == aln->score);
+    ASSERT(wfa_same_letters(aln->result_a, seqa) &&
+           wfa_same_letters(aln->result_b, seqb));
+    used += !nw->traced && nw->match_scores == NULL;
+  }
+
+  // BLOSUM62 is not one match and one mismatch score: the matrices
+  scoring_system_BLOSUM62(&scoring);
+  opts.wfa_align = false;
+  needleman_wunsch_align("MKTAYIAKQR", "MKTAHIAKQR", &scoring, nw, mat);
+  opts.wfa_align = true;
+  needleman_wunsch_align("MKTAYIAKQR", "MKTAHIAKQR", &scoring, nw, aln);
+  ASSERT(aln->score == mat->score && strcmp(aln->result_a, mat->result_a) == 0);
+  (void)used;
+
+  needleman_wunsch_free(nw);
+  alignment_free(aln);
+  alignment_free(mat);
+}
+
 /* The wavefront score is the full fill's best global score (Hirschberg's
  * here, which matches it), or it declines */
 static void wfa_check(const char *a, const char *b, const scoring_t *scoring,
@@ -2872,6 +2935,7 @@ void test_misc()
   test_out_of_memory();
   test_linear_fallback();
   test_linear_above();
+  test_wfa_align();
   test_wfa_score();
   test_bug_regressions();
 
