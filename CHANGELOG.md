@@ -5,7 +5,9 @@ Nucleics Align is derived from Isaac Turner's
 2017). Output is the same as seq-align's, byte for byte, except for the
 fixes listed under [Changes to output](#changes-to-output).
 
-## Unreleased
+## 1.0.0 - 21 Nov 2026
+
+The first release of Nucleics Align.
 
 ### Added
 
