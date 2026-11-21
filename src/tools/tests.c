@@ -2072,7 +2072,7 @@ void alignment_test_create_zero()
 // Write text to a temporary file and load it as a substitution matrix
 static void load_matrix_text(const char *text, scoring_t *scoring)
 {
-  char path[] = "/tmp/seq_align_testXXXXXX";
+  char path[] = "/tmp/nucleics_align_testXXXXXX";
   int fd = mkstemp(path);
   if(fd < 0) die("Cannot create temp file");
   if(write(fd, text, strlen(text)) != (ssize_t)strlen(text)) die("write failed");
@@ -2680,17 +2680,17 @@ int main(int argc, char **argv)
   if(argc != 1)
   {
     printf("  Unused args '%s..'\n", argv[1]);
-    printf("Usage: ./seq_align_tests\n");
+    printf("Usage: ./nucleics_align_tests\n");
     exit(EXIT_FAILURE);
   }
 
-  // Initialise random number generator: SEQ_ALIGN_TEST_SEED repeats a run
-  const char *seed_env = getenv("SEQ_ALIGN_TEST_SEED");
+  // Initialise random number generator: NUCLEICS_ALIGN_TEST_SEED repeats a run
+  const char *seed_env = getenv("NUCLEICS_ALIGN_TEST_SEED");
   unsigned int seed = seed_env != NULL
                       ? (unsigned int)strtoul(seed_env, NULL, 10)
                       : (unsigned int)time(NULL) + (unsigned int)getpid();
   srand(seed);
-  printf("  Random seed: %u (set SEQ_ALIGN_TEST_SEED to repeat)\n", seed);
+  printf("  Random seed: %u (set NUCLEICS_ALIGN_TEST_SEED to repeat)\n", seed);
 
   printf("  Test Nucleics Align C library:\n\n");
 

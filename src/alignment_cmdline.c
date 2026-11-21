@@ -6,8 +6,8 @@
  date: Nov 2013
  */
 
-// Turn on debugging output by defining SEQ_ALIGN_VERBOSE
-//#define SEQ_ALIGN_VERBOSE
+// Turn on debugging output by defining NUCLEICS_ALIGN_VERBOSE
+//#define NUCLEICS_ALIGN_VERBOSE
 
 // request decent POSIX version (and, on macOS, which hides names beyond it
 // once one is asked for, sysconf(_SC_NPROCESSORS_ONLN) and the like)
@@ -75,12 +75,12 @@ static bool score_in_range(int score)
   return score >= -SCORE_ABS_MAX && score <= SCORE_ABS_MAX;
 }
 
-static void print_usage(enum SeqAlignCmdType cmd_type, score_t defaults[4],
+static void print_usage(enum NucleicsAlignCmdType cmd_type, score_t defaults[4],
                         const char *cmdstr, const char *errfmt, ...)
   __attribute__((format(printf, 4, 5)))
   __attribute__((noreturn));
 
-static void print_usage(enum SeqAlignCmdType cmd_type, score_t defaults[4],
+static void print_usage(enum NucleicsAlignCmdType cmd_type, score_t defaults[4],
                         const char *cmdstr, const char *errfmt, ...)
 {
   if(errfmt != NULL) {
@@ -99,8 +99,8 @@ static void print_usage(enum SeqAlignCmdType cmd_type, score_t defaults[4],
 "  %s optimal %s alignment (maximises score).  \n"
 "  Takes a pair of sequences on the command line, or can read from a\n"
 "  file and from sequence piped in.  Can read gzip files, FASTA and FASTQ.\n\n",
-          cmd_type == SEQ_ALIGN_SW_CMD ? "Smith-Waterman" : "Needleman-Wunsch",
-          cmd_type == SEQ_ALIGN_SW_CMD ? "local" : "global");
+          cmd_type == NUCLEICS_ALIGN_SW_CMD ? "Smith-Waterman" : "Needleman-Wunsch",
+          cmd_type == NUCLEICS_ALIGN_SW_CMD ? "local" : "global");
 
   fprintf(stderr,
 "  OPTIONS:\n"
@@ -127,7 +127,7 @@ static void print_usage(enum SeqAlignCmdType cmd_type, score_t defaults[4],
           defaults[0], defaults[1],
           defaults[2], defaults[3], scoring_system_names());
 
-  if(cmd_type == SEQ_ALIGN_SW_CMD)
+  if(cmd_type == NUCLEICS_ALIGN_SW_CMD)
   {
     // SW specific
     fprintf(stderr,
@@ -170,7 +170,7 @@ static void print_usage(enum SeqAlignCmdType cmd_type, score_t defaults[4],
 
   fprintf(stderr,
 "    --nomismatches       No mismatches allowed%s\n",
-          cmd_type == SEQ_ALIGN_SW_CMD ? "" : " (cannot be used with --nogaps..)");
+          cmd_type == NUCLEICS_ALIGN_SW_CMD ? "" : " (cannot be used with --nogaps..)");
 
   fprintf(stderr,
 "\n"
@@ -196,7 +196,7 @@ void cmdline_free(cmdline_t *cmd)
 #define usage(fmt,...) print_usage(cmd_type,defaults,argv[0],fmt, ##__VA_ARGS__)
 
 cmdline_t* cmdline_new(int argc, char **argv, scoring_t *scoring,
-                       enum SeqAlignCmdType cmd_type)
+                       enum NucleicsAlignCmdType cmd_type)
 {
   cmdline_t* cmd = calloc(1, sizeof(cmdline_t));
   if(cmd == NULL) {
@@ -272,13 +272,13 @@ cmdline_t* cmdline_new(int argc, char **argv, scoring_t *scoring,
       // strcasecmp does case insensitive comparison
       if(strcasecmp(argv[argi], "--freestartgap") == 0)
       {
-        if(cmd_type != SEQ_ALIGN_NW_CMD)
+        if(cmd_type != NUCLEICS_ALIGN_NW_CMD)
           usage("--freestartgap only valid with Needleman-Wunsch");
         scoring->no_start_gap_penalty = true;
       }
       else if(strcasecmp(argv[argi], "--freeendgap") == 0)
       {
-        if(cmd_type != SEQ_ALIGN_NW_CMD)
+        if(cmd_type != NUCLEICS_ALIGN_NW_CMD)
           usage("--freeendgap only valid with Needleman-Wunsch");
         scoring->no_end_gap_penalty = true;
       }
@@ -309,7 +309,7 @@ cmdline_t* cmdline_new(int argc, char **argv, scoring_t *scoring,
       }
       else if(strcasecmp(argv[argi], "--printseq") == 0)
       {
-        if(cmd_type != SEQ_ALIGN_SW_CMD)
+        if(cmd_type != NUCLEICS_ALIGN_SW_CMD)
           usage("--printseq only valid with Smith-Waterman");
         cmd->print_seq = true;
       }
@@ -319,7 +319,7 @@ cmdline_t* cmdline_new(int argc, char **argv, scoring_t *scoring,
       }
       else if(strcasecmp(argv[argi], "--printscores") == 0)
       {
-        if(cmd_type != SEQ_ALIGN_NW_CMD)
+        if(cmd_type != NUCLEICS_ALIGN_NW_CMD)
           usage("--printscores only valid with Needleman-Wunsch");
         cmd->print_scores = true;
       }
@@ -337,25 +337,25 @@ cmdline_t* cmdline_new(int argc, char **argv, scoring_t *scoring,
       }
       else if(strcasecmp(argv[argi], "--zam") == 0)
       {
-        if(cmd_type != SEQ_ALIGN_NW_CMD)
+        if(cmd_type != NUCLEICS_ALIGN_NW_CMD)
           usage("--zam only valid with Needleman-Wunsch");
         cmd->zam_stle_output = true;
       }
       else if(strcasecmp(argv[argi], "--scoreonly") == 0)
       {
-        if(cmd_type != SEQ_ALIGN_NW_CMD)
+        if(cmd_type != NUCLEICS_ALIGN_NW_CMD)
           usage("--scoreonly only valid with Needleman-Wunsch");
         cmd->score_only = true;
       }
       else if(strcasecmp(argv[argi], "--linear") == 0)
       {
-        if(cmd_type != SEQ_ALIGN_NW_CMD)
+        if(cmd_type != NUCLEICS_ALIGN_NW_CMD)
           usage("--linear only valid with Needleman-Wunsch");
         cmd->linear_space = true;
       }
       else if(strcasecmp(argv[argi], "--linearfallback") == 0)
       {
-        if(cmd_type != SEQ_ALIGN_NW_CMD)
+        if(cmd_type != NUCLEICS_ALIGN_NW_CMD)
           usage("--linearfallback only valid with Needleman-Wunsch");
         cmd->linear_fallback = true;
       }
@@ -403,7 +403,7 @@ cmdline_t* cmdline_new(int argc, char **argv, scoring_t *scoring,
       }
       else if(strcasecmp(argv[argi], "--minscore") == 0)
       {
-        if(cmd_type != SEQ_ALIGN_SW_CMD)
+        if(cmd_type != NUCLEICS_ALIGN_SW_CMD)
           usage("--minscore only valid with Smith-Waterman");
 
         if(!parse_entire_int(argv[argi+1], &cmd->min_score))
@@ -415,7 +415,7 @@ cmdline_t* cmdline_new(int argc, char **argv, scoring_t *scoring,
       }
       else if(strcasecmp(argv[argi], "--maxhits") == 0)
       {
-        if(cmd_type != SEQ_ALIGN_SW_CMD)
+        if(cmd_type != NUCLEICS_ALIGN_SW_CMD)
           usage("--maxhits only valid with Smith-Waterman");
 
         if(!parse_entire_uint(argv[argi+1], &cmd->max_hits_per_alignment))
@@ -434,7 +434,7 @@ cmdline_t* cmdline_new(int argc, char **argv, scoring_t *scoring,
       }
       else if(strcasecmp(argv[argi], "--context") == 0)
       {
-        if(cmd_type != SEQ_ALIGN_SW_CMD)
+        if(cmd_type != NUCLEICS_ALIGN_SW_CMD)
           usage("--context only valid with Smith-Waterman");
 
         if(!parse_entire_uint(argv[argi+1], &cmd->print_context))
@@ -553,7 +553,7 @@ cmdline_t* cmdline_new(int argc, char **argv, scoring_t *scoring,
 
   // Cannot guarantee that we can perform a global alignment if nomismatches
   // and nogaps is true
-  if(cmd_type == SEQ_ALIGN_NW_CMD && scoring->no_mismatches &&
+  if(cmd_type == NUCLEICS_ALIGN_NW_CMD && scoring->no_mismatches &&
      (scoring->no_gaps_in_a || scoring->no_gaps_in_b ||
       scoring->no_gaps_in_longest))
   {

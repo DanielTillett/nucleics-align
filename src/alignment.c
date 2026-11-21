@@ -6,8 +6,8 @@
  date: Feb 2015
  */
 
-// Turn on debugging output by defining SEQ_ALIGN_VERBOSE
-//#define SEQ_ALIGN_VERBOSE
+// Turn on debugging output by defining NUCLEICS_ALIGN_VERBOSE
+//#define NUCLEICS_ALIGN_VERBOSE
 
 #define _DEFAULT_SOURCE // madvise
 

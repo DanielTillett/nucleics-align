@@ -6,8 +6,8 @@
  date: Nov 2013
  */
 
-// Turn on debugging output by defining SEQ_ALIGN_VERBOSE
-//#define SEQ_ALIGN_VERBOSE
+// Turn on debugging output by defining NUCLEICS_ALIGN_VERBOSE
+//#define NUCLEICS_ALIGN_VERBOSE
 
 #include <stdlib.h>
 #include <stdio.h>

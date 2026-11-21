@@ -80,7 +80,7 @@ bin/smith_waterman: src/tools/sw_cmdline.c src/libalign.a $(HDRS) | bin
 bin/lcs: src/tools/lcs_cmdline.c src/libalign.a $(HDRS) | bin
 	$(CC) -o $@ $< $(CFLAGS) $(TGTFLAGS) $(INCS) $(LIBS) $(LINKFLAGS)
 
-bin/seq_align_tests: src/tools/tests.c src/libalign.a $(HDRS) | bin
+bin/nucleics_align_tests: src/tools/tests.c src/libalign.a $(HDRS) | bin
 	$(CC) -o $@ $< $(CFLAGS) $(TGTFLAGS) $(INCS) $(LIBS) $(LINK)
 
 examples: src/libalign.a
@@ -93,8 +93,8 @@ clean:
 	rm -rf bin src/*.o src/*.d src/libalign.a src/.build-flags
 	cd examples && $(MAKE) clean
 
-test: bin/seq_align_tests bin/needleman_wunsch bin/smith_waterman bin/lcs
-	./bin/seq_align_tests
+test: bin/nucleics_align_tests bin/needleman_wunsch bin/smith_waterman bin/lcs
+	./bin/nucleics_align_tests
 	sh tests/cli/run.sh
 
 .PHONY: all clean examples test

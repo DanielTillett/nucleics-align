@@ -185,7 +185,7 @@ static int align(tool_worker_t *wk, const char *seq_a, const char *seq_b,
                       : wait_on_keystroke ? 0
                       : scoring.match * MAX2(0.2 * MIN2(len_a, len_b), 2);
 
-  #ifdef SEQ_ALIGN_VERBOSE
+  #ifdef NUCLEICS_ALIGN_VERBOSE
   fprintf(out, "min_score: %i\n", min_score);
   #endif
 
@@ -279,7 +279,7 @@ static int align(tool_worker_t *wk, const char *seq_a, const char *seq_b,
       right_spaces_b = (context_right > rem_b) ? context_right - rem_b : 0;
     }
 
-    #ifdef SEQ_ALIGN_VERBOSE
+    #ifdef NUCLEICS_ALIGN_VERBOSE
     fprintf(out, "context left = %zu; right = %zu spacing: [%zu,%zu] [%zu,%zu]\n",
             context_left, context_right,
             left_spaces_a, right_spaces_a,
@@ -367,12 +367,12 @@ static size_t number_pair(const char *seq_a, const char *seq_b)
 
 int main(int argc, char* argv[])
 {
-  #ifdef SEQ_ALIGN_VERBOSE
+  #ifdef NUCLEICS_ALIGN_VERBOSE
   printf("VERBOSE: on\n");
   #endif
 
   sw_set_default_scoring();
-  cmd = cmdline_new(argc, argv, &scoring, SEQ_ALIGN_SW_CMD);
+  cmd = cmdline_new(argc, argv, &scoring, NUCLEICS_ALIGN_SW_CMD);
 
   static const cmd_tool_t tool = {sw_aligner_new, sw_aligner_free,
                                   sw_set_options, align, number_pair,

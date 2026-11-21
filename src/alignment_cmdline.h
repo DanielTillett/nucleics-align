@@ -25,7 +25,7 @@
 #include "seq_file/seq_file.h"
 #include "alignment.h"
 
-enum SeqAlignCmdType {SEQ_ALIGN_SW_CMD, SEQ_ALIGN_NW_CMD};
+enum NucleicsAlignCmdType {NUCLEICS_ALIGN_SW_CMD, NUCLEICS_ALIGN_NW_CMD};
 
 typedef struct
 {
@@ -66,7 +66,7 @@ char parse_entire_int(char *str, int *result);
 char parse_entire_uint(char *str, unsigned int *result);
 
 cmdline_t* cmdline_new(int argc, char **argv, scoring_t *scoring,
-                       enum SeqAlignCmdType cmd_type);
+                       enum NucleicsAlignCmdType cmd_type);
 void cmdline_free(cmdline_t* cmd);
 
 void cmdline_add_files(cmdline_t* cmd, char* p1, char* p2);

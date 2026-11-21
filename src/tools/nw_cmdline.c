@@ -230,12 +230,12 @@ static int align(tool_worker_t *wk, const char *seq_a, const char *seq_b,
 
 int main(int argc, char* argv[])
 {
-  #ifdef SEQ_ALIGN_VERBOSE
+  #ifdef NUCLEICS_ALIGN_VERBOSE
   printf("VERBOSE: on\n");
   #endif
 
   nw_set_default_scoring();
-  cmd = cmdline_new(argc, argv, &scoring, SEQ_ALIGN_NW_CMD);
+  cmd = cmdline_new(argc, argv, &scoring, NUCLEICS_ALIGN_NW_CMD);
   alignment_linear_fallback = cmd->linear_fallback;
 
   static const cmd_tool_t tool = {nw_aligner_new, nw_aligner_free,

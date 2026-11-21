@@ -18,7 +18,7 @@ library is easy to call from other programs (see `examples/`). Python and
 Perl modules that run the tools are in `python/` and `perl/` (see Python and
 Perl below).
 
-Nucleics Align is a fork of Isaac Turner's
+Nucleics Align is derived from Isaac Turner's
 [seq-align](https://github.com/noporpoise/seq-align)
 with bug fixes, a linear-space global aligner and a faster SIMD matrix fill.
 
@@ -60,7 +60,7 @@ Build options:
 compares the tools' output, error messages and exit status with the
 expected files in `tests/cli/expected`, running each batch case on one
 thread and on four. The unit tests print their random seed; set
-`SEQ_ALIGN_TEST_SEED` to repeat a run. Changing the compiler, flags or any
+`NUCLEICS_ALIGN_TEST_SEED` to repeat a run. Changing the compiler, flags or any
 header rebuilds what depends on it, so a build never mixes objects compiled
 different ways. `benchmarks/` has the scripts behind the timings below.
 
@@ -270,7 +270,7 @@ Performance
 
 Time per alignment of simulated sequences (about 10% substitutions and 2%
 insertions/deletions), measured on an AMD Ryzen AI Max+ 395 under WSL2 with
-gcc 15.2 at `-O3`. "Before" is the code at the start of this fork; every
+gcc 15.2 at `-O3`. "Before" is the original seq-align code; every
 version gives identical scores and alignments.
 
 | Workload | Before | Now | Now, `NATIVE=1` |
@@ -572,7 +572,7 @@ sequences. Nucleics Align uses up to 16 threads and the other tools one, so CPU
 time is shown in brackets where it is well above the wall time.
 
 The tools:
-* seq-align before this fork: commit dc41988 (2017), the last upstream commit
+* seq-align (original): commit dc41988 (2017), its last commit
 * parasail 2.6.2: `nw_trace_striped_32`, `nw_striped_32` and
   `sw_trace_striped_32`
 * ksw2 (289609b): `ksw_extz2_sse`, with no band
@@ -590,7 +590,7 @@ Global alignment with the alignment returned, 20 kb:
 
 | Tool | 1% | 10% | Unrelated | Peak memory |
 |---|---|---|---|---|
-| seq-align before this fork | 9.55 s | 9.75 s | 10.56 s | 4.6 GB |
+| seq-align (original) | 9.55 s | 9.75 s | 10.56 s | 4.6 GB |
 | Nucleics Align, full matrix | 0.01 s | 0.05 s (0.8 s) | 0.05 s (0.7 s) | 13 - 388 MB |
 | Nucleics Align `--linear` | 0.05 s | 0.12 s | 0.08 s (0.29 s) | 7 MB |
 | parasail | 1.17 s | 1.28 s | 0.76 s | 1.5 GB |
@@ -644,7 +644,7 @@ Local alignment, best hit only (`smith_waterman --maxhits 1`), 20 kb:
 
 | Tool | 1% | 10% | Unrelated | Peak memory |
 |---|---|---|---|---|
-| seq-align before this fork | 71.1 s | 61.2 s | 34.5 s | 6.3 - 8.5 GB |
+| seq-align (original) | 71.1 s | 61.2 s | 34.5 s | 6.3 - 8.5 GB |
 | Nucleics Align | 0.12 s (0.9 s) | 0.11 s (0.8 s) | 0.01 s (0.14 s) | 5 - 23 MB |
 | parasail | 0.90 s | 0.83 s | 0.72 s | 1.5 GB |
 | SSW | 0.27 s | 0.22 s | 0.03 s | 7 MB |
@@ -658,11 +658,11 @@ same session). With `NATIVE=1` on AVX-512 the unrelated pair takes under
 MB when it spans both sequences (1.27 s and 2.9 GB before strip
 alignments), and 0.06 s and 10 MB for the unrelated pair (the other tools
 were not run). At 5 kb every global aligner
-took 0.07 s or less, except seq-align before this fork (0.53-0.63 s) and
+took 0.07 s or less, except the original seq-align (0.53-0.63 s) and
 WFA2 on the unrelated pair (0.65-0.96 s).
 
 In short:
-* Against the code before this fork, the same full-matrix alignment is
+* Against the original seq-align, the same full-matrix alignment is
   140-320x faster with 12-240x less memory, and the best local hit
   550-3,400x faster with over 250x less memory
 * For global alignment Nucleics Align has the lowest wall time of the exact

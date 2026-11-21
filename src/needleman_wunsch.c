@@ -192,7 +192,7 @@ static aln_status_t _nw_align(const char *a, const char *b,
                               nw_aligner_t *nw, alignment_t *result)
 {
   aln_status_t status;
-  #ifdef SEQ_ALIGN_VERBOSE
+  #ifdef NUCLEICS_ALIGN_VERBOSE
     // The diagnostics below need the score matrices
     bool compact = nw->compact;
     nw->compact = false;
@@ -241,7 +241,7 @@ static aln_status_t _nw_align(const char *a, const char *b,
     curr_score = nw->gap_a_scores[arr_size-1];
   }
 
-  #ifdef SEQ_ALIGN_VERBOSE
+  #ifdef NUCLEICS_ALIGN_VERBOSE
     alignment_print_matrices(nw);
   #endif
 
@@ -254,7 +254,7 @@ static aln_status_t _nw_align(const char *a, const char *b,
 
   for(; score_x > 0 && score_y > 0; next_char--)
   {
-    #ifdef SEQ_ALIGN_VERBOSE
+    #ifdef NUCLEICS_ALIGN_VERBOSE
     printf("matrix: %s (%zu,%zu) score: %i\n",
            MATRIX_NAME(curr_matrix), score_x-1, score_y-1, curr_score);
     #endif

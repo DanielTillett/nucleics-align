@@ -10,7 +10,7 @@
 
 #include <stdbool.h>
 
-#include "seq_align.h"
+#include "nucleics_align.h"
 #include "alignment.h"
 
 #ifdef __cplusplus
