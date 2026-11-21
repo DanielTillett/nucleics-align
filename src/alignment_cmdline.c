@@ -19,6 +19,8 @@
 #include <stdio.h>
 #include <string.h>
 #include <strings.h> // strcasecmp
+#include <ctype.h> // isspace
+#include <errno.h> // errno, ERANGE
 #include <limits.h> // INT_MIN
 #include <stdarg.h> // for va_list
 #include <pthread.h>
@@ -36,10 +38,12 @@ char parse_entire_int(char *str, int *result)
   size_t len = strlen(str);
   if(len == 0) return 0; // strtol would read "" as 0
 
+  errno = 0;
   char *strtol_last_char_ptr = str;
   long tmp = strtol(str, &strtol_last_char_ptr, 10);
 
-  if(tmp > INT_MAX || tmp < INT_MIN || strtol_last_char_ptr != str+len)
+  if(errno == ERANGE || tmp > INT_MAX || tmp < INT_MIN ||
+     strtol_last_char_ptr != str+len)
   {
     return 0;
   }
@@ -55,10 +59,15 @@ char parse_entire_uint(char *str, unsigned int *result)
   size_t len = strlen(str);
   if(len == 0) return 0;
 
+  const char *p = str;
+  while(isspace((unsigned char)*p)) p++;
+  if(*p == '-' || *p == '\0') return 0;
+
+  errno = 0;
   char *strtol_last_char_ptr = str;
   unsigned long tmp = strtoul(str, &strtol_last_char_ptr, 10);
 
-  if(tmp > UINT_MAX || strtol_last_char_ptr != str+len)
+  if(errno == ERANGE || tmp > UINT_MAX || strtol_last_char_ptr != str+len)
   {
     return 0;
   }
@@ -154,7 +163,9 @@ static void print_usage(enum NucleicsAlignCmdType cmd_type, score_t defaults[4],
 "    --scoreonly          Print only the score (fast, linear memory)\n"
 "    --linearfallback     Align in linear memory where too big for the matrices\n"
 "                         (same score, but may pick another equal-scoring\n"
-"                         alignment)\n");
+"                         alignment)\n"
+"    --linearabove <n>    Align in linear memory where either sequence has at\n"
+"                         least <n> letters (as --linearfallback)\n");
   }
 
   fprintf(stderr,
@@ -426,6 +437,15 @@ cmdline_t* cmdline_new(int argc, char **argv, scoring_t *scoring,
 
         argi++;
       }
+      else if(strcasecmp(argv[argi], "--linearabove") == 0)
+      {
+        if(cmd_type != NUCLEICS_ALIGN_NW_CMD)
+          usage("--linearabove only valid with Needleman-Wunsch");
+        if(!parse_entire_uint(argv[argi+1], &cmd->linear_above) ||
+           cmd->linear_above == 0)
+          usage("Invalid --linearabove <n> argument (must be at least 1)");
+        argi++;
+      }
       else if(strcasecmp(argv[argi], "--threads") == 0)
       {
         if(!parse_entire_uint(argv[argi+1], &cmd->threads) ||
@@ -589,6 +609,9 @@ cmdline_t* cmdline_new(int argc, char **argv, scoring_t *scoring,
     usage("--scoreonly cannot be used with --zam, --pretty, --colour or "
           "--printmatrices");
   }
+
+  if(cmd->linear_above > 0 && cmd->print_matrices)
+    usage("--linearabove cannot be used with --printmatrices");
 
   if(cmd->linear_space &&
      (scoring->no_start_gap_penalty || scoring->no_end_gap_penalty ||

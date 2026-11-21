@@ -181,9 +181,14 @@ static int align(tool_worker_t *wk, const char *seq_a, const char *seq_b,
 
   // If min_score hasn't been set, set a limit based on the lengths of seqs
   // or zero if we're running interactively
-  score_t min_score = cmd->min_score_set ? cmd->min_score
-                      : wait_on_keystroke ? 0
-                      : scoring.match * MAX2(0.2 * MIN2(len_a, len_b), 2);
+  score_t min_score;
+  if(cmd->min_score_set) min_score = cmd->min_score;
+  else if(wait_on_keystroke) min_score = 0;
+  else {
+    double ms = (double)scoring.match * MAX2(0.2 * (double)MIN2(len_a, len_b), 2.0);
+    min_score = ms >= (double)INT_MAX ? INT_MAX
+                : ms <= (double)INT_MIN ? INT_MIN : (score_t)ms;
+  }
 
   #ifdef NUCLEICS_ALIGN_VERBOSE
   fprintf(out, "min_score: %i\n", min_score);

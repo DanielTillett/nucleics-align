@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "alignment_macros.h"
 #include "needleman_wunsch.h"
 #include "hirschberg.h"
 
@@ -59,6 +60,24 @@ static bool _nw_linear(const char *a, const char *b, size_t len_a,
   }
   return (status == ALN_ERR_TOO_LONG || status == ALN_ERR_NOMEM) &&
          opts->linear_fallback &&
+         hirschberg_align_checked(a, b, len_a, len_b, scoring, opts, result,
+                                  NULL) == ALN_OK;
+}
+
+// A long pair (the longer sequence at least alignment_linear_above
+// letters): align in linear space, if the options ask and it supports the
+// scoring. Returns true if that worked; otherwise the matrices align it
+static bool _nw_long(const char *a, const char *b, size_t len_a,
+                     size_t len_b, const scoring_t *scoring,
+                     const nw_aligner_t *nw, alignment_t *result)
+{
+  alignment_options_t defaults;
+  const alignment_options_t *opts = nw->options;
+  if(opts == NULL) {
+    alignment_options_default(&defaults);
+    opts = &defaults;
+  }
+  return opts->linear_above > 0 && MAX2(len_a, len_b) >= opts->linear_above &&
          hirschberg_align_checked(a, b, len_a, len_b, scoring, opts, result,
                                   NULL) == ALN_OK;
 }
@@ -158,6 +177,8 @@ aln_status_t needleman_wunsch_align_checked(const char *a, const char *b,
 {
   aln_status_t status = alignment_check(scoring, a, len_a, b, len_b, false,
                                         err);
+  if(status == ALN_OK && _nw_long(a, b, len_a, len_b, scoring, nw, result))
+    return ALN_OK;
   if(status == ALN_OK) {
     status = _nw_align(a, b, len_a, len_b, scoring, nw, result);
     if(err != NULL) err->status = status;
@@ -175,6 +196,7 @@ void needleman_wunsch_align2(const char *a, const char *b,
                              nw_aligner_t *nw, alignment_t *result)
 {
   aln_error_t e = {ALN_OK, 0, 0};
+  if(_nw_long(a, b, len_a, len_b, scoring, nw, result)) return;
   e.status = _nw_align(a, b, len_a, len_b, scoring, nw, result);
   if(_nw_linear(a, b, len_a, len_b, scoring, nw, result, e.status))
     e.status = ALN_OK;

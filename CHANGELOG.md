@@ -5,6 +5,20 @@ Nucleics Align is derived from Isaac Turner's
 2017). Output is the same as seq-align's, byte for byte, except for the
 fixes listed under [Changes to output](#changes-to-output).
 
+## Unreleased
+
+### Added
+
+- Unit-cost scores (match 0, mismatch and gap letter -1, no gap open
+  penalty) on one thread, from `--scoreonly` or `hirschberg_score()`, use
+  Myers' bit-vector algorithm where the band does not pay: the same score,
+  2.5 times as fast for unrelated pairs
+- `needleman_wunsch --linearabove <n>` (`linear_above` in
+  `alignment_options_t`): pairs where either sequence has at least n
+  letters are aligned in linear space, the faster and far smaller choice
+  for long pairs, others with the matrices. Off by default, as linear space
+  may choose another of several equal-scoring alignments
+
 ## 1.0.0 - 21 Nov 2026
 
 The first release of Nucleics Align.

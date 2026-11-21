@@ -138,6 +138,7 @@ hit 0.0 score: 30
 |---|---|
 | Global alignment with scores | `./bin/needleman_wunsch --printscores seqA seqB` |
 | Long sequences, linear memory | `./bin/needleman_wunsch --linear --printscores --file pairs.fa` |
+| Linear memory only for long pairs | `./bin/needleman_wunsch --linearabove 100000 --printscores --file pairs.fa` |
 | Score only (fastest) | `./bin/needleman_wunsch --scoreonly --file pairs.fa` |
 | Best local hit | `./bin/smith_waterman --maxhits 1 --file pairs.fa.gz` |
 | Protein (BLOSUM62, gaps -10/-1) | `./bin/needleman_wunsch --scoring BLOSUM62 seqA seqB` |

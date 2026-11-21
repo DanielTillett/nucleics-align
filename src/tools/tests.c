@@ -22,6 +22,7 @@
 #include "smith_waterman.h"
 #include "hirschberg.h"
 #include "alignment_scoring_load.h"
+#include "alignment_cmdline.h"
 #include "alignment_simd.h" // ALN_STRIPED
 #include "alignment_testing.h" // counters and checks
 
@@ -1089,6 +1090,65 @@ void simd_test_hirschberg_narrow()
   alignment_free(aln);
 }
 
+/* Myers' bit-vector score (unit costs, one thread): the same score as the
+ * linear-space passes and the full matrices, across word boundaries (63,
+ * 64, 65 ... letters), with a wildcard, case-insensitive letters and
+ * one-way substitution pairs; and not used for other scorings */
+void simd_test_myers()
+{
+  int max_threads = hirschberg_max_threads;
+  bool myers = hirschberg_myers_enabled;
+  size_t uses = hirschberg_myers_scores;
+  nw_aligner_t *nw = needleman_wunsch_new();
+  alignment_t *aln = alignment_create(256);
+  static char seqa[700], seqb[1400];
+  const unsigned int lens[] = {1, 2, 63, 64, 65, 127, 128, 129, 300, 640};
+  scoring_t scoring;
+  score_t s_myers, s_passes;
+  size_t i;
+
+  hirschberg_max_threads = 1;
+  for(i = 0; i < 400; i++)
+  {
+    scoring_init(&scoring, 0, -1, 0, -1, false, false, false, false, false,
+                 false);
+    if(i % 3 == 1) scoring_add_wildcard(&scoring, 'n', i % 2 ? 0 : -1);
+    if(i % 5 == 2) {
+      // One way only: a against c scores 0, c against a stays -1
+      scoring_add_mutation(&scoring, 'a', 'c', 0);
+    }
+    unsigned int la = i % 4 ? lens[hb_rand(10)] : hb_rand(640);
+    unsigned int lb = i % 4 ? lens[hb_rand(10)] : hb_rand(640);
+    hb_rand_seq(seqa, la, i % 2 ? "acgtn" : "ACgtN");
+    if(i % 3 == 0) hb_mutate(seqb, seqa, 100, "acgt");
+    else hb_rand_seq(seqb, lb, "AcGtn");
+
+    hirschberg_myers_enabled = true;
+    ASSERT(hirschberg_score(seqa, seqb, &scoring, &s_myers));
+    hirschberg_myers_enabled = false;
+    ASSERT(hirschberg_score(seqa, seqb, &scoring, &s_passes));
+    needleman_wunsch_align(seqa, seqb, &scoring, nw, aln);
+    ASSERT(s_myers == s_passes && s_myers == aln->score);
+  }
+  ASSERT(hirschberg_myers_scores > uses + 200);
+
+  // Not unit cost: the passes, not Myers
+  hirschberg_myers_enabled = true;
+  uses = hirschberg_myers_scores;
+  scoring_init(&scoring, 1, -1, 0, -1, false, false, false, false, false,
+               false);
+  ASSERT(hirschberg_score("acgtacgt", "acgaacgt", &scoring, &s_myers));
+  scoring_init(&scoring, 0, -1, -2, -1, false, false, false, false, false,
+               false);
+  ASSERT(hirschberg_score("acgtacgt", "acgaacgt", &scoring, &s_myers));
+  ASSERT(hirschberg_myers_scores == uses);
+
+  hirschberg_max_threads = max_threads;
+  hirschberg_myers_enabled = myers;
+  alignment_free(aln);
+  needleman_wunsch_free(nw);
+}
+
 /* Column-block threading of the full-matrix fill: force small blocks so
  * short sequences are split across several threads */
 void simd_test_fill_blocks()
@@ -1272,15 +1332,14 @@ void simd_test_compact()
 #endif
   ASSERT(hits > 1000);
 
-  // A gap penalty so large that the first column falls below the clamp:
-  // working out the bytes would overflow, so the matrices are used
+  // A gap penalty so large that the first row falls below the clamp:
+  // refused as overflow rather than silently clamping or overflowing traceback
   scoring_init(&scoring, 1, -1, 0, -1073741824, false, false, false, false,
                false, false);
-  needleman_wunsch_align("AA", "A", &scoring, nw_full, r_full);
-  needleman_wunsch_align("AA", "A", &scoring, nw_compact, r_compact);
-  ASSERT(!nw_compact->traced);
-  ASSERT(alignments_equal(r_full, r_compact));
-  ASSERT(r_compact->score == -1073741823);
+  ASSERT(needleman_wunsch_align_checked("AA", "A", 2, 1, &scoring, nw_full,
+                                        r_full, NULL) == ALN_ERR_OVERFLOW);
+  ASSERT(needleman_wunsch_align_checked("AA", "A", 2, 1, &scoring, nw_compact,
+                                        r_compact, NULL) == ALN_ERR_OVERFLOW);
 
   alignment_block_min_cells = min_cells;
   alignment_block_min_cols = min_cols;
@@ -1942,6 +2001,7 @@ void test_simd()
   simd_test_hirschberg_band();
   simd_test_hirschberg_reuse();
   simd_test_hirschberg_narrow();
+  simd_test_myers();
   simd_test_hirschberg_blocks();
   simd_test_hirschberg();
   simd_test_matches_scalar();
@@ -2555,6 +2615,56 @@ void test_linear_fallback()
   alignment_free(lin);
 }
 
+/* With linear_above, a pair whose longer sequence is at least that long is
+ * made in linear space (as hirschberg_align_opts() makes it), shorter pairs
+ * with the matrices; scoring linear space refuses uses the matrices */
+void test_linear_above()
+{
+  nw_aligner_t *nw = needleman_wunsch_new();
+  alignment_t *aln = alignment_create(16), *lin = alignment_create(16);
+  alignment_t *mat = alignment_create(16);
+  alignment_options_t opts;
+  scoring_t scoring;
+  // Several alignments share the best score here, so the two aligners may
+  // choose different ones: which made it shows in the strings
+  const char *a = "AAAACCCCAAAAGGGGTTTT", *b = "AAAACCAAAAGGTTTTTT";
+  const size_t la = strlen(a), lb = strlen(b);
+  alignment_options_default(&opts);
+  scoring_system_default(&scoring);
+  nw->options = &opts;
+  ASSERT(hirschberg_align_checked(a, b, la, lb, &scoring, &opts, lin,
+                                  NULL) == ALN_OK);
+  opts.linear_above = 0;
+  ASSERT(needleman_wunsch_align_checked(a, b, la, lb, &scoring, nw, mat,
+                                        NULL) == ALN_OK);
+  ASSERT(mat->score == lin->score);
+
+  opts.linear_above = la; // the longer one: linear space
+  needleman_wunsch_align(a, b, &scoring, nw, aln);
+  ASSERT(aln->score == lin->score && strcmp(aln->result_a, lin->result_a) == 0 &&
+         strcmp(aln->result_b, lin->result_b) == 0);
+  opts.linear_above = la + 1; // too short: the matrices
+  ASSERT(needleman_wunsch_align_checked(a, b, la, lb, &scoring, nw, aln,
+                                        NULL) == ALN_OK);
+  ASSERT(strcmp(aln->result_a, mat->result_a) == 0 &&
+         strcmp(aln->result_b, mat->result_b) == 0);
+
+  // Free end gaps: linear space refuses them, so the matrices align it
+  opts.linear_above = 1;
+  scoring.no_end_gap_penalty = true;
+  ASSERT(needleman_wunsch_align_checked(a, b, la, lb, &scoring, nw, aln,
+                                        NULL) == ALN_OK);
+  opts.linear_above = 0;
+  ASSERT(needleman_wunsch_align_checked(a, b, la, lb, &scoring, nw, mat,
+                                        NULL) == ALN_OK);
+  ASSERT(aln->score == mat->score && strcmp(aln->result_a, mat->result_a) == 0);
+
+  needleman_wunsch_free(nw);
+  alignment_free(aln);
+  alignment_free(lin);
+  alignment_free(mat);
+}
+
 /* The wavefront score is the full fill's best global score (Hirschberg's
  * here, which matches it), or it declines */
 static void wfa_check(const char *a, const char *b, const scoring_t *scoring,
@@ -2657,6 +2767,97 @@ void alignment_test_roundup()
   ASSERT(ROUNDUP2POW(SIZE_MAX) == SIZE_MAX);
 }
 
+/* Regression tests for overflow bounds, CLI int parsing, Myers flags, and
+   case-insensitive scoring_add_mutation() */
+void test_bug_regressions()
+{
+  nw_aligner_t *nw = needleman_wunsch_new();
+  alignment_t *aln = alignment_create(256);
+  scoring_t scoring;
+  aln_error_t err;
+  char seq_a[2149], seq_c[2149];
+  memset(seq_a, 'A', 2148); seq_a[2148] = '\0';
+  memset(seq_c, 'C', 2148); seq_c[2148] = '\0';
+
+  // Edge scores in [INT_MIN, min) must report ALN_ERR_OVERFLOW
+  scoring_init(&scoring, 1, -2, -1000000, -1000000,
+               false, false, false, false, false, true);
+  ASSERT(needleman_wunsch_align_checked(seq_a, "A", 2146, 1, &scoring,
+                                        nw, aln, &err) == ALN_ERR_OVERFLOW);
+  ASSERT(needleman_wunsch_align_checked("A", seq_c, 1, 2146, &scoring,
+                                        nw, aln, &err) == ALN_ERR_OVERFLOW);
+  ASSERT(needleman_wunsch_align_checked(seq_a, "C", 2146, 1, &scoring,
+                                        nw, aln, &err) == ALN_ERR_OVERFLOW);
+
+  // no_mismatches all-indel downward overflow must report ALN_ERR_OVERFLOW
+  scoring_init(&scoring, 1, -2, -1000000, -1000000,
+               false, false, false, false, true, true);
+  ASSERT(needleman_wunsch_align_checked(seq_a, seq_c, 1100, 1100, &scoring,
+                                        nw, aln, &err) == ALN_ERR_OVERFLOW);
+  ASSERT(needleman_wunsch_align_checked(seq_a, seq_c, 1072, 1072, &scoring,
+                                        nw, aln, &err) == ALN_ERR_OVERFLOW);
+
+  // Free start gaps on an empty-sequence alignment must not be rejected
+  scoring_init(&scoring, 1, -2, -1000000, -1000000,
+               true, false, false, false, false, true);
+  ASSERT(needleman_wunsch_align_checked(seq_a, "", 2148, 0, &scoring,
+                                        nw, aln, &err) == ALN_OK &&
+         aln->score == 0);
+
+  // parse_entire_uint / parse_entire_int sign and ERANGE checks
+  unsigned int uval = 0;
+  int ival = 0;
+  ASSERT(!parse_entire_uint("-1", &uval));
+  ASSERT(!parse_entire_uint("-0", &uval));
+  ASSERT(!parse_entire_uint("-18446744073709551615", &uval));
+  ASSERT(!parse_entire_uint("   ", &uval));
+  ASSERT(!parse_entire_uint("99999999999999999999999999", &uval));
+  ASSERT(parse_entire_uint("42", &uval) && uval == 42);
+  ASSERT(!parse_entire_int("99999999999999999999999999", &ival));
+  ASSERT(!parse_entire_int("-99999999999999999999999999", &ival));
+  ASSERT(parse_entire_int(" -42", &ival) && ival == -42);
+
+  // alignment_myers_score() declines unsupported constraint flags
+  sub_table_t table;
+  score_t s = 0;
+  scoring_init(&scoring, 0, -1, 0, -1, false, false, false, false, false, true);
+  ASSERT(sub_table_build(&table, &scoring, "AA", 2, "A", 1));
+  ASSERT(alignment_myers_score(&table, &scoring, "AA", 2, "A", 1, &s) && s == -1);
+  scoring.no_start_gap_penalty = true;
+  ASSERT(!alignment_myers_score(&table, &scoring, "AA", 2, "A", 1, &s));
+  scoring.no_start_gap_penalty = false;
+  scoring.no_end_gap_penalty = true;
+  ASSERT(!alignment_myers_score(&table, &scoring, "AA", 2, "A", 1, &s));
+  scoring.no_end_gap_penalty = false;
+  scoring.no_gaps_in_a = true;
+  ASSERT(!alignment_myers_score(&table, &scoring, "AA", 2, "A", 1, &s));
+  scoring.no_gaps_in_a = false;
+  scoring.no_gaps_in_b = true;
+  ASSERT(!alignment_myers_score(&table, &scoring, "AA", 2, "A", 1, &s));
+  scoring.no_gaps_in_b = false;
+  scoring.no_gaps_in_longest = true;
+  ASSERT(!alignment_myers_score(&table, &scoring, "AA", 2, "A", 1, &s));
+  scoring.no_gaps_in_longest = false;
+  scoring.no_mismatches = true;
+  ASSERT(!alignment_myers_score(&table, &scoring, "AA", 2, "A", 1, &s));
+  sub_table_free(&table);
+
+  // scoring_add_mutation() normalizes case when !case_sensitive
+  scoring_init(&scoring, 1, -2, -4, -1, false, false, false, false, false, false);
+  scoring_add_mutation(&scoring, 'A', 'G', 5);
+  int sc = 0;
+  bool is_match = false;
+  scoring_lookup(&scoring, 'a', 'g', &sc, &is_match);
+  ASSERT(sc == 5);
+  scoring_lookup(&scoring, 'A', 'G', &sc, &is_match);
+  ASSERT(sc == 5);
+  scoring_lookup(&scoring, 'A', 'g', &sc, &is_match);
+  ASSERT(sc == 5);
+
+  needleman_wunsch_free(nw);
+  alignment_free(aln);
+}
+
 void test_misc()
 {
   SUITE_START("Alignment buffers and scoring files");
@@ -2670,7 +2871,9 @@ void test_misc()
   test_checked();
   test_out_of_memory();
   test_linear_fallback();
+  test_linear_above();
   test_wfa_score();
+  test_bug_regressions();
 
   SUITE_END();
 }

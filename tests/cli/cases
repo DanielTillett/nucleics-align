@@ -13,6 +13,7 @@ nw_linear        | batch | ./bin/needleman_wunsch --linear --printscores --file 
 nw_scoreonly     | batch | ./bin/needleman_wunsch --scoreonly --file @/batch.fa
 nw_batch         | batch | ./bin/needleman_wunsch --printscores --file @/batch.fa
 nw_batch_linear  | batch | ./bin/needleman_wunsch --linear --printscores --file @/batch.fa
+nw_linear_above  | batch | ./bin/needleman_wunsch --linearabove 100 --printscores --file @/batch.fa
 nw_protein       | -     | ./bin/needleman_wunsch --scoring BLOSUM62 --printscores --file @/protein.fa
 nw_matrix_file   | -     | ./bin/needleman_wunsch --substitution_matrix scoring/BLOSUM62.txt --printscores --file @/protein.fa
 nw_case          | -     | ./bin/needleman_wunsch --case_sensitive --printscores --file @/case_dash.fa

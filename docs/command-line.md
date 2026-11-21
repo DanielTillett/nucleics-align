@@ -60,7 +60,12 @@ score: -11
 > It cannot be combined with `--freestartgap`, `--freeendgap`, `--nogaps..`,
 > `--nomismatches`, `--printmatrices` or a positive `--gapopen`;
 > `--scoreonly` uses the full matrices for those. `--linearfallback` uses
-> linear memory only for pairs too big for the matrices.
+> linear memory only for pairs too big for the matrices, and
+> `--linearabove <n>` only for pairs where either sequence has at least n
+> letters (pairs with options linear memory refuses use the matrices).
+> For long pairs linear memory is now the faster of the two as well: 300 kb
+> at 5% divergence takes 1.5 s and 17 MB with `--linearabove 100000`,
+> against 2.2 s and 132 MB.
 
 `--printmatrices` prints the three dynamic programming matrices (match, gap
 in the first sequence, gap in the second) before the alignment:
@@ -334,6 +339,8 @@ usage: ./bin/needleman_wunsch [OPTIONS] [seq1 seq2]
     --linearfallback     Align in linear memory where too big for the matrices
                          (same score, but may pick another equal-scoring
                          alignment)
+    --linearabove <n>    Align in linear memory where either sequence has at
+                         least <n> letters (as --linearfallback)
     --printmatrices      Print dynamic programming matrices
     --printfasta         Print fasta header lines
     --pretty             Print with a descriptor line

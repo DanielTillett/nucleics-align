@@ -41,6 +41,11 @@ extern size_t hirschberg_reused_rows;
 // as wide as the scores allow; at least 4 vectors), and how many blocks
 // were cut into more than one part
 extern size_t hirschberg_part16_max_cols, hirschberg_parts16;
+// Score-only linear-space alignments under unit costs on one thread use
+// Myers' bit-vector algorithm (hirschberg_myers_enabled, default true), and
+// how many did
+extern bool hirschberg_myers_enabled;
+extern size_t hirschberg_myers_scores;
 
 // Rows per strip of a strip alignment (see smith_waterman_strip_min_cells;
 // 0: automatic)

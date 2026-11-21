@@ -40,9 +40,12 @@ typedef struct
   int max_threads; // full-matrix fills (0: half the CPUs)
   bool striped, band, narrow, byte, diff;
   // Needleman-Wunsch too big for the matrices (too long, or out of memory):
-  // align in linear space instead (see alignment_linear_fallback). The one
-  // setting that can change a result
+  // align in linear space instead (see alignment_linear_fallback); and
+  // pairs whose longer sequence has at least linear_above letters (0:
+  // none), see alignment_linear_above. The settings that can change a
+  // result
   bool linear_fallback;
+  size_t linear_above;
   size_t block_min_cells, block_min_cols, band_strip_rows, band_min_width;
   size_t band_keep_max_cells; // see alignment_band_keep_max_cells
   size_t band_wfa_budget; // see alignment_band_wfa_budget
@@ -217,6 +220,16 @@ bool alignment_wfa_score(const sub_table_t *table, const scoring_t *scoring,
                          const char *seq_b, size_t len_b,
                          size_t budget, score_t *score);
 
+// The best global alignment's score under unit costs (match 0, mismatch and
+// gap letter -1, gap open 0: minus the edit distance) by Myers' bit-vector
+// algorithm (see alignment_myers.c), for a table built for these
+// sequences. Returns false, setting nothing, unless the scoring is unit
+// cost for every pair in the table and seq_a is not empty; or if out of
+// memory
+bool alignment_myers_score(const sub_table_t *table, const scoring_t *scoring,
+                           const char *seq_a, size_t len_a,
+                           const char *seq_b, size_t len_b, score_t *score);
+
 // Use the striped SIMD fill where it applies (default true). It gives the
 // same matrices as the scalar fill; turning it off is for tests/benchmarks
 extern bool alignment_striped_enabled;
@@ -271,6 +284,12 @@ extern bool alignment_diff_enabled;
 // optimal score, but it may choose another of several equal-scoring
 // alignments. Default false
 extern bool alignment_linear_fallback;
+// Needleman-Wunsch alignments whose longer sequence has at least this many
+// letters are made in linear space (hirschberg_align_opts()) where it
+// supports the scoring, and with the matrices otherwise: faster and in far
+// less memory for long pairs, with the same score, but it may choose
+// another of several equal-scoring alignments. Default 0 (never)
+extern size_t alignment_linear_above;
 
 // The default settings, from the variables above (and their hirschberg_*
 // and smith_waterman_* counterparts) as they are now
