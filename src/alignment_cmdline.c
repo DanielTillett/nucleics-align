@@ -107,7 +107,8 @@ static void print_usage(enum NucleicsAlignCmdType cmd_type, score_t defaults[4],
 "    --file <file>        Sequence file reading with gzip support - read two\n"
 "                         sequences at a time and align them\n"
 "    --files <f1> <f2>    Read one sequence from each file to align at one time\n"
-"    --stdin              Read from STDIN (same as '--file -')\n"
+"    --stdin              Read pairs from STDIN one at a time, interactively\n"
+"                         (for a batch, use '--file -')\n"
 "\n"
 "    --case_sensitive     Use case sensitive character comparison [default: off]\n"
 "\n"
@@ -175,7 +176,7 @@ static void print_usage(enum NucleicsAlignCmdType cmd_type, score_t defaults[4],
   fprintf(stderr,
 "\n"
 " DETAILS:\n"
-"  * For help choosing scoring, see the README file. \n"
+"  * For help choosing scoring, see docs/scoring.md.\n"
 "  * Gap (of length N) penalty is: (open+N*extend)\n"
 "  * To do alignment without affine gap penalty, set '--gapopen 0'.\n"
 "  * Scoring files should be matrices, with entries separated by a single\n"
