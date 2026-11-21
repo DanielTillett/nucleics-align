@@ -63,11 +63,10 @@ the default build, over pairs from 1% divergence to unrelated):
 The full-matrix aligner keeps one traceback byte per cell, and for similar
 sequences only near the main diagonals (see below); with `--printmatrices`
 it keeps the score matrices, 12 bytes per cell (5 kb 289 MB, 20 kb 4.6 GB).
-By divergence, full-matrix aligner, 50 kb: 1% 0.06 s and 54 MB, 5% 0.34 s
-and 2.4 GB, 10% 0.11 s and 474 MB, 25% 0.36 s and 2.4 GB, unrelated 0.29 s
+By divergence, full-matrix aligner, 50 kb: 1% 0.06 s and 54 MB, 5% 0.10 s
+and 343 MB, 10% 0.11 s and 474 MB, 25% 0.36 s and 2.4 GB, unrelated 0.29 s
 and 2.4 GB; 20 kb: 1% 0.01 s and 11 MB, otherwise 0.05-0.06 s and 386-388
-MB. At 5% the band did not pay and the whole matrix was filled, so that pair
-took longer than the 10% one.
+MB.
 
 For 20 kb and 50 kb pairs with substitutions and equal numbers of
 insertions and deletions, `--linear` and `--scoreonly` took:
@@ -313,6 +312,14 @@ figures.
   `--linear` 0.83 -> 0.48 s and `--scoreonly` 0.35 -> 0.19 s, unrelated
   1.10 -> 0.76 s and 0.31 -> 0.21 s; on one thread `--linear` 4.5 -> 3.5 s
   and 5.1 -> 3.1 s. Close pairs, which are banded, are unchanged
+* A band that would run on fewer threads than the whole fill is tried a
+  quarter wider, a few times, before giving up on banding. A band's strips
+  are only split across threads once they hold enough cells, so a band of
+  moderate width could run on one thread, cost more than the whole fill on
+  sixteen, and be dropped, while a slightly wider band would have paid. A
+  wider band holds every path the narrower one would, so the alignment is
+  the same. 50 kb at 2-5% divergence: 0.31-1.17 s -> 0.09-0.12 s, and 2.4
+  GB -> 139-343 MB; other pairs are unchanged
 * `--scoreonly` (`hirschberg_score()`): no alignment, no matrices. With a
   band, the forward and reverse passes run at the same time and meet in the
   middle row; otherwise one forward pass over every row
