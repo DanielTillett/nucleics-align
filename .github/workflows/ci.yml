@@ -65,3 +65,5 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y zlib1g-dev
       - name: Build and test
         run: make CC=${{ matrix.cc }} ${{ matrix.sanitize && 'SANITIZE=1' || '' }} ${{ matrix.native && 'NATIVE=1' || '' }} ${{ matrix.lanes && format('LANES={0}', matrix.lanes) || '' }} all test
+      - name: Python and Perl modules
+        run: python3 -m unittest discover python && perl perl/test.pl

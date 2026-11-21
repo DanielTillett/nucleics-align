@@ -23,18 +23,21 @@ sub print_usage
     print STDERR "Error: $err\n";
   }
 
-  print STDERR "Usage: ./nw_example.pl <seq1> <seq2>\n";
+  print STDERR "Usage: ./nw_example.pl [seq1 seq2]\n";
 
-  exit;
+  exit(1);
 }
 
-my $nw = new NeedlemanWunsch();
+print_usage() if @ARGV != 0 && @ARGV != 2;
 
-my @aligns = (['asdfasdf','asdfasdf'],
-              ['dogg', 'ggod'],
-              ['asdfas', 'fadsas'],
-              ['', ''],
-              ['asdf', 'lkj']);
+my $nw = NeedlemanWunsch->new();
+
+my @aligns = @ARGV ? ([@ARGV])
+                   : (['asdfasdf','asdfasdf'],
+                      ['dogg', 'ggod'],
+                      ['asdfas', 'fadsas'],
+                      ['', ''],
+                      ['asdf', 'lkj']);
 
 for my $align (@aligns)
 {
@@ -42,5 +45,11 @@ for my $align (@aligns)
   my $result = $nw->do_alignment(@$align);
   $nw->print_alignment($result);
 }
+
+# The score alone, in linear memory; and a linear-memory alignment
+my ($s1, $s2) = @{$aligns[-1]};
+print "score only: ".$nw->do_score($s1, $s2)."\n";
+print "linear memory: ".
+      NeedlemanWunsch->new(linear => 1)->do_alignment($s1, $s2)->{score}."\n";
 
 $nw->destructor();

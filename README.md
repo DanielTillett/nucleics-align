@@ -4,7 +4,7 @@ Smith-Waterman and Needleman-Wunsch alignment in C
 url: https://github.com/DanielTillett/nucleics-align
 original author: Isaac Turner <turner.isaac@gmail.com>
 license: BSD 3-Clause (see [LICENSE](LICENSE))
-updated: 19 Nov 2026
+updated: 21 Nov 2026
 
 [![CI](https://github.com/DanielTillett/nucleics-align/actions/workflows/ci.yml/badge.svg)](https://github.com/DanielTillett/nucleics-align/actions/workflows/ci.yml)
 
@@ -14,8 +14,9 @@ About
 C implementations of optimal local (Smith-Waterman) and global
 (Needleman-Wunsch) alignment with affine gap penalties. The command line
 tools `smith_waterman`, `needleman_wunsch` and `lcs` cover most uses, and the
-library is easy to call from other programs (see `examples/`). Perl wrapper
-modules are in `perl/`.
+library is easy to call from other programs (see `examples/`). Python and
+Perl modules that run the tools are in `python/` and `perl/` (see Python and
+Perl below).
 
 Nucleics Align is a fork of Isaac Turner's
 [seq-align](https://github.com/noporpoise/seq-align)
@@ -219,6 +220,50 @@ of more than 4 million cells runs on its own with all the threads. An error
 in a pair (a character pair the scoring does not define, or scores big
 enough to overflow) is reported after the output of the pairs before it,
 and stops the program as before.
+
+Python and Perl
+===============
+
+`python/nucleics_align.py` runs the command line tools from Python (3.7 or
+later, standard library only). It writes the pairs to a tool as FASTA on a
+background thread and reads each alignment back as it is printed, so a
+batch of pairs is aligned on the tool's threads in one process, in order.
+
+    import sys; sys.path.insert(0, "python")
+    from nucleics_align import NeedlemanWunsch, SmithWaterman
+
+    nw = NeedlemanWunsch(gap_open=-5, threads=4)
+    aln = nw.align("ACGTTGCA", "ACGTGCA")      # align_a, markers, align_b, score
+    scores = list(nw.score_pairs(pairs))       # score only, linear memory
+    linear = NeedlemanWunsch(linear=True)      # alignment in linear memory
+
+    for hits in SmithWaterman(max_hits=3).align_pairs(pairs):
+        for hit in hits:                       # best first
+            print(hit.score, hit.pos_a, hit.align_a, hit.align_b)
+
+Every tool option has a keyword: scoring (`match`, `mismatch`, `gap_open`,
+`gap_extend`, `scoring`, `substitution_matrix`, `substitution_pairs`,
+`wildcards={'N': 0}`, `case_sensitive`), `free_start_gap`, `free_end_gap`,
+`linear`, `linear_fallback`, the `no_gaps*` and `no_mismatches`
+restrictions, `threads`, and for Smith-Waterman `min_score` and `max_hits`.
+A tool's error (a letter pair the scoring does not define, options linear
+space refuses) raises `AlignmentError` with the tool's message, after the
+pairs before it; sequences with whitespace, or starting with `>`, raise
+`ValueError`. The tools are found in `bin/` beside `python/`, or set
+`NUCLEICS_ALIGN_BIN`. `python/nw_example.py` and `python/sw_example.py`
+show more; the tests are `python3 -m unittest discover python`.
+
+The Perl modules (`perl/NeedlemanWunsch.pm`, `perl/SmithWaterman.pm`) keep
+their interface and take the same options under the tools' names
+(`gapopen`, `freestartgap`, `linear`, `threads`, `minscore`, ...).
+`NeedlemanWunsch` adds `do_score()` (score only) and `SmithWaterman` adds
+`get_all_hits()`. They wait for output without a time limit unless
+`timeout` is set, number alignments from 0, refuse unknown options and
+scoring names, and stop their tools when the object goes. The Perl
+`SmithWaterman` reads hits one at a time, as the tool's interactive mode
+gives them, where `minscore` defaults to 0 (every hit); the Python one and
+the tool reading a file default to `match * MAX(0.2 * length, 2)`. Tests:
+`perl perl/test.pl`.
 
 Performance
 -----------

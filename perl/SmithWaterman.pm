@@ -5,310 +5,252 @@ package SmithWaterman;
 # original author: Isaac Turner <turner.isaac@gmail.com>
 # license: BSD 3-Clause, see LICENSE
 # date: Oct 2012
+#
+# Runs bin/smith_waterman and reads its local alignments back, best first:
+#
+#   my $sw = SmithWaterman->new(minscore => 5, maxhits => 3);
+#   $sw->do_alignment('ttacgtacgtaa', 'acgtacgt');
+#   while(defined(my $hit = $sw->get_next_hit())) { $sw->print_hit($hit); }
+#   my @hits = $sw->get_all_hits(); # or all at once, after do_alignment()
+#
+# Options (names ignore case):
+#   match, mismatch, gapopen, gapextend      scores (a gap of n letters
+#                                            scores gapopen + n*gapextend)
+#   scoring                                  PAM30, PAM70, BLOSUM80, BLOSUM62
+#                                            or DNA_HYBRIDIZATION
+#   substitution_matrix, substitution_pairs  a scoring file (see scoring/)
+#   wildcard                                 'N 0', or { N => 0, X => -1 }
+#   minscore                                 hits scoring at least this
+#                                            (default 0 here: every hit)
+#   maxhits                                  at most this many hits per pair
+#   case_sensitive, nogaps, nogapsin1, nogapsin2, nogapsinlongest,
+#   nomismatches                             flags (true to set)
+#   threads                                  threads within an alignment
+#   timeout                                  seconds to wait for each line of
+#                                            output (default 0: no limit)
+#   cmd                                      the smith_waterman to run
 
 use strict;
 use warnings;
 
 use File::Basename; # dirname
-use Carp; # for reporting warnings and errors
-use FileHandle; # provides autoflush
-use IPC::Open2; # for opening handle to a process
+use Carp;
+use IPC::Open3;
+use Symbol qw(gensym);
 
+# Printed before each hit, or the '==' after the last, when asked for one
 use constant {PROMPT_LINE => 'next [h]it or [a]lignment: '};
+
+my %FLAGS = map { $_ => 1 } qw(case_sensitive nogaps nogapsin1 nogapsin2
+                               nogapsinlongest nomismatches);
+my %VALUES = map { $_ => 1 } qw(match mismatch gapopen gapextend
+                                substitution_matrix substitution_pairs
+                                minscore maxhits threads);
+my @SCORING = qw(PAM30 PAM70 BLOSUM80 BLOSUM62 DNA_HYBRIDIZATION);
 
 sub new
 {
-  my ($class, @args) = @_;
+  my ($class, %given) = @_;
+  my %options = map { lc($_) => $given{$_} } keys %given;
 
-  my %options = (@args);
+  my @args;
+  my $cmd = dirname(__FILE__)."/../bin/smith_waterman";
+  my $timeout = 0;
 
-  my $cmdline = dirname(__FILE__)."/../bin/smith_waterman";
-  my $timeout = 5;
-
-  for my $key (keys %options)
-  {
-    $options{lc($key)} = $options{$key};
+  if(!$options{'nomismatches'} &&
+     defined($options{'match'}) != defined($options{'mismatch'})) {
+    carp("Setting only one of match/mismatch");
   }
 
-  if(!defined($options{'nomismatches'}) &&
-     defined($options{'match'}) != defined($options{'mismatch'}))
+  for my $key (sort keys %options)
   {
-    carp("Cannot set only one of match/mismatch");
+    my $value = $options{$key};
+    if($FLAGS{$key}) {
+      push(@args, "--$key") if $value;
+    }
+    elsif($VALUES{$key}) {
+      push(@args, "--$key", $value);
+    }
+    elsif($key eq 'scoring') {
+      my ($name) = grep { uc($value) eq $_ } @SCORING;
+      croak("Invalid scoring '$value' (one of @SCORING)") if !defined($name);
+      push(@args, '--scoring', $name);
+    }
+    elsif($key eq 'wildcard') {
+      my %wild = ref($value) eq 'HASH' ? %$value : split(' ', $value);
+      push(@args, '--wildcard', $_, $wild{$_}) for sort keys %wild;
+    }
+    elsif($key eq 'timeout') { $timeout = $value; }
+    elsif($key eq 'cmd') { $cmd = $value; }
+    else { croak("Unknown option '$key'"); }
   }
 
-  if(defined($options{'cmd'}))
-  {
-    $cmdline = $options{'cmd'};
-  }
-
-  $cmdline .= " --stdin --pretty";
-
-  while(my ($key,$value) = each(%options))
-  {
-    if(grep(/^$key$/i, qw(case_sensitive nogaps nomismatches)))
-    {
-      # 'Flag' options -- they have no args
-      if($value)
-      {
-        $cmdline .= " --$key";
-      }
-    }
-    elsif($key =~ /^scoring$/i)
-    {
-      if(!grep($value, qw(PAM30 PAM70 BLOSUM80 BLOSUM62)))
-      {
-        carp("Invalid SmithWaterman.pm scoring '$value'");
-      }
-      else
-      {
-        $cmdline .= " --scoring $value";
-      }
-    }
-    elsif($key eq "timeout") {
-      $timeout = $value;
-    }
-    elsif(grep(/^$key$/i, qw(substitution_matrix substitution_pairs
-                             match mismatch gapopen gapextend
-                             minscore maxhits wildcard)))
-    {
-      $cmdline .= " --$key $value";
-    }
-    else
-    {
-      carp("Unknown option '$key' => '$value' (ignored)");
-    }
-  }
-
-  $cmdline .= " 2>&1";
-
-  my ($in, $out, $err);
-
-  #print "running '$cmdline'\n";
-
-  my $pid = open2($in, $out, $cmdline)
-    or die("Cannot run cmd: '$cmdline'");
-
-  $in->autoflush();
-  $out->autoflush();
+  my ($to, $from) = (undef, gensym());
+  # Standard error comes back with the output (its errors end a pair)
+  my $pid = eval { open3($to, $from, undef, $cmd, @args, '--stdin',
+                         '--pretty') };
+  croak("Cannot run $cmd: $@") if !$pid;
+  $to->autoflush(1);
 
   my $self = {
-    _in => $in,
-    _out => $out,
-    _err => $err,
+    _to => $to,
+    _from => $from,
     _pid => $pid,
     _timeout => $timeout,
-    _align_number => -1,
+    _align_number => -1, # of the alignment being read
     _seq1 => undef,
     _seq2 => undef,
-    _waiting => 1,
-    _cmd => $cmdline
+    _waiting => 1, # the tool is waiting for a pair, not for h or a
   };
-  
-  bless($self, $class);
 
-  return $self;
+  return bless($self, $class);
 }
 
-sub destructor
+# Lines of output with no line breaks; croaks on the tool's errors
+sub _read_line
 {
   my ($self) = @_;
-
-  close($self->{_in});
-  close($self->{_out});
-
-  waitpid($self->{_pid}, 1);
-}
-
-sub read_line
-{
-  my ($self) = @_;
-
-  #print "SW Waiting...\n";
-
-  my $in = $self->{_in};
-  my $next_line;
-
-  # Reading with time out
-  # http://www.perlmonks.org/?node_id=43304
+  my $from = $self->{_from};
+  my $line;
   eval {
-    local $SIG{ALRM} = sub { die "timeout\n" };
+    local $SIG{ALRM} = sub { die("timeout\n") };
     alarm($self->{_timeout});
-    $next_line = <$in>;
+    $line = <$from>;
+    alarm(0);
   };
-
-  if($@ eq "timeout\n") { die("Error: timeout reading NW output"); }
-  elsif($@) { die("Error: couldn't read output"); }
   alarm(0);
-
-  if(defined($next_line))
-  {
-    chomp($next_line);
-    #print "IN: '$next_line'\n";
-
-    if($next_line =~ /^Error/i)
-    {
-      print STDERR "ErrSeq1: '$self->{'seq1'}'\n";
-      print STDERR "ErrSeq2: '$self->{'seq2'}'\n";
-      croak($next_line);
-    }
+  if($@) {
+    croak($@ eq "timeout\n" ? "Timeout reading smith_waterman output"
+                            : "Cannot read smith_waterman output: $@");
   }
-
-  return $next_line;
+  croak("smith_waterman stopped (have you compiled?)") if !defined($line);
+  $line =~ s/\r?\n$//;
+  if($line =~ /^(Alignment )?(Error|Warning):/) {
+    print STDERR "ErrSeq1: '".($self->{_seq1} // '')."'\n";
+    print STDERR "ErrSeq2: '".($self->{_seq2} // '')."'\n";
+    croak($line);
+  }
+  return $line;
 }
 
-sub read_line_fatal
+sub _expect
 {
-  my ($self,$pattern) = @_;
-  my $line = $self->read_line();
-  if(!defined($line)) {
-    croak("Error: cannot read from aligner.  Have you compiled?");
-  } elsif($line !~ /$pattern/) {
-    croak("Error: aligner said: $line (expected: $pattern)");
-  }
+  my ($self, $pattern) = @_;
+  my $line = $self->_read_line();
+  croak("smith_waterman said '$line' (expected $pattern)")
+    if $line !~ /$pattern/;
+  return $line;
 }
 
+# Align seq1 against seq2; read the hits with get_next_hit(). Returns false
+# (with a warning) if either sequence is empty: there are no hits then
 sub do_alignment
 {
   my ($self, $seq1, $seq2) = @_;
+  my $to = $self->{_to};
 
-  my $line;
-  my $out = $self->{_out};
-
-  # _waiting is true if we have see the '==' line, indicating that the C
-  # program is waiting for our sequence input
   if(!$self->{_waiting})
   {
-    # Skip hits from previous alignment
-    print $out "a\n";
-    $line = $self->read_line_fatal(quotemeta(PROMPT_LINE."=="));
+    # Skip the hits left from the previous alignment
+    print $to "a\n";
+    $self->_expect('^'.quotemeta(PROMPT_LINE).'==$');
     $self->{_waiting} = 1;
   }
 
-  if(length($seq1) == 0 || length($seq2) == 0)
-  {
-    carp("Cannot align lengths of zero");
-    return;
+  for my $seq ($seq1, $seq2) {
+    croak("Sequences must be defined") if !defined($seq);
+    croak("Whitespace or control characters not allowed in sequences")
+      if $seq =~ /[\x00-\x20\x7f]/;
   }
-  elsif($seq1 =~ /[\n\r]/ || $seq2 =~ /[\n\r]/)
-  {
-    print STDERR "ErrSeq1: '$self->{'seq1'}'\n";
-    print STDERR "ErrSeq2: '$self->{'seq2'}'\n";
-    croak("New lines not allowed in sequences");
+  if($seq1 eq '' || $seq2 eq '') {
+    carp("Cannot align lengths of zero");
+    return 0;
   }
 
   $self->{_align_number}++;
   $self->{_seq1} = $seq1;
   $self->{_seq2} = $seq2;
-
   my $expected = $self->{_align_number};
 
-  print $out $seq1."\n";
-  print $out $seq2."\n";
-
+  print $to "$seq1\n$seq2\n";
   $self->{_waiting} = 0;
 
-  $line = $self->read_line_fatal("^== Alignment $expected");
-  $line = $self->read_line_fatal('^$');
+  $self->_expect("^== Alignment $expected ");
+  $self->_expect('^$');
+  return 1;
 }
 
+# The next hit of the current alignment, best first, or undef after the
+# last: a hash of seq1, seq2, hit (0, 1, ...), score, align1, pos1, len1,
+# sep (| match, * mismatch, space gap), align2, pos2, len2
 sub get_next_hit
 {
   my ($self) = @_;
+  return undef if $self->{_waiting};
 
-  if($self->{_waiting})
-  {
-    return undef;
+  print {$self->{_to}} "h\n";
+  my $line = $self->_read_line();
+  if(substr($line, 0, length(PROMPT_LINE)) ne PROMPT_LINE) {
+    croak("smith_waterman said '$line' (expected its prompt)");
   }
-
-  # Print an 'h' to request next hit
-  my $out = $self->{'_out'};
-  print $out "h\n";
-
-  my %result = ('seq1' => $self->{_seq1},
-                'seq2' => $self->{_seq2});
-
-  my $line;
-
-  if(!defined($line = $self->read_line()))
-  {
-    die("No lines read in");
-  }
-
   $line = substr($line, length(PROMPT_LINE));
 
-  if($line =~ /^==/i)
-  {
-    # End of hits
+  if($line eq '==') {
     $self->{_waiting} = 1;
     return undef;
   }
-  elsif($line =~ /^hit \d+\.(\d+) score: (\d+)$/i)
-  {
-    $result{'hit'} = $1;
-    $result{'score'} = $2;
-
-    my ($align1, $sep, $align2);
-
-    if(defined($align1 = $self->read_line()) &&
-       $align1 =~ /^  (.*)  \[pos: (\d+); len: (\d+)\]$/i)
-    {
-      $result{'align1'} = $1;
-      $result{'pos1'} = $2;
-      $result{'len1'} = $3;
-    }
-    else
-    {
-      die("Wasn't expecting '$align1'");
-    }
-
-    if(defined($sep = $self->read_line()) &&
-       $sep =~ /^  ([\|\* ]+)$/)
-    {
-      $result{'sep'} = $1;
-    }
-    else
-    {
-      die("Wasn't expecting line '$sep'");
-    }
-
-    if(defined($align2 = $self->read_line()) &&
-       $align2 =~ /^  (.*)  \[pos: (\d+); len: (\d+)\]$/i)
-    {
-      $result{'align2'} = $1;
-      $result{'pos2'} = $2;
-      $result{'len2'} = $3;
-    }
-    else
-    {
-      die("Wasn't expecting '$align2'");
-    }
-
-    # Skip remaining line
-    $line = $self->read_line();
-
-    return \%result;
+  if($line !~ /^hit \d+\.(\d+) score: (-?\d+)$/) {
+    croak("smith_waterman said '$line' (expected a hit)");
   }
-  else
-  {
-    die("Wasn't expecting '$line'");
-  }
+
+  my %result = ('seq1' => $self->{_seq1}, 'seq2' => $self->{_seq2},
+                'hit' => $1, 'score' => $2);
+  my $part = qr/^  (.*)  \[pos: (\d+); len: (\d+)\]$/;
+
+  @result{'align1', 'pos1', 'len1'} = $self->_expect($part) =~ $part;
+  $result{'sep'} = substr($self->_read_line(), 2);
+  @result{'align2', 'pos2', 'len2'} = $self->_expect($part) =~ $part;
+  $self->_expect('^$');
+
+  return \%result;
+}
+
+# Every remaining hit of the current alignment
+sub get_all_hits
+{
+  my ($self) = @_;
+  my @hits;
+  while(defined(my $hit = $self->get_next_hit())) { push(@hits, $hit); }
+  return @hits;
 }
 
 sub print_hit
 {
   my ($self, $hit, $out) = @_;
+  $out //= \*STDOUT;
+  print $out "hit $self->{_align_number}.$hit->{'hit'} ".
+             "score: $hit->{'score'}\n";
+  print $out "  $hit->{'align1'}  [pos: $hit->{'pos1'}; len: $hit->{'len1'}]\n";
+  print $out "  $hit->{'sep'}\n";
+  print $out "  $hit->{'align2'}  [pos: $hit->{'pos2'}; len: $hit->{'len2'}]\n";
+}
 
-  if(!defined($out))
-  {
-    open($out, ">-");
-  }
+# Stop the tool (also done when the object goes)
+sub destructor
+{
+  my ($self) = @_;
+  return if !$self->{_pid};
+  close($self->{_to});
+  close($self->{_from});
+  waitpid($self->{_pid}, 0);
+  $self->{_pid} = undef;
+}
 
-  print $out "hit " .$self->{_align_number}.".".$hit->{'hit'}. " " .
-             "score: " .$hit->{'score'}. ":\n";
-  print $out "  " .$hit->{'align1'}. "  " .
-             "[pos: " .$hit->{'pos1'}. "; len: " .$hit->{'len1'}. "]\n";
-  print $out "  " .$hit->{'align2'}. "  " .
-             "[pos: " .$hit->{'pos2'}. "; len: " .$hit->{'len2'}. "]\n";
+sub DESTROY
+{
+  my ($self) = @_;
+  local ($?, $@);
+  $self->destructor();
 }
 
 1;
