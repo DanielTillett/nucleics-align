@@ -64,6 +64,38 @@ static bool _nw_linear(const char *a, const char *b, size_t len_a,
                                   NULL) == ALN_OK;
 }
 
+// Most cells the kept wavefronts of a --wfa alignment may take, per letter
+// and in all (2^25 cells: about 400 MB)
+#define NW_WFA_PER_LETTER 64
+#define NW_WFA_MAX_CELLS ((size_t)1 << 25)
+
+// By the wavefront algorithm, if the options ask (alignment_wfa_alignment)
+// and it applies: the scoring suits it and the pair is similar enough.
+// Returns true if that worked; otherwise the other aligners align it
+static bool _nw_wfa(const char *a, const char *b, size_t len_a, size_t len_b,
+                    const scoring_t *scoring, const nw_aligner_t *nw,
+                    alignment_t *result)
+{
+  alignment_options_t defaults;
+  const alignment_options_t *opts = nw->options;
+  if(opts == NULL) {
+    alignment_options_default(&defaults);
+    opts = &defaults;
+  }
+  // (a pair the scoring lacks is left to the matrices, which report it)
+  if(!opts->wfa_align ||
+     !alignment_scoring_complete(scoring, a, len_a, b, len_b, NULL))
+    return false;
+  sub_table_t table;
+  if(!sub_table_build(&table, scoring, a, len_a, b, len_b)) return false;
+  const size_t budget = MIN2(NW_WFA_MAX_CELLS,
+                             NW_WFA_PER_LETTER * (len_a + len_b));
+  const bool done = alignment_wfa_align(&table, scoring, a, len_a, b, len_b,
+                                        budget, result) == ALN_OK;
+  sub_table_free(&table);
+  return done;
+}
+
 // A long pair (the longer sequence at least alignment_linear_above
 // letters): align in linear space, if the options ask and it supports the
 // scoring. Returns true if that worked; otherwise the matrices align it
@@ -177,7 +209,9 @@ aln_status_t needleman_wunsch_align_checked(const char *a, const char *b,
 {
   aln_status_t status = alignment_check(scoring, a, len_a, b, len_b, false,
                                         err);
-  if(status == ALN_OK && _nw_long(a, b, len_a, len_b, scoring, nw, result))
+  if(status == ALN_OK &&
+     (_nw_wfa(a, b, len_a, len_b, scoring, nw, result) ||
+      _nw_long(a, b, len_a, len_b, scoring, nw, result)))
     return ALN_OK;
   if(status == ALN_OK) {
     status = _nw_align(a, b, len_a, len_b, scoring, nw, result);
@@ -196,7 +230,8 @@ void needleman_wunsch_align2(const char *a, const char *b,
                              nw_aligner_t *nw, alignment_t *result)
 {
   aln_error_t e = {ALN_OK, 0, 0};
-  if(_nw_long(a, b, len_a, len_b, scoring, nw, result)) return;
+  if(_nw_wfa(a, b, len_a, len_b, scoring, nw, result) ||
+     _nw_long(a, b, len_a, len_b, scoring, nw, result)) return;
   e.status = _nw_align(a, b, len_a, len_b, scoring, nw, result);
   if(_nw_linear(a, b, len_a, len_b, scoring, nw, result, e.status))
     e.status = ALN_OK;

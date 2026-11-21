@@ -49,6 +49,7 @@ typedef struct
   bool score_only; // print the score without the alignment
   bool linear_fallback; // linear space if too big for the matrices
   unsigned int linear_above; // linear space from this length (0: never)
+  bool wfa_align; // the wavefront algorithm where it applies
 
   // Turns off zlib for stdin
   bool interactive;

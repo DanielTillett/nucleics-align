@@ -165,7 +165,10 @@ static void print_usage(enum NucleicsAlignCmdType cmd_type, score_t defaults[4],
 "                         (same score, but may pick another equal-scoring\n"
 "                         alignment)\n"
 "    --linearabove <n>    Align in linear memory where either sequence has at\n"
-"                         least <n> letters (as --linearfallback)\n");
+"                         least <n> letters (as --linearfallback)\n"
+"    --wfa                Align similar pairs by the wavefront algorithm, much\n"
+"                         faster for near-identical ones (same score, but may\n"
+"                         pick another equal-scoring alignment)\n");
   }
 
   fprintf(stderr,
@@ -370,6 +373,12 @@ cmdline_t* cmdline_new(int argc, char **argv, scoring_t *scoring,
         if(cmd_type != NUCLEICS_ALIGN_NW_CMD)
           usage("--linearfallback only valid with Needleman-Wunsch");
         cmd->linear_fallback = true;
+      }
+      else if(strcasecmp(argv[argi], "--wfa") == 0)
+      {
+        if(cmd_type != NUCLEICS_ALIGN_NW_CMD)
+          usage("--wfa only valid with Needleman-Wunsch");
+        cmd->wfa_align = true;
       }
       else if(strcasecmp(argv[argi], "--stdin") == 0)
       {
@@ -612,6 +621,8 @@ cmdline_t* cmdline_new(int argc, char **argv, scoring_t *scoring,
 
   if(cmd->linear_above > 0 && cmd->print_matrices)
     usage("--linearabove cannot be used with --printmatrices");
+  if(cmd->wfa_align && cmd->print_matrices)
+    usage("--wfa cannot be used with --printmatrices");
 
   if(cmd->linear_space &&
      (scoring->no_start_gap_penalty || scoring->no_end_gap_penalty ||

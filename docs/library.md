@@ -92,15 +92,17 @@ variables, which keep their old meaning (e.g. `alignment_striped_enabled =
 false` switches SIMD off everywhere).
 
 > [!IMPORTANT]
-> Two settings can change a result, and both are off by default. With
+> Three settings can change a result, and all are off by default. With
 > `linear_fallback` (`alignment_linear_fallback`), a Needleman-Wunsch
 > alignment too big for the score matrices or traceback bytes (too long, or
 > out of memory) is made in linear space instead, where that supports the
 > scoring; with `linear_above` (`alignment_linear_above`, a length), so is
-> any pair whose longer sequence has at least that many letters. The score
-> is the same, but linear space may choose another of several equal-scoring
-> alignments. `needleman_wunsch --linearfallback` and `--linearabove <n>`
-> turn them on.
+> any pair whose longer sequence has at least that many letters; with
+> `wfa_align` (`alignment_wfa_alignment`), similar pairs are aligned by the
+> wavefront algorithm (`alignment_wfa_align()`) where the scoring allows.
+> The score is the same, but linear space and WFA may choose another of
+> several equal-scoring alignments. `needleman_wunsch --linearfallback`,
+> `--linearabove <n>` and `--wfa` turn them on.
 
 ## Equal-scoring alignments
 

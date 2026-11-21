@@ -18,6 +18,11 @@ fixes listed under [Changes to output](#changes-to-output).
   letters are aligned in linear space, the faster and far smaller choice
   for long pairs, others with the matrices. Off by default, as linear space
   may choose another of several equal-scoring alignments
+- `needleman_wunsch --wfa` (`wfa_align` in `alignment_options_t`,
+  `alignment_wfa_align()`): aligns similar pairs by the wavefront algorithm
+  where the scoring allows (one match and one mismatch score, with gap
+  penalties), falling back to the matrices otherwise. Off by default, as WFA
+  may choose another of several equal-scoring alignments
 
 ## 1.0.0 - 21 Nov 2026
 

@@ -65,7 +65,11 @@ score: -11
 > letters (pairs with options linear memory refuses use the matrices).
 > For long pairs linear memory is now the faster of the two as well: 300 kb
 > at 5% divergence takes 1.5 s and 17 MB with `--linearabove 100000`,
-> against 2.2 s and 132 MB.
+> against 2.2 s and 132 MB. `--wfa` aligns similar pairs by the wavefront
+> algorithm where the scoring allows (one match and one mismatch score, with
+> gap penalties), falling back to the matrices otherwise; it gives the same
+> score but may pick another equal-scoring alignment, and cannot be combined
+> with `--printmatrices`.
 
 `--printmatrices` prints the three dynamic programming matrices (match, gap
 in the first sequence, gap in the second) before the alignment:
