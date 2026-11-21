@@ -9,9 +9,11 @@
 // Turn on debugging output by defining SEQ_ALIGN_VERBOSE
 //#define SEQ_ALIGN_VERBOSE
 
-// request decent POSIX version
+// request decent POSIX version (and, on macOS, which hides names beyond it
+// once one is asked for, sysconf(_SC_NPROCESSORS_ONLN) and the like)
 #define _XOPEN_SOURCE 700
 #define _DEFAULT_SOURCE
+#define _DARWIN_C_SOURCE
 
 #include <stdlib.h>
 #include <stdio.h>

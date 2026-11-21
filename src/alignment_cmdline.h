@@ -16,6 +16,9 @@
 #ifndef _DEFAULT_SOURCE
   #define _DEFAULT_SOURCE
 #endif
+#ifndef _DARWIN_C_SOURCE
+  #define _DARWIN_C_SOURCE
+#endif
 
 #include <stdarg.h> // required for va_list
 #include <stdbool.h>
