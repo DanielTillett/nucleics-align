@@ -1,0 +1,21 @@
+name: Feature request
+description: A new option, scoring system, output format or speed-up
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: need
+    attributes:
+      label: What do you want to do?
+      description: The task, and why the current tools do not cover it.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: How might it work?
+      description: Options, output or API you have in mind, and any paper or tool that does it.
+  - type: textarea
+    id: data
+    attributes:
+      label: Typical data
+      description: Sequence lengths, how similar they are, and how many pairs, if speed matters.
