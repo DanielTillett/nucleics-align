@@ -830,6 +830,14 @@ static bool alignment_fill_matrices(aligner_t *aligner, char is_sw)
   }
   else
   {
+    // The first row's gaps start the alignment, and end it too where seq_b
+    // is empty (the first row is then the last); the first column's the
+    // same with seq_a
+    const bool free_row = scoring->no_start_gap_penalty ||
+                          (scoring->no_end_gap_penalty && len_j == 0);
+    const bool free_col = scoring->no_start_gap_penalty ||
+                          (scoring->no_end_gap_penalty && len_i == 0);
+
     // work along first row -> [i][0]
     for(i = 1; i < score_width; i++)
     {
@@ -837,7 +845,7 @@ static bool alignment_fill_matrices(aligner_t *aligner, char is_sw)
 
       // Think carefully about which way round these are
       gap_a_scores[i] = min;
-      gap_b_scores[i] = scoring->no_start_gap_penalty ? 0
+      gap_b_scores[i] = free_row ? 0
                         : scoring->gap_open + (int)i * scoring->gap_extend;
     }
 
@@ -847,7 +855,7 @@ static bool alignment_fill_matrices(aligner_t *aligner, char is_sw)
       match_scores[index] = min;
 
       // Think carefully about which way round these are
-      gap_a_scores[index] = scoring->no_start_gap_penalty ? 0
+      gap_a_scores[index] = free_col ? 0
                             : scoring->gap_open + (int)j * scoring->gap_extend;
       gap_b_scores[index] = min;
     }

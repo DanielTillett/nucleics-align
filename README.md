@@ -986,6 +986,9 @@ bugs:
 * Running out of memory while aligning prints `Error: Out of memory`,
   without a source file and line, and the tools stop the same way as for
   other errors (in batch mode, after the output of the pairs before)
+* `--freeendgap` makes the whole of a sequence aligned against an empty one
+  free (score 0), as `--freestartgap` already did: that gap ends the
+  alignment as well as starting it. It used to cost a gap
 
 Development
 ===========

@@ -84,6 +84,9 @@ class NeedlemanWunschTest(unittest.TestCase):
                                    ("ACGT", "AGT")]))
         self.assertEqual([a.score for a in got], [0, -8, -6, -2])
         self.assertEqual((got[1].align_a, got[1].align_b), ("ACGT", "----"))
+        free_end = na.NeedlemanWunsch(free_end_gap=True)
+        self.assertEqual([a.score for a in free_end.align_pairs(
+            [("ACGT", ""), ("", "ACGT")])], [0, 0])
 
     def test_protein_scoring(self):
         a, b = "MKTAYIAKQRQISFVKSHFSRQ", "MKTAHIAKQRQISFVKSHFSRQ"

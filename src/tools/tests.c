@@ -164,6 +164,41 @@ void nw_test_free_gaps_at_ends()
   needleman_wunsch_free(nw);
 }
 
+/* Against an empty sequence the whole of the other is one gap, at the start
+ * and at the end at once: free with either free start or free end gaps
+ * (free end gaps used to charge for it) */
+void nw_test_free_gaps_empty()
+{
+  nw_aligner_t *nw = needleman_wunsch_new();
+  alignment_t *result = alignment_create(256);
+  scoring_t scoring;
+  int start, end;
+
+  for(start = 0; start < 2; start++) {
+    for(end = 0; end < 2; end++) {
+      scoring_init(&scoring, 1, -2, -4, -1, start, end,
+                   false, false, false, false);
+      const score_t want = start || end ? 0 : -8;
+      needleman_wunsch_align("acgt", "", &scoring, nw, result);
+      ASSERT(result->score == want &&
+             strcmp(result->result_a, "acgt") == 0 &&
+             strcmp(result->result_b, "----") == 0);
+      needleman_wunsch_align("", "acgt", &scoring, nw, result);
+      ASSERT(result->score == want &&
+             strcmp(result->result_a, "----") == 0 &&
+             strcmp(result->result_b, "acgt") == 0);
+      needleman_wunsch_align("", "", &scoring, nw, result);
+      ASSERT(result->score == 0);
+      // Not empty: free end gaps alone still charge a gap at the start
+      needleman_wunsch_align("ttacgt", "acgt", &scoring, nw, result);
+      ASSERT(result->score == (start ? 4 : -2));
+    }
+  }
+
+  alignment_free(result);
+  needleman_wunsch_free(nw);
+}
+
 void nw_test_no_mismatches()
 {
   nw_aligner_t *nw = needleman_wunsch_new();
@@ -1922,6 +1957,7 @@ void test_nw()
   nw_test_no_gaps_in_longer();
   nw_test_no_gaps_in_longest();
   nw_test_free_gaps_at_ends();
+  nw_test_free_gaps_empty();
   nw_test_no_mismatches();
   nw_test_no_mismatches_rand();
   nw_test_high_bit_chars();
