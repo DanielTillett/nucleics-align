@@ -1,0 +1,105 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 780 268" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="arr-dark" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1 L 10 5 L 0 9 z" fill="#1f2328"/>
+    </marker>
+    <marker id="arr-blue" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1 L 10 5 L 0 9 z" fill="#0969da"/>
+    </marker>
+    <marker id="arr-green" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1 L 10 5 L 0 9 z" fill="#1a7f37"/>
+    </marker>
+    <marker id="arr-amber" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1 L 10 5 L 0 9 z" fill="#9a6700"/>
+    </marker>
+    <style>
+      .bg { fill: #ffffff; stroke: #d8dee4; stroke-width: 1; }
+      .panel { fill: #f6f8fa; stroke: #d0d7de; stroke-width: 1; }
+      .title { font-size: 14px; font-weight: 700; fill: #1f2328; }
+      .sub { font-size: 11px; fill: #57606a; }
+      .hdr { font-size: 12px; font-weight: 700; fill: #1f2328; }
+      .cell { fill: #ffffff; stroke: #8c959f; stroke-width: 1.2; }
+      .cell-cur { fill: #ddf4ff; stroke: #0969da; stroke-width: 1.6; }
+      .ct { font-size: 10px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fill: #1f2328; }
+      .sm { font-size: 10.5px; fill: #57606a; }
+      .mono { font-size: 11.5px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fill: #1f2328; }
+      .p1 { fill: #dafbe1; stroke: #1a7f37; stroke-width: 1.2; }
+      .p2 { fill: #fff8c5; stroke: #9a6700; stroke-width: 1.2; }
+      .p3 { fill: #ddf4ff; stroke: #0969da; stroke-width: 1.2; }
+      .pt { font-size: 11px; font-weight: 700; fill: #1f2328; }
+    </style>
+  </defs>
+
+  <rect x="0.5" y="0.5" width="779" height="267" rx="8" class="bg"/>
+  <text x="20" y="25" class="title">Deterministic Gotoh traceback tie-breaking</text>
+  <text x="20" y="42" class="sub">Every full-matrix path (score matrices, traceback bytes, bands, strips, difference lanes) follows the same rule</text>
+
+  <!-- Panel 1: Current matrix fixes the spatial step -->
+  <rect x="20" y="54" width="248" height="198" rx="6" class="panel"/>
+  <text x="32" y="73" class="hdr">1. Current state fixes the step</text>
+  <text x="32" y="88" class="sm">Each matrix moves to one neighbour:</text>
+
+  <rect x="44" y="104" width="68" height="36" rx="4" class="cell"/>
+  <text x="78" y="126" text-anchor="middle" class="ct">(x-1, y-1)</text>
+
+  <rect x="166" y="104" width="68" height="36" rx="4" class="cell"/>
+  <text x="200" y="126" text-anchor="middle" class="ct">(x, y-1)</text>
+
+  <rect x="44" y="182" width="68" height="36" rx="4" class="cell"/>
+  <text x="78" y="204" text-anchor="middle" class="ct">(x-1, y)</text>
+
+  <rect x="166" y="182" width="68" height="36" rx="4" class="cell-cur"/>
+  <text x="200" y="204" text-anchor="middle" class="ct" font-weight="700">(x, y)</text>
+
+  <!-- Arrows from (x, y) to its 3 predecessors -->
+  <line x1="200" y1="181" x2="200" y2="143" stroke="#1a7f37" stroke-width="2" marker-end="url(#arr-green)"/>
+  <text x="206" y="165" class="ct" fill="#1a7f37" font-weight="700">GAP_A</text>
+
+  <line x1="165" y1="200" x2="115" y2="200" stroke="#9a6700" stroke-width="2" marker-end="url(#arr-amber)"/>
+  <text x="140" y="216" text-anchor="middle" class="ct" fill="#9a6700" font-weight="700">GAP_B</text>
+
+  <line x1="167" y1="182" x2="114" y2="142" stroke="#0969da" stroke-width="2" marker-end="url(#arr-blue)"/>
+  <text x="122" y="169" text-anchor="middle" class="ct" fill="#0969da" font-weight="700">MATCH</text>
+
+  <text x="32" y="242" class="sm">GAP_A = gap in A, GAP_B = gap in B</text>
+
+  <!-- Panel 2: Priority at the predecessor cell -->
+  <rect x="280" y="54" width="242" height="198" rx="6" class="panel"/>
+  <text x="292" y="73" class="hdr">2. Tie priority at predecessor</text>
+  <text x="292" y="88" class="sm">Pick first matrix matching the score:</text>
+
+  <rect x="296" y="102" width="210" height="30" rx="5" class="p1"/>
+  <text x="308" y="121" class="pt">1. GAP_A</text>
+  <text x="382" y="121" class="sm">(checked first)</text>
+
+  <rect x="296" y="140" width="210" height="30" rx="5" class="p2"/>
+  <text x="308" y="159" class="pt">2. GAP_B</text>
+  <text x="382" y="159" class="sm">(checked second)</text>
+
+  <rect x="296" y="178" width="210" height="30" rx="5" class="p3"/>
+  <text x="308" y="197" class="pt">3. MATCH</text>
+  <text x="382" y="197" class="sm">(checked last)</text>
+
+  <text x="292" y="226" class="sm">Global start at (len_a, len_b): same order.</text>
+  <text x="292" y="242" class="sm">Local start: always MATCH at best cell.</text>
+
+  <!-- Panel 3: Concrete effect -->
+  <rect x="534" y="54" width="226" height="198" rx="6" class="panel"/>
+  <text x="546" y="73" class="hdr">3. Tendency: gaps shift right</text>
+  <text x="546" y="88" class="sm">Walking back prefers gaps early,</text>
+  <text x="546" y="102" class="sm">so gaps land toward the right end:</text>
+
+  <rect x="546" y="114" width="202" height="58" rx="4" fill="#ffffff" stroke="#d0d7de"/>
+  <text x="556" y="131" class="sm" font-weight="600">AAA vs AA (equal-scoring ties):</text>
+  <text x="556" y="147" class="mono">AAA / AA-  </text>
+  <text x="642" y="147" class="sm" fill="#1a7f37" font-weight="700">chosen</text>
+  <text x="556" y="163" class="mono" fill="#8c959f">AAA / -AA  </text>
+  <text x="642" y="163" class="sm">not chosen</text>
+
+  <rect x="546" y="182" width="202" height="58" rx="4" fill="#ffffff" stroke="#d0d7de"/>
+  <text x="556" y="199" class="sm" font-weight="600">ACCA vs ACA (equal-scoring ties):</text>
+  <text x="556" y="215" class="mono">ACCA / AC-A </text>
+  <text x="646" y="215" class="sm" fill="#1a7f37" font-weight="700">chosen</text>
+  <text x="556" y="231" class="mono" fill="#8c959f">ACCA / A-CA </text>
+  <text x="646" y="231" class="sm">not chosen</text>
+</svg>

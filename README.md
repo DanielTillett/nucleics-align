@@ -5,9 +5,7 @@
 
 # Nucleics Align
 
-**Fast, exact pairwise sequence alignment in C:** optimal local
-(Smith-Waterman) and global (Needleman-Wunsch) alignment with affine gaps,
-from the command line, Python, Perl or C.
+**Fast, exact pairwise sequence alignment in C**: optimal local (Smith-Waterman) and global (Needleman-Wunsch) alignment with affine gaps, from the command line, Python, Perl or C.
 
 [![CI](https://github.com/DanielTillett/nucleics-align/actions/workflows/ci.yml/badge.svg)](https://github.com/DanielTillett/nucleics-align/actions/workflows/ci.yml)
 [![Licence: BSD 3-Clause](https://img.shields.io/badge/licence-BSD%203--Clause-blue.svg)](LICENSE)
@@ -15,36 +13,19 @@ from the command line, Python, Perl or C.
 ![Python 3.7+](https://img.shields.io/badge/python-3.7%2B-3776ab.svg)
 ![Platforms: Linux | macOS](https://img.shields.io/badge/platforms-Linux%20%7C%20macOS-lightgrey.svg)
 
-Nucleics Align is derived from Isaac Turner's
-[seq-align](https://github.com/noporpoise/seq-align), with bug fixes, SIMD
-and multi-threaded fills, exact banding and a linear-space global aligner.
-Every speed-up returns the same optimal alignments as the plain dynamic
-programming it replaces.
+## Why I built this
 
-**When to use it:** exact, affine-gap alignment of sequence pairs, from
-short oligos to megabase sequences, where you need the optimal score and a
-reproducible alignment. It is not a read mapper (for aligning many reads to
-a genome, use a seed-and-extend tool such as minimap2) and not a unit-cost
-edit-distance library (such as edlib).
+I started from Isaac Turner's [seq-align](https://github.com/noporpoise/seq-align), which I have always liked for one simple reason: it is straightforward, exact, and gives you the real Needleman-Wunsch or Smith-Waterman alignment without heuristics getting in the way. The catch was speed and memory. Aligning a 20 kb DNA pair took 10 seconds and 4.6 GB of RAM; at 50 kb it would have needed ~30 GB, so it could not be run on a typical desktop.
 
-## Highlights
+Nucleics Align keeps the same mathematics and tie-breaking rules, and adds striped SIMD fills, multi-threading, exact banding, difference-encoded lanes, a linear-space global aligner (Hirschberg / Myers-Miller), Myers' bit-vector edit distance, and wavefront alignment (`--wfa`). The rule throughout has been simple: **every default speed-up must produce the same alignment as the plain dynamic programming it replaces** (see [CHANGELOG.md](CHANGELOG.md) for the few intentional bug fixes).
 
-- **Exact.** Optimal alignments under your scoring, the same as a full
-  dynamic-programming fill, with ties broken the same documented way on
-  every code path
-- **Fast.** A 20 kb global alignment with traceback takes 0.01-0.06 s, and
-  the best local hit 0.01-0.12 s, where seq-align took 10-70 s
-  ([benchmarks](docs/performance.md))
-- **Long sequences.** `--linear` aligns megabase pairs in megabytes of
-  memory: 1 Mb at 1% divergence in 6.3 s and 49 MB on an 8-core desktop
-- **Any alphabet.** DNA, RNA, protein or any ASCII text, with built-in
-  BLOSUM and PAM matrices, your own matrix files and wildcards
-- **Batch friendly.** Reads FASTA, FASTQ, plain and gzipped files, aligning
-  pairs on several threads with output in input order
-- **Four ways in.** Command line tools, a Python module, Perl modules and a
-  C library
+**When to use it:** When you want an exact, reproducible affine-gap alignment of sequence pairs, from short PCR primers up to megabase sequences.
 
-The [documentation](docs/README.md) covers each in full.
+**When to use something else:** If you are mapping millions of reads to a reference genome, use a seed-and-extend mapper like `minimap2`. If you only ever need unit-cost Levenshtein edit distance, `edlib` is built for that.
+
+<p align="center">
+  <img src="docs/figures/alignment-modes.svg" width="760" alt="Global vs overlap vs local alignment of the same two DNA sequences">
+</p>
 
 ## Quick start
 
@@ -59,34 +40,46 @@ GATCACAG-TTACA
 score: 5
 ```
 
-The middle line marks matches (`|`), mismatches (`*`) and gaps (space).
+In `--pretty` output, `|` is a match, `*` is a mismatch, and a space is a gap.
+
+## Which mode should I pick?
+
+Here is the checklist I use myself:
+
+| What you have | Command | Why |
+|---|---|---|
+| Everyday global alignment | `./bin/needleman_wunsch --printscores seqA seqB` | Exact, banded, multi-threaded, fixed tie-breaking |
+| Near-identical pairs (~0.1% divergence, or ≤ 20 kb at ~1%) | `./bin/needleman_wunsch --wfa --printscores --file pairs.fa` | 1 Mb at 0.1% in 316 ms (11x faster); on these simulated pairs from 50 kb at 1%, it hits its cell budget and falls back to the matrices |
+| Long or divergent pairs (50 kb – 1 Mb+) | `./bin/needleman_wunsch --linear --printscores --file pairs.fa` | Keeps RAM at most 64 MB even at 1 Mb and 5% divergence |
+| Mixed batch of short and long pairs | `./bin/needleman_wunsch --linearabove 100000 --printscores --file pairs.fa` | Exact matrices for short pairs, linear memory for long ones |
+| Just the score | `./bin/needleman_wunsch --scoreonly --file pairs.fa` | Fastest for scores alone (linear memory); with `--threads 1` and unit costs (`0/-1/0/-1`), uses Myers' bit-vector algorithm |
+| Best local hit | `./bin/smith_waterman --maxhits 1 --file pairs.fa.gz` | Skips indexing sub-optimal hits; 20 kb best hit uses 3–25 MB instead of gigabytes |
+| Protein alignment | `./bin/needleman_wunsch --scoring BLOSUM62 seqA seqB` | Built-in PAM30, PAM70, BLOSUM80, BLOSUM62 |
+| Overlap alignment | `./bin/needleman_wunsch --freestartgap --freeendgap seqA seqB` | Free overhangs at both ends |
+| Repeated substrings in one sequence | `./bin/lcs ACGTACGTTACGACGT` | Lists common substrings longest first |
+
+> [!NOTE]
+> `--linear`, `--linearfallback`, `--linearabove` and `--wfa` always return the same optimal score as the default aligner, but when several alignments tie for the best score they may pick a different one.
 
 ## Building
 
-Nucleics Align builds on Linux and macOS, and on Windows under WSL (native
-Windows compilers are not supported). You need a C11 compiler (gcc or
-clang), a C++ compiler for the C++ examples (`g++` or `clang++`), `make` and
-zlib (`zlib1g-dev` on Debian and Ubuntu; included with macOS).
+Nucleics Align builds on Linux, macOS, and Windows under WSL (native Windows compilers are not supported). You need a C11 compiler (`gcc` or `clang`), `make`, `zlib` (`zlib1g-dev` on Debian/Ubuntu; built into macOS), and a C++ compiler if you want the C++ examples.
 
-| Command | Does |
+| Command | What it does |
 |---|---|
-| `make` | Build the tools in `bin/`, the library `src/libalign.a` and the examples |
-| `make bin/needleman_wunsch bin/smith_waterman bin/lcs` | Just the tools (no C++ compiler needed) |
-| `make test` | Run the unit tests and the command line fixtures |
-| `make SANITIZE=1 test` | The same with AddressSanitizer and UBSan |
-| `make NATIVE=1` | Tune for this CPU (e.g. AVX2 or AVX-512) |
-| `make DEBUG=1` | No optimisation, with debug symbols |
+| `make` | Builds the tools in `bin/`, the static library `src/libalign.a`, and the examples |
+| `make bin/needleman_wunsch bin/smith_waterman bin/lcs` | Builds just the CLI tools (no C++ compiler needed) |
+| `make test` | Runs the C unit tests and the CLI fixtures |
+| `make SANITIZE=1 test` | Same, under AddressSanitizer and UndefinedBehaviorSanitizer |
+| `make NATIVE=1` | Tunes for your CPU (`-march=native`, enabling AVX-512 where present) |
+| `make DEBUG=1` | Unoptimised build with debug symbols |
 
-There is no `make install`: the tools run from `bin/`, or copy them onto
-your `PATH`.
+There is no `make install`: run the binaries straight from `bin/` or copy them onto your `PATH`.
 
 > [!TIP]
-> Without `NATIVE=1`, x86-64 Linux builds already pick AVX2, SSE4.1 or plain
-> SSE2 when the program starts, which gets most of the speed in a portable
-> binary. `NATIVE=1` adds `-march=native` (16-lane AVX-512 where the CPU has
-> it), and the binary may not run on other CPUs.
+> On x86-64 Linux, a plain `make` already builds AVX2, SSE4.1 and SSE2 versions into one portable binary and picks the best one at startup. You only need `NATIVE=1` if you want AVX-512 on your own machine.
 
-To update a checkout:
+To update an existing checkout:
 
 ```console
 $ git pull
@@ -94,71 +87,39 @@ $ git submodule update --init
 ```
 
 <details>
-<summary>Platform details</summary>
+<summary>Platform &amp; dependency details</summary>
 
-On x86-64 Linux the SIMD kernels are compiled for AVX2, SSE4.1 and plain
-SSE2 in the same binary (GCC/clang function multi-versioning,
-`target_clones`), and the loader picks the best version when the program
-starts. With gcc all three versions use 8-lane vectors, run as two 4-lane
-halves without AVX2; clang only allows 4-lane vectors in the versions
-without AVX2, so its builds use 4 lanes. AVX-512 (16 lanes) is only used
-with `NATIVE=1`, because every version of a function shares one lane count
-and 16-lane code runs about 10x slower on CPUs without AVX-512. Plain SSE2
-has no vector maximum instruction for 32-bit integers, so on SSE2-only CPUs
-the linear-space aligner uses scalar loops.
+On x86-64 Linux the SIMD kernels use GCC/clang function multi-versioning (`target_clones` for `avx2`, `sse4.1`, `default`). GCC builds use 8-lane vectors across all three versions; clang uses 4-lane vectors when multi-versioning. `NATIVE=1` enables 16-lane AVX-512 where available. On Arm64 (including Apple silicon), NEON is used automatically.
 
-Other platforms use the compiler's target: Arm64 (including Apple silicon)
-uses NEON for all the SIMD code, while x86 builds elsewhere (e.g. macOS on
-Intel) can add `OPT="-O3 -msse4.1"` or `NATIVE=1`. ThreadSanitizer builds
-skip the run-time selection, which it cannot handle. `LANES=4`, `8` or `16`
-forces the lane count for testing (see [CONTRIBUTING.md](CONTRIBUTING.md)).
-
-Bundled dependencies, in `libs/` (git submodules) by Isaac Turner:
-[string_buffer](https://github.com/noporpoise/string_buffer) (CC0 1.0),
-[seq_file](https://github.com/noporpoise/seq_file) and
-[sort_r](https://github.com/noporpoise/sort_r) (both public domain).
+Bundled dependencies in `libs/` (git submodules, all by Isaac Turner): [string_buffer](https://github.com/noporpoise/string_buffer) (CC0 1.0), [seq_file](https://github.com/noporpoise/seq_file) and [sort_r](https://github.com/noporpoise/sort_r) (both public domain).
 
 </details>
 
-## Command line
+## Performance at a glance
 
-```console
-$ ./bin/smith_waterman --maxhits 1 --pretty ACGTTTGACGTACGTAGC TTTTACGTTTGACCTACGTAG
-== Alignment 0 lengths (18, 21):
+Global alignment wall time on a desktop 8-core Linux machine (AMD Ryzen 7 5700G, 16 threads, default `make` build):
 
-hit 0.0 score: 30
-  ACGTTTGACGTACGTAG  [pos: 0; len: 17]
-  |||||||||*|||||||
-  ACGTTTGACCTACGTAG  [pos: 4; len: 17]
+<p align="center">
+  <img src="docs/figures/perf-pop-os.svg" width="760" alt="Global alignment wall time on pop-os (Ryzen 7 5700G) across 5 kb to 1 Mb">
+</p>
 
-==
-```
+Compared against other exact aligners on 20 kb simulated DNA (AMD Ryzen AI Max+ 395, wall time best of 3; every tool returned the same optimal score):
 
-| Task | Command |
-|---|---|
-| Global alignment with scores | `./bin/needleman_wunsch --printscores seqA seqB` |
-| Long sequences, linear memory | `./bin/needleman_wunsch --linear --printscores --file pairs.fa` |
-| Linear memory only for long pairs | `./bin/needleman_wunsch --linearabove 100000 --printscores --file pairs.fa` |
-| Score only (fastest) | `./bin/needleman_wunsch --scoreonly --file pairs.fa` |
-| Best local hit | `./bin/smith_waterman --maxhits 1 --file pairs.fa.gz` |
-| Protein (BLOSUM62, gaps -10/-1) | `./bin/needleman_wunsch --scoring BLOSUM62 seqA seqB` |
-| Free end gaps (overlaps) | `./bin/needleman_wunsch --freestartgap --freeendgap seqA seqB` |
-| Common substrings of one sequence | `./bin/lcs ACGTACGTTACGACGT` |
+| Tool | 1% divergence | 10% divergence | Unrelated | Peak memory |
+|---|---|---|---|---|
+| seq-align (original) | 9.55 s | 9.75 s | 10.56 s | 4.6 GB |
+| **Nucleics Align (default)** | **0.01 s** | 0.06 s | 0.06 s | 11 – 386 MB |
+| **Nucleics Align `--linear`** | 0.02 s | **0.04 s** | **0.04 s** | **2 MB** |
+| parasail | 1.17 s | 1.28 s | 0.76 s | 1.5 GB |
+| ksw2 | 0.33 s | 0.35 s | 0.34 s | 524 MB |
+| WFA2 | 0.01 s | 0.90 s | 23.3 s | 23 MB – 16.9 GB |
+| WFA2 BiWFA | 0.01 s | 0.54 s | 10.3 s | 8 – 24 MB |
 
-The [command line guide](docs/command-line.md) has every option with
-examples, and [Choosing scores](docs/scoring.md) has NCBI's guidance on
-matrices and penalties.
-
-> [!NOTE]
-> `--linear` returns the same optimal score as the default aligner but,
-> where several alignments share the best score, it may pick a different
-> one.
+Nucleics Align used up to 16 threads while the other tools ran on one; even on a single thread (`--threads 1`), Nucleics Align takes 0.11–0.19 s against ksw2's 0.34–0.35 s. See [docs/performance.md](docs/performance.md) for the full tables (up to 1 Mb) and how each optimisation works.
 
 ## Python
 
-[`python/nucleics_align.py`](python/nucleics_align.py) runs the tools from
-Python 3.7 or later, with only the standard library. A batch of pairs goes
-to one run of a tool and is aligned on its threads, in order.
+[`python/nucleics_align.py`](python/nucleics_align.py) wraps the compiled tools using only the Python 3.7+ standard library. Passing an iterable of pairs sends them through a single tool run in parallel and yields results in input order.
 
 ```python
 import sys
@@ -170,15 +131,13 @@ aln = nw.align("ACGTTGCA", "ACGTGCA")
 print(aln.align_a, aln.markers, aln.align_b, aln.score, sep="\n")
 
 pairs = [("ACGT", "AGT"), ("GATTACA", "GCATGCA")]
-for aln in nw.align_pairs(pairs):           # any iterable of pairs
+for aln in nw.align_pairs(pairs):
     print(aln.score)
 print(list(nw.score_pairs(pairs)))          # scores only, linear memory
 
 for hit in SmithWaterman(max_hits=3).align("ttacgtacgtaa", "acgtacgt"):
     print(hit.score, hit.pos_a, hit.align_a, hit.align_b)
 ```
-
-Every tool option has a keyword:
 
 | Keywords | Tool options |
 |---|---|
@@ -188,29 +147,13 @@ Every tool option has a keyword:
 | `no_gaps`, `no_gaps_in_a`, `no_gaps_in_b`, `no_gaps_in_longest`, `no_mismatches` | `--nogaps`, `--nogapsin1`, `--nogapsin2`, `--nogapsinlongest`, `--nomismatches` |
 | `free_start_gap`, `free_end_gap`, `linear`, `linear_fallback` (global) | `--freestartgap`, `--freeendgap`, `--linear`, `--linearfallback` |
 | `min_score`, `max_hits` (local) | `--minscore`, `--maxhits` |
-| `threads`, `bin_dir` | `--threads`; where to find the tools |
+| `threads`, `bin_dir` | `--threads`; where to find the binaries (or set `NUCLEICS_ALIGN_BIN`) |
 
-Global alignments come back as `GlobalAlignment` (`seq_a`, `seq_b`,
-`align_a`, `markers`, `align_b`, `score`) and local hits as `LocalHit`
-(`align_a`, `markers`, `align_b`, `score`, `pos_a`, `len_a`, `pos_b`,
-`len_b`).
-
-- A tool's error (a letter pair the scoring does not define, options linear
-  space refuses) raises `AlignmentError` with the tool's message, after
-  returning the pairs before it
-- Sequences with whitespace or control characters, or starting with `>`,
-  raise `ValueError`
-- The tools are found in `bin/` beside `python/`, or set
-  `NUCLEICS_ALIGN_BIN`
-- Examples: [`nw_example.py`](python/nw_example.py),
-  [`sw_example.py`](python/sw_example.py). Tests:
-  `python3 -m unittest discover python`
+`--linearabove` and `--wfa` are CLI and C library options not yet exposed in the Python wrapper. Examples: [`python/nw_example.py`](python/nw_example.py), [`python/sw_example.py`](python/sw_example.py). Tests: `python3 -m unittest discover python`.
 
 ## Perl
 
-[`perl/NeedlemanWunsch.pm`](perl/NeedlemanWunsch.pm) and
-[`perl/SmithWaterman.pm`](perl/SmithWaterman.pm) take the same options
-under the tools' names:
+[`perl/NeedlemanWunsch.pm`](perl/NeedlemanWunsch.pm) and [`perl/SmithWaterman.pm`](perl/SmithWaterman.pm) expose the same options using the CLI flag names:
 
 ```perl
 use lib 'perl';
@@ -220,86 +163,41 @@ use SmithWaterman;
 my $nw = NeedlemanWunsch->new(gapopen => -5, linear => 1);
 my $aln = $nw->do_alignment('ACGTTGCA', 'ACGTGCA');
 $nw->print_alignment($aln);
-print $nw->do_score('ACGTTGCA', 'ACGTGCA'), "\n";   # score only
+print $nw->do_score('ACGTTGCA', 'ACGTGCA'), "\n";
 
 my $sw = SmithWaterman->new(minscore => 5, maxhits => 3);
 $sw->do_alignment('ttacgtacgtaa', 'acgtacgt');
 $sw->print_hit($_) for $sw->get_all_hits();
 ```
 
-They wait without a time limit unless `timeout` is set, number alignments
-from 0, refuse unknown options and scoring names, and stop their tools when
-the object goes. The Perl `SmithWaterman` reads hits one at a time, as the
-tool's interactive mode gives them, where `minscore` defaults to 0 (every
-hit); the Python module and the tool otherwise default to
-`match * MAX(0.2 * shorter length, 2)`. Tests: `perl perl/test.pl`.
+Tests: `perl perl/test.pl`.
 
 ## C library
 
-Link against `src/libalign.a`, `libs/string_buffer/libstrbuf.a`, `-lpthread`
-and `-lz`:
+Link against `src/libalign.a`, `libs/string_buffer/libstrbuf.a`, `-lpthread` and `-lz`:
 
-| Function | Header | Does |
+| Function | Header | What it does |
 |---|---|---|
 | `needleman_wunsch_align()` | `needleman_wunsch.h` | Global alignment |
 | `smith_waterman_align()`, `smith_waterman_fetch()` | `smith_waterman.h` | Local alignments, best first |
-| `hirschberg_align()` | `hirschberg.h` | Global alignment in linear memory |
-| `hirschberg_score()` | `hirschberg.h` | The global score alone, in linear memory |
-| `scoring_init()`, `scoring_system_*()` | `alignment_scoring.h` | Scoring systems |
+| `hirschberg_align()` / `hirschberg_score()` | `hirschberg.h` | Linear-space global alignment / score only |
+| `alignment_wfa_align()` / `alignment_wfa_score()` | `alignment.h` | Wavefront alignment / score |
+| `alignment_myers_score()` | `alignment.h` | Bit-vector unit-cost edit distance |
+| `scoring_init()`, `scoring_system_*()` | `alignment_scoring.h` | Scoring systems and matrices |
 
-Each aligner has a `*_checked()` version that returns errors instead of
-ending the program. The [library guide](docs/library.md) covers settings,
-threads, tie-breaking and errors, and [`examples/`](examples) has complete C
-and C++ programs.
+Every main aligner has a `*_checked()` counterpart that returns an `aln_status_t` error code instead of calling `exit()`. See [docs/library.md](docs/library.md) and [`examples/`](examples).
 
-## Performance
+## Documentation
 
-Global alignment of 20 kb random DNA with the alignment returned (whole
-program wall time, best of three; AMD Ryzen AI Max+ 395; every tool reported
-the same optimal score):
+The full [documentation index](docs/README.md) covers:
+- [Command line tools](docs/command-line.md): every flag with worked examples
+- [Choosing scores](docs/scoring.md): DNA/RNA and protein matrices and gap penalties
+- [Using the C library](docs/library.md): API signatures, options, tie-breaking and errors
+- [Performance](docs/performance.md): benchmarks up to 1 Mb and how every speed-up works
+- [Algorithms and references](docs/algorithms.md): the papers behind the code
 
-| Tool | 1% divergence | 10% | Unrelated | Peak memory |
-|---|---|---|---|---|
-| seq-align (original) | 9.55 s | 9.75 s | 10.56 s | 4.6 GB |
-| **Nucleics Align** | **0.01 s** | 0.06 s | 0.06 s | 11 - 386 MB |
-| **Nucleics Align `--linear`** | 0.02 s | **0.04 s** | **0.04 s** | **2 MB** |
-| parasail | 1.17 s | 1.28 s | 0.76 s | 1.5 GB |
-| ksw2 | 0.33 s | 0.35 s | 0.34 s | 524 MB |
-| WFA2 | 0.01 s | 0.90 s | 23.3 s | 23 MB - 16.9 GB |
-| WFA2 BiWFA | 0.01 s | 0.54 s | 10.3 s | 8 - 24 MB |
+## Citing, contributing & licence
 
-Nucleics Align used up to 16 threads and the others one; on one thread
-Nucleics Align still takes 0.11-0.19 s against ksw2's 0.34-0.35 s.
-[docs/performance.md](docs/performance.md) has the full comparison
-(score-only, 50 kb, megabase pairs, best local hit), how each speed-up
-works, and the scripts in [`benchmarks/`](benchmarks) reproduce the
-timings.
-
-## Citing
-
-If you use Nucleics Align in published work, please cite it with the
-details in [`CITATION.cff`](CITATION.cff) (GitHub's **Cite this
-repository** button gives them in APA and BibTeX), and the papers behind
-the methods you rely on, listed in [Algorithms and
-references](docs/algorithms.md).
-
-## Contributing
-
-Bug reports and feature requests are welcome in the
-[issue tracker](https://github.com/DanielTillett/nucleics-align/issues).
-See [CONTRIBUTING.md](CONTRIBUTING.md) for building, testing and the
-project's rule that speed-ups never change output, and
-[CHANGELOG.md](CHANGELOG.md) for what has changed from seq-align.
-
-## Licence
-
-Nucleics Align is released under the [BSD 3-Clause License](LICENSE);
-[NOTICE](NOTICE) sets out where its parts come from.
-
-It is derived from seq-align, written by Isaac Turner and released into the
-public domain (Unlicense). The bundled libraries in `libs/` keep their own
-licences (see [Building](#building)); `libs/seq_file/benchmarks/kseq.h`,
-which is not compiled into Nucleics Align, is under the MIT License. The
-substitution matrices in `scoring/` were obtained from the
-[NCBI BLAST matrix archive](https://ftp.ncbi.nlm.nih.gov/blast/matrices/);
-each file credits its authors.
+- **Citing:** Use [`CITATION.cff`](CITATION.cff) (or GitHub's **Cite this repository** button), plus the original method papers in [docs/algorithms.md](docs/algorithms.md).
+- **Contributing:** Open an issue or PR on [GitHub](https://github.com/DanielTillett/nucleics-align/issues); see [CONTRIBUTING.md](CONTRIBUTING.md) and [CHANGELOG.md](CHANGELOG.md).
+- **Licence:** [BSD 3-Clause](LICENSE); see [NOTICE](NOTICE) for attribution to Isaac Turner's `seq-align` (Unlicense), bundled `libs/`, and the NCBI BLAST matrices in `scoring/`.

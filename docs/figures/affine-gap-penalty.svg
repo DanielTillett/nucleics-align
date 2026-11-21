@@ -1,0 +1,83 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 780 280" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+  <defs>
+    <style>
+      .bg { fill: #ffffff; stroke: #d8dee4; stroke-width: 1; }
+      .panel { fill: #f6f8fa; stroke: #d0d7de; stroke-width: 1; }
+      .title { font-size: 14px; font-weight: 700; fill: #1f2328; }
+      .sub { font-size: 11px; fill: #57606a; }
+      .axis { stroke: #8c959f; stroke-width: 1.2; }
+      .grid { stroke: #eaeef2; stroke-width: 1; }
+      .tick { font-size: 10px; fill: #57606a; }
+      .hdr { font-size: 12px; font-weight: 700; fill: #1f2328; }
+      .mono { font-size: 11px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fill: #1f2328; }
+      .note { font-size: 10.5px; fill: #57606a; }
+    </style>
+  </defs>
+
+  <rect x="0.5" y="0.5" width="779" height="279" rx="8" class="bg"/>
+  <text x="20" y="26" class="title">Affine vs linear gap penalty: score(n) = gap_open + n * gap_extend</text>
+  <text x="20" y="43" class="sub">Opening a gap hurts once; extending it is cheap, so one contiguous indel beats several scattered 1-base gaps</text>
+
+  <!-- Left: chart (x: 0..10 mapped to 65..385 => 32px/base; y: 0..-24 mapped to 70..238 => 7px/unit) -->
+  <line x1="65" y1="70" x2="385" y2="70" class="axis"/>
+  <line x1="65" y1="70" x2="65" y2="238" class="axis"/>
+
+  <!-- Horizontal grid lines at -6, -12, -18, -24 -->
+  <line x1="65" y1="112" x2="385" y2="112" class="grid"/>
+  <line x1="65" y1="154" x2="385" y2="154" class="grid"/>
+  <line x1="65" y1="196" x2="385" y2="196" class="grid"/>
+  <line x1="65" y1="238" x2="385" y2="238" class="grid"/>
+
+  <text x="58" y="74" text-anchor="end" class="tick">0</text>
+  <text x="58" y="116" text-anchor="end" class="tick">-6</text>
+  <text x="58" y="158" text-anchor="end" class="tick">-12</text>
+  <text x="58" y="200" text-anchor="end" class="tick">-18</text>
+  <text x="58" y="242" text-anchor="end" class="tick">-24</text>
+
+  <text x="65" y="254" text-anchor="middle" class="tick">0</text>
+  <text x="129" y="254" text-anchor="middle" class="tick">2</text>
+  <text x="193" y="254" text-anchor="middle" class="tick">4</text>
+  <text x="257" y="254" text-anchor="middle" class="tick">6</text>
+  <text x="321" y="254" text-anchor="middle" class="tick">8</text>
+  <text x="385" y="254" text-anchor="middle" class="tick">10</text>
+  <text x="225" y="270" text-anchor="middle" class="note">Gap length (bases)</text>
+
+  <!-- Curves for n = 1..10 -->
+  <!-- Global DNA default (-4, -1): n=1 -> -5 (y=105), n=10 -> -14 (y=168) -->
+  <polyline fill="none" stroke="#0969da" stroke-width="2.5"
+    points="97,105 129,112 161,119 193,126 225,133 257,140 289,147 321,154 353,161 385,168"/>
+  <circle cx="97" cy="105" r="3.5" fill="#0969da"/>
+  <circle cx="257" cy="140" r="3.5" fill="#0969da"/>
+
+  <!-- Protein default (-10, -1): n=1 -> -11 (y=147), n=10 -> -20 (y=210) -->
+  <polyline fill="none" stroke="#8250df" stroke-width="2.5"
+    points="97,147 129,154 161,161 193,168 225,175 257,182 289,189 321,196 353,203 385,210"/>
+  <circle cx="97" cy="147" r="3.5" fill="#8250df"/>
+
+  <!-- Linear (0, -2): n=1 -> -2 (y=84), n=10 -> -20 (y=210) -->
+  <polyline fill="none" stroke="#bf8700" stroke-width="2.2" stroke-dasharray="5,3"
+    points="97,84 129,98 161,112 193,126 225,140 257,154 289,168 321,182 353,196 385,210"/>
+
+  <!-- Legend inside chart -->
+  <line x1="76" y1="212" x2="96" y2="212" stroke="#0969da" stroke-width="2.5"/>
+  <text x="102" y="216" class="tick">Global DNA default (-4, -1)</text>
+  <line x1="76" y1="226" x2="96" y2="226" stroke="#8250df" stroke-width="2.5"/>
+  <text x="102" y="230" class="tick">Protein BLOSUM62 (-10, -1)</text>
+  <line x1="250" y1="226" x2="270" y2="226" stroke="#bf8700" stroke-width="2.2" stroke-dasharray="5,3"/>
+  <text x="276" y="230" class="tick">Linear (0, -2)</text>
+
+  <!-- Right: worked comparison -->
+  <rect x="415" y="64" width="345" height="196" rx="6" class="panel"/>
+  <text x="430" y="84" class="hdr">Worked example: 6 deleted bases</text>
+  <text x="430" y="100" class="note">Same 8 bases (ACGTTGCA), global DNA defaults (-4, -1):</text>
+
+  <rect x="430" y="112" width="315" height="64" rx="5" fill="#dafbe1" stroke="#4ac26b"/>
+  <text x="442" y="130" class="hdr" fill="#1a7f37">One 6-base gap (preferred)</text>
+  <text x="442" y="147" class="mono">ACGT------TGCA</text>
+  <text x="442" y="164" class="note">1 × (-4) + 6 × (-1)  →  <tspan font-weight="700" fill="#1a7f37">gap cost = -10</tspan></text>
+
+  <rect x="430" y="186" width="315" height="64" rx="5" fill="#ffebe9" stroke="#ff8182"/>
+  <text x="442" y="204" class="hdr" fill="#cf222e">Six 1-base gaps (heavily penalised)</text>
+  <text x="442" y="221" class="mono">A-C-G-T-T-G-CA</text>
+  <text x="442" y="238" class="note">6 × (-4) + 6 × (-1)  →  <tspan font-weight="700" fill="#cf222e">gap cost = -30</tspan></text>
+</svg>

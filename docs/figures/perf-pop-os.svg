@@ -1,0 +1,140 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 780 288" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+  <defs>
+    <style>
+      .bg { fill: #ffffff; stroke: #d8dee4; stroke-width: 1; }
+      .title { font-size: 14px; font-weight: 700; fill: #1f2328; }
+      .sub { font-size: 11px; fill: #57606a; }
+      .hdr { font-size: 12px; font-weight: 700; fill: #1f2328; }
+      .axis { stroke: #8c959f; stroke-width: 1.1; }
+      .grid { stroke: #eaeef2; stroke-width: 1; }
+      .tick { font-size: 10px; fill: #57606a; }
+      .lbl { font-size: 9px; font-weight: 700; fill: #1f2328; }
+      .b-full { fill: #0969da; }
+      .b-wfa { fill: #d4a72c; }
+      .b-lin { fill: #1a7f37; }
+      .b-scr { fill: #8250df; }
+    </style>
+  </defs>
+
+  <rect x="0.5" y="0.5" width="779" height="287" rx="8" class="bg"/>
+  <text x="20" y="25" class="title">Global alignment wall time on Linux (pop-os, AMD Ryzen 7 5700G, 16 threads)</text>
+  <text x="20" y="42" class="sub">Log scale from 1 ms baseline (lower is faster): simulated divergent DNA pairs (+1 / -2 / -4 / -1), default make build</text>
+
+  <!-- Legend -->
+  <rect x="20" y="52" width="11" height="11" rx="2" class="b-full"/>
+  <text x="36" y="61" class="tick">full (default)</text>
+  <rect x="115" y="52" width="11" height="11" rx="2" class="b-wfa"/>
+  <text x="131" y="61" class="tick">--wfa</text>
+  <rect x="180" y="52" width="11" height="11" rx="2" class="b-lin"/>
+  <text x="196" y="61" class="tick">--linear</text>
+  <rect x="255" y="52" width="11" height="11" rx="2" class="b-scr"/>
+  <text x="271" y="61" class="tick">--scoreonly</text>
+
+  <!--
+    Exact log10 transform for both panels:
+    y = 242 - 39.5 * log10(ms), h = 242 - y
+    1 ms    -> y = 242.0
+    10 ms   -> y = 202.5
+    100 ms  -> y = 163.0
+    1,000ms -> y = 123.5
+    10,000  -> y = 84.0
+  -->
+
+  <!-- LEFT PANEL: 1% divergence (all 6 lengths: 5k, 20k, 50k, 100k, 300k, 1M) -->
+  <text x="52" y="78" class="hdr">1% divergence (5 kb – 1 Mb)</text>
+  <line x1="52" y1="84" x2="466" y2="84" class="grid"/>
+  <line x1="52" y1="123.5" x2="466" y2="123.5" class="grid"/>
+  <line x1="52" y1="163" x2="466" y2="163" class="grid"/>
+  <line x1="52" y1="202.5" x2="466" y2="202.5" class="grid"/>
+  <line x1="52" y1="242" x2="466" y2="242" class="axis"/>
+  <line x1="52" y1="84" x2="52" y2="242" class="axis"/>
+
+  <text x="46" y="88" text-anchor="end" class="tick">10 s</text>
+  <text x="46" y="127" text-anchor="end" class="tick">1 s</text>
+  <text x="46" y="167" text-anchor="end" class="tick">100 ms</text>
+  <text x="46" y="206" text-anchor="end" class="tick">10 ms</text>
+  <text x="46" y="245" text-anchor="end" class="tick">1 ms</text>
+
+  <!-- 5 kb (x0=62): full 3.40, wfa 1.84, lin 6.54, scr 2.56 -->
+  <rect x="62" y="221.0" width="12" height="21.0" class="b-full"/>
+  <rect x="75" y="231.5" width="12" height="10.5" class="b-wfa"/>
+  <rect x="88" y="209.8" width="12" height="32.2" class="b-lin"/>
+  <rect x="101" y="225.9" width="12" height="16.1" class="b-scr"/>
+  <text x="87" y="257" text-anchor="middle" class="tick">5 kb</text>
+
+  <!-- 20 kb (x0=130): full 22.74, wfa 13.11, lin 29.01, scr 8.13 -->
+  <rect x="130" y="188.4" width="12" height="53.6" class="b-full"/>
+  <rect x="143" y="197.9" width="12" height="44.1" class="b-wfa"/>
+  <rect x="156" y="184.2" width="12" height="57.8" class="b-lin"/>
+  <rect x="169" y="206.1" width="12" height="35.9" class="b-scr"/>
+  <text x="155" y="257" text-anchor="middle" class="tick">20 kb</text>
+
+  <!-- 50 kb (x0=198): full 101.19, wfa 166.36, lin 97.02, scr 27.98 -->
+  <rect x="198" y="162.8" width="12" height="79.2" class="b-full"/>
+  <rect x="211" y="154.3" width="12" height="87.7" class="b-wfa"/>
+  <rect x="224" y="163.5" width="12" height="78.5" class="b-lin"/>
+  <rect x="237" y="184.8" width="12" height="57.2" class="b-scr"/>
+  <text x="223" y="257" text-anchor="middle" class="tick">50 kb</text>
+
+  <!-- 100 kb (x0=266): full 350.59, wfa 488.42, lin 274.73, scr 94.61 -->
+  <rect x="266" y="141.5" width="12" height="100.5" class="b-full"/>
+  <rect x="279" y="135.8" width="12" height="106.2" class="b-wfa"/>
+  <rect x="292" y="145.7" width="12" height="96.3" class="b-lin"/>
+  <rect x="305" y="164.0" width="12" height="78.0" class="b-scr"/>
+  <text x="291" y="257" text-anchor="middle" class="tick">100 kb</text>
+
+  <!-- 300 kb (x0=334): full 876.05, wfa 1246.17, lin 1054.06, scr 246.79 -->
+  <rect x="334" y="125.8" width="12" height="116.2" class="b-full"/>
+  <rect x="347" y="119.7" width="12" height="122.3" class="b-wfa"/>
+  <rect x="360" y="122.6" width="12" height="119.4" class="b-lin"/>
+  <rect x="373" y="147.5" width="12" height="94.5" class="b-scr"/>
+  <text x="359" y="257" text-anchor="middle" class="tick">300 kb</text>
+
+  <!-- 1 Mb (x0=402): full 8103.09, wfa 8517.20, lin 6402.58, scr 2256.69 -->
+  <rect x="402" y="87.6" width="12" height="154.4" class="b-full"/>
+  <rect x="415" y="86.8" width="12" height="155.2" class="b-wfa"/>
+  <rect x="428" y="91.6" width="12" height="150.4" class="b-lin"/>
+  <rect x="441" y="109.5" width="12" height="132.5" class="b-scr"/>
+  <text x="427" y="257" text-anchor="middle" class="tick">1 Mb</text>
+
+  <!-- RIGHT PANEL: 0.1% divergence (100k, 300k, 1M) -->
+  <text x="518" y="78" class="hdr">0.1% divergence (near-identical)</text>
+  <line x1="518" y1="84" x2="760" y2="84" class="grid"/>
+  <line x1="518" y1="123.5" x2="760" y2="123.5" class="grid"/>
+  <line x1="518" y1="163" x2="760" y2="163" class="grid"/>
+  <line x1="518" y1="202.5" x2="760" y2="202.5" class="grid"/>
+  <line x1="518" y1="242" x2="760" y2="242" class="axis"/>
+  <line x1="518" y1="84" x2="518" y2="242" class="axis"/>
+
+  <text x="512" y="88" text-anchor="end" class="tick">10 s</text>
+  <text x="512" y="127" text-anchor="end" class="tick">1 s</text>
+  <text x="512" y="167" text-anchor="end" class="tick">100 ms</text>
+  <text x="512" y="206" text-anchor="end" class="tick">10 ms</text>
+  <text x="512" y="245" text-anchor="end" class="tick">1 ms</text>
+
+  <!-- 100 kb (x0=534): full 44.11, wfa 6.14, lin 143.24, scr 26.62 -->
+  <rect x="534" y="177.0" width="13" height="65.0" class="b-full"/>
+  <rect x="548" y="210.9" width="13" height="31.1" class="b-wfa"/>
+  <text x="554.5" y="207" text-anchor="middle" class="lbl">6 ms</text>
+  <rect x="562" y="156.8" width="13" height="85.2" class="b-lin"/>
+  <rect x="576" y="185.7" width="13" height="56.3" class="b-scr"/>
+  <text x="561" y="257" text-anchor="middle" class="tick">100 kb</text>
+
+  <!-- 300 kb (x0=614): full 337.87, wfa 31.36, lin 523.91, scr 117.47 -->
+  <rect x="614" y="142.1" width="13" height="99.9" class="b-full"/>
+  <rect x="628" y="182.9" width="13" height="59.1" class="b-wfa"/>
+  <text x="634.5" y="179" text-anchor="middle" class="lbl">31 ms</text>
+  <rect x="642" y="134.6" width="13" height="107.4" class="b-lin"/>
+  <rect x="656" y="160.2" width="13" height="81.8" class="b-scr"/>
+  <text x="641" y="257" text-anchor="middle" class="tick">300 kb</text>
+
+  <!-- 1 Mb (x0=694): full 3480.77, wfa 315.80, lin 2910.65, scr 935.19 -->
+  <rect x="694" y="102.1" width="13" height="139.9" class="b-full"/>
+  <rect x="708" y="143.3" width="13" height="98.7" class="b-wfa"/>
+  <text x="714.5" y="139" text-anchor="middle" class="lbl">316 ms</text>
+  <rect x="722" y="105.2" width="13" height="136.8" class="b-lin"/>
+  <rect x="736" y="124.6" width="13" height="117.4" class="b-scr"/>
+  <text x="721" y="257" text-anchor="middle" class="tick">1 Mb</text>
+
+  <text x="20" y="277" class="sub">At 0.1%, --wfa is 7–11x faster than full (3–4.4x faster than --scoreonly). From 50 kb at 1%, --wfa hits its budget and falls back.</text>
+</svg>

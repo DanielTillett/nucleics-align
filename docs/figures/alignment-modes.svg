@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 780 310" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+  <defs>
+    <style>
+      .bg { fill: #ffffff; stroke: #d8dee4; stroke-width: 1; }
+      .panel { fill: #f6f8fa; stroke: #d0d7de; stroke-width: 1; }
+      .title { font-size: 14px; font-weight: 700; fill: #1f2328; }
+      .sub { font-size: 11px; fill: #57606a; }
+      .hdr { font-size: 12px; font-weight: 700; fill: #1f2328; }
+      .flag { font-size: 10.5px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fill: #0969da; }
+      .seq { font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fill: #1f2328; }
+      .lbl { font-size: 10.5px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fill: #57606a; }
+      .mkr { font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fill: #1a7f37; }
+      .note { font-size: 10.5px; fill: #57606a; }
+      .badge-blue { fill: #ddf4ff; stroke: #54aeff; stroke-width: 1; }
+      .badge-amber { fill: #fff8c5; stroke: #d4a72c; stroke-width: 1; }
+      .badge-green { fill: #dafbe1; stroke: #4ac26b; stroke-width: 1; }
+      .badge-txt { font-size: 10px; font-weight: 600; fill: #1f2328; }
+      .pen { fill: #cf222e; font-weight: 700; }
+      .free { fill: #9a6700; font-weight: 700; }
+      .hit { fill: #1a7f37; font-weight: 700; }
+      .mis { fill: #cf222e; font-weight: 700; }
+    </style>
+  </defs>
+
+  <rect x="0.5" y="0.5" width="779" height="309" rx="8" class="bg"/>
+  <text x="20" y="26" class="title">Three ways to align the same two DNA sequences</text>
+  <text x="20" y="43" class="sub">seq A (21 bp): TTTTACGTTTGACGTACGTAG   |   seq B (21 bp): ACGTTTGACCTACGTAGCCCC   (actual CLI output)</text>
+
+  <!-- Panel 1: Global -->
+  <rect x="20" y="56" width="740" height="74" rx="6" class="panel"/>
+  <text x="32" y="74" class="hdr">1. Global</text>
+  <text x="100" y="74" class="flag">needleman_wunsch (+1 / -2 / -4 / -1)</text>
+  <rect x="655" y="61" width="94" height="19" rx="9" class="badge-blue"/>
+  <text x="702" y="74" text-anchor="middle" class="badge-txt">score: -2</text>
+
+  <text x="32" y="92" class="lbl">A:</text>
+  <text x="62" y="92" class="seq" xml:space="preserve">TTTTACGTTTGAC<tspan class="mis">G</tspan>TACGTAG<tspan class="pen">----</tspan></text>
+  <text x="62" y="106" class="mkr" xml:space="preserve">    |||||||||<tspan class="mis">*</tspan>|||||||    </text>
+  <text x="32" y="120" class="lbl">B:</text>
+  <text x="62" y="120" class="seq" xml:space="preserve"><tspan class="pen">----</tspan>ACGTTTGAC<tspan class="mis">C</tspan>TACGTAGCCCC</text>
+  <text x="278" y="98" class="note">Aligns end to end. Both 4-base terminal gaps (red)</text>
+  <text x="278" y="114" class="note">are penalised (-8 each): 16(1) + 1(-2) - 16 = -2.</text>
+
+  <!-- Panel 2: Overlap -->
+  <rect x="20" y="140" width="740" height="74" rx="6" class="panel"/>
+  <text x="32" y="158" class="hdr">2. Overlap</text>
+  <text x="108" y="158" class="flag">needleman_wunsch --freestartgap --freeendgap</text>
+  <rect x="655" y="145" width="94" height="19" rx="9" class="badge-amber"/>
+  <text x="702" y="158" text-anchor="middle" class="badge-txt">score: 14</text>
+
+  <text x="32" y="176" class="lbl">A:</text>
+  <text x="62" y="176" class="seq" xml:space="preserve">TTTTACGTTTGAC<tspan class="mis">G</tspan>TACGTAG<tspan class="free">----</tspan></text>
+  <text x="62" y="190" class="mkr" xml:space="preserve">    |||||||||<tspan class="mis">*</tspan>|||||||    </text>
+  <text x="32" y="204" class="lbl">B:</text>
+  <text x="62" y="204" class="seq" xml:space="preserve"><tspan class="free">----</tspan>ACGTTTGAC<tspan class="mis">C</tspan>TACGTAGCCCC</text>
+  <text x="278" y="182" class="note">Same 25-column layout, but both terminal gaps</text>
+  <text x="278" y="198" class="note">(amber) are free (0 cost): 16(1) + 1(-2) = 14.</text>
+
+  <!-- Panel 3: Local -->
+  <rect x="20" y="224" width="740" height="74" rx="6" class="panel"/>
+  <text x="32" y="242" class="hdr">3. Local</text>
+  <text x="95" y="242" class="flag">smith_waterman --maxhits 1 (+2 / -2 / -2 / -1)</text>
+  <rect x="655" y="229" width="94" height="19" rx="9" class="badge-green"/>
+  <text x="702" y="242" text-anchor="middle" class="badge-txt">score: 30</text>
+
+  <text x="32" y="260" class="lbl">A[4..20]:</text>
+  <text x="102" y="260" class="seq" xml:space="preserve"><tspan class="hit">ACGTTTGAC</tspan><tspan class="mis">G</tspan><tspan class="hit">TACGTAG</tspan></text>
+  <text x="102" y="274" class="mkr" xml:space="preserve">|||||||||<tspan class="mis">*</tspan>|||||||</text>
+  <text x="32" y="288" class="lbl">B[0..16]:</text>
+  <text x="102" y="288" class="seq" xml:space="preserve"><tspan class="hit">ACGTTTGAC</tspan><tspan class="mis">C</tspan><tspan class="hit">TACGTAG</tspan></text>
+  <text x="278" y="266" class="note">Reports only the 17-base local alignment (pos 4 in A,</text>
+  <text x="278" y="282" class="note">pos 0 in B), dropping both tails: 16(2) + 1(-2) = 30.</text>
+</svg>

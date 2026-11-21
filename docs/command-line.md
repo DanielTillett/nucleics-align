@@ -2,80 +2,48 @@
 
 [Documentation index](README.md)
 
-`make` builds three tools in `bin/`:
+After running `make`, you have three tools in `bin/`:
+- `needleman_wunsch`: optimal global alignment (end to end)
+- `smith_waterman`: optimal local alignments, reported best first
+- `lcs`: repeated substrings within a single sequence, longest first
 
-| Tool | Does |
-|---|---|
-| `needleman_wunsch` | Optimal global alignment: whole sequences, end to end |
-| `smith_waterman` | Optimal local alignments: the best-scoring regions, best first |
-| `lcs` | Longest common substrings of one sequence with itself |
+`needleman_wunsch` and `smith_waterman` accept sequences on the command line or from FASTA, FASTQ, plain text, or `.gz` files. `lcs` takes a single positional sequence on the command line and does not parse files.
 
-`needleman_wunsch` and `smith_waterman` each take a pair of sequences on the
-command line, or read pairs from FASTA, FASTQ, plain (one sequence per line)
-or gzipped files, or from standard input. `lcs` takes one sequence on the
-command line and no options. Outputs below are from the current build.
+<p align="center">
+  <img src="figures/alignment-modes.svg" width="760" alt="Global vs overlap vs local alignment of the same two DNA sequences">
+</p>
 
-- [Global alignment](#global-alignment)
-- [Local alignment](#local-alignment)
-- [Reading files](#reading-files)
-- [Scoring](#scoring)
-- [Longest common substrings](#longest-common-substrings)
-- [All options](#all-options)
+## Global alignment (`needleman_wunsch`)
 
-## Global alignment
+Pass two sequences on the command line to align them end to end:
 
 ```console
-$ ./bin/needleman_wunsch CAGACGT CGATA
-C-AGACGT
-CGATA---
+$ ./bin/needleman_wunsch --printscores --pretty GATTACAGATTACA GATCACAGTTACA
+GATTACAGATTACA
+|||*|||| |||||
+GATCACAG-TTACA
+score: 5
 ```
 
-`--printscores` adds the score, and `--pretty` a line marking matches (`|`),
-mismatches (`*`) and gaps (space):
+### Choosing the right speed/memory mode
 
-```console
-$ ./bin/needleman_wunsch --printscores --pretty CAGACGT CGATA
-C-AGACGT
-| |*|
-CGATA---
-score: -11
-```
+By default, `needleman_wunsch` keeps one traceback byte per cell (12x smaller than full score matrices) and automatically bands similar pairs so most cells are never touched. Five flags give you extra control:
 
-In linear memory, for long sequences (`--linear`), or the score alone
-(`--scoreonly`, the fastest):
-
-```console
-$ ./bin/needleman_wunsch --linear --printscores CAGACGT CGATA
-CAGACGT
-C-GA-TA
-score: -11
-
-$ ./bin/needleman_wunsch --scoreonly CAGACGT CGATA
-score: -11
-```
+| Flag | When to use it | Trade-off |
+|---|---|---|
+| `--wfa` | Near-identical pairs (~0.1% divergence, or ≤ 20 kb at ~1%) | 1 Mb at 0.1% in 316 ms (11x faster); on our simulated DNA pairs from 50 kb at ≥ 1% it hits its cell budget (`64 * (len_a + len_b)`, capped at $2^{25}$) and falls back to the matrices |
+| `--linear` | Long or divergent pairs (50 kb – 1 Mb+) | $O(n)$ memory (46–64 MB at 1 Mb) instead of gigabytes |
+| `--linearabove <n>` | Mixed batches of short and long pairs | Matrices below `n` letters, linear space at or above `n` |
+| `--linearfallback` | Safety net on big batches | Switches to linear space only if a pair would run out of memory or overflow matrix dimensions |
+| `--scoreonly` | You only need the optimal score | Fastest for scores alone; uses Myers' bit-vector algorithm only under unit costs (`0/-1/0/-1`) on 1 thread when a band does not pay |
 
 > [!NOTE]
-> `--linear` gives the same score as the default aligner but, where several
-> alignments share the best score, it may return a different one, as above.
-> It cannot be combined with `--freestartgap`, `--freeendgap`, `--nogaps..`,
-> `--nomismatches`, `--printmatrices` or a positive `--gapopen`;
-> `--scoreonly` uses the full matrices for those. `--linearfallback` uses
-> linear memory only for pairs too big for the matrices, and
-> `--linearabove <n>` only for pairs where either sequence has at least n
-> letters (pairs with options linear memory refuses use the matrices).
-> For long pairs linear memory is now the faster of the two as well: 300 kb
-> at 5% divergence takes 1.5 s and 17 MB with `--linearabove 100000`,
-> against 2.2 s and 132 MB. `--wfa` aligns similar pairs by the wavefront
-> algorithm where the scoring allows (one match and one mismatch score, with
-> gap penalties), falling back to the matrices otherwise; it gives the same
-> score but may pick another equal-scoring alignment, and cannot be combined
-> with `--printmatrices`.
+> `--linear`, `--linearfallback`, `--linearabove` and `--wfa` always return the same optimal score as the default aligner, but if several alignments tie for the best score they may pick a different one. `--linear`, `--linearabove`, `--wfa` and `--scoreonly` cannot be combined with `--printmatrices` (`--linearfallback` can). `--scoreonly` also cannot be combined with `--zam`, `--pretty` or `--colour`. `--linear` refuses `--freestartgap`, `--freeendgap`, `--nogaps..`, `--nomismatches` and positive `--gapopen` (whereas `--scoreonly` and `--linearabove` fall back to the matrices for those).
 
-`--printmatrices` prints the three dynamic programming matrices (match, gap
-in the first sequence, gap in the second) before the alignment:
+`--printmatrices` prints the three Gotoh dynamic programming matrices (`match`, `gap_a`, `gap_b`) before the alignment, which is useful when checking a custom scoring rule:
 
 <details>
-<summary>Example output</summary>
+<summary>Example <code>--printmatrices</code> output</summary>
 
 ```console
 $ ./bin/needleman_wunsch --printmatrices ACAGGT AAGGT
@@ -110,10 +78,9 @@ A-AGGT
 
 </details>
 
-## Local alignment
+## Local alignment (`smith_waterman`)
 
-`smith_waterman` lists the hits best first, each with where it lies in each
-sequence (0-based start and length):
+`smith_waterman` finds the highest-scoring local hits in descending order, showing the 0-based start (`pos`) and aligned span (`len`) in each sequence:
 
 ```console
 $ ./bin/smith_waterman --pretty \
@@ -134,9 +101,10 @@ hit 0.1 score: 35
 ==
 ```
 
-`--maxhits <n>` stops after n hits (`--maxhits 1` is much faster for the
-best hit alone), `--minscore <s>` drops hits scoring below s, and
-`--context <n>` shows n letters either side (marked `.`):
+Key flags for local alignment:
+- `--maxhits 1`: if you only want the best hit, always pass this. It avoids filling the full 12-byte score matrices and skips indexing sub-optimal hits. On 20 kb DNA this uses 3–25 MB and runs in 0.01–0.15 s, instead of gigabytes for the full score matrices.
+- `--minscore <s>`: ignore hits scoring below `s`. Outside `--stdin`, the default is `match * MAX(0.2 * shorter_length, 2)` (truncated to an integer and clamped to the `score_t` range). Under `--stdin`, the default is `0`.
+- `--context <n>`: print `n` flanking bases on either side of each hit (marked with `.` on the pretty line):
 
 ```console
 $ ./bin/smith_waterman --maxhits 1 --context 4 --pretty \
@@ -152,23 +120,9 @@ hit 0.0 score: 94
 ==
 ```
 
-## Reading files
+## Reading files and batching
 
-`--file` reads two sequences at a time, here from a gzipped FASTA file
-`dna.fa.gz` holding:
-
-```text
->seqA
-ACAATAGAC
->seqB
-ACGAATAGAT
->seqC
-ACGTGA
-CAGAT
->seqD
-GTGGACG
-AGTA
-```
+`--file <path>` reads two sequences at a time from FASTA, FASTQ, or plain text (plain or `.gz`):
 
 ```console
 $ ./bin/needleman_wunsch --printscores --file dna.fa.gz
@@ -181,52 +135,22 @@ GTG-GACGAGTA
 score: -12
 ```
 
-`--file -` reads standard input, and `--files <f1> <f2>` takes one sequence
-from each file:
-
-```console
-$ gzip -d -c dna.fa.gz | ./bin/needleman_wunsch --file -
-AC-AATAGAC
-ACGAATAGAT
-
-ACGTGAC-AGAT
-GTG-GACGAGTA
-```
+- `--file -` reads a batch from standard input (piped).
+- `--files <f1> <f2>` reads one sequence from `f1` and its partner from `f2`.
 
 ### Threads
 
-The tools use half the CPUs by default (`--threads <n>` to change it). Pairs
-read from a file are aligned several at a time, on separate threads, and
-printed in input order, so the output is the same as one at a time. Each
-pair is printed as soon as those before it are. A pair of more than 4
-million cells runs on its own with all the threads. An error in a pair (a
-character pair the scoring does not define, or scores big enough to
-overflow) is reported after the output of the pairs before it, and stops
-the program.
+By default the tools use half your CPU threads (`--threads <n>` overrides it). When reading from files, pairs are aligned concurrently across threads and flushed in exact input order, so the output is byte-for-byte identical to `--threads 1`. Any pair larger than 4 million cells automatically gets all threads to itself. If a pair hits an error (such as an undefined character pair or score overflow), all earlier pairs are printed first and the tool exits non-zero.
 
-### Interactive input (`--stdin`)
+### Interactive mode (`--stdin`)
 
-`--stdin` reads standard input differently from `--file -`: one pair at a
-time as it arrives, plain sequences only (no gzip; `smith_waterman` refuses
-FASTA and FASTQ headers), with no batching on threads. `smith_waterman
---stdin` waits for `h` (next hit) or `a` (next alignment) after each hit,
-and its `--minscore` defaults to 0 (every hit). The
-[Perl modules](../README.md#perl) drive the tools this way; for batches use
-`--file -`.
+`--stdin` is different from `--file -`: it reads one plain-sequence pair at a time as you type or pipe it (no gzip, no batching, and `smith_waterman` rejects FASTA/FASTQ headers). After each local hit, `smith_waterman --stdin` prompts for `h` (next hit) or `a` (next alignment) and defaults `--minscore` to `0`. This is how the [Perl modules](../README.md#perl) talk to the binaries; for normal pipelines, use `--file -`.
 
-## Scoring
+## Scoring options
 
-A gap of n letters scores `gapopen + n * gapextend`. The defaults are match
-1, mismatch -2, gap open -4, gap extend -1 for `needleman_wunsch`, and match
-2, mismatch -2, gap open -2, gap extend -1 for `smith_waterman`.
+A gap of $n$ bases scores `gapopen + n * gapextend`. Defaults are `1 / -2 / -4 / -1` for `needleman_wunsch` and `2 / -2 / -2 / -1` for `smith_waterman`.
 
 ```console
-$ ./bin/needleman_wunsch --match 1 --mismatch 0 --gapopen -10 --gapextend 0 \
-    --printscores ACGTGCCCCACAGAT AGGTGGACGAGAT
-ACGTGCCCCACAGAT
-AGGTGGACGA--GAT
-score: -1
-
 $ ./bin/needleman_wunsch --scoring BLOSUM62 --printscores --pretty \
     MKTAYIAKQRQISFVKSHFSRQ MKTAHIAKQRISFVKSHFSRQ
 MKTAYIAKQRQISFVKSHFSRQ
@@ -235,56 +159,39 @@ MKTAHIAKQR-ISFVKSHFSRQ
 score: 88
 ```
 
-- `--scoring` picks a built-in system, which also sets its gap penalties:
+- `--scoring <name>`: built-in matrices with their standard gap penalties: `PAM30` (`-9/-1`), `PAM70` / `BLOSUM80` / `BLOSUM62` (`-10/-1`), and `DNA_HYBRIDIZATION` (`-10/-10`). `--gapopen` and `--gapextend` override them regardless of order.
+- `--substitution_matrix <file>`: load any matrix file (see [`scoring/`](../scoring) for BLOSUM, PAM, Gonnet, NUC.4.4, etc.).
+- `--substitution_pairs <file>`: load `a b score` lines (`#` starts a comment). Unlisted pairs fall back to `--match`/`--mismatch` if set, otherwise trigger an error.
+- `--wildcard <w> <s>`: let character `w` match anything for score `s` (e.g. `--wildcard N 0`).
+- `--case_sensitive`: treat `A` and `a` as different characters (off by default).
+- `--freestartgap`, `--freeendgap`: make leading/trailing gaps free (global only).
+- `--nogaps`, `--nogapsin1`, `--nogapsin2`, `--nogapsinlongest`, `--nomismatches`: forbid internal gaps (end gaps are still allowed) or mismatches.
 
-  | System | Gap open, extend |
-  |---|---|
-  | `PAM30` | -9, -1 |
-  | `PAM70`, `BLOSUM80`, `BLOSUM62` | -10, -1 |
-  | `DNA_HYBRIDIZATION` | -10, -10 |
-
-  `--gapopen` and `--gapextend` override them, in either order
-- `--substitution_matrix <file>` loads a matrix; [`scoring/`](../scoring)
-  has many (BLOSUM, PAM, Gonnet, NUC.4.4 and others)
-- `--substitution_pairs <file>` loads a list of pairs, one per line as
-  `a b score` (letters, then the score; `#` starts a comment). Pairs not
-  listed fall back to `--match`/`--mismatch` if those are given, and are
-  otherwise an error:
-
-  ```text
-  A A 1
-  A C -1
-  C A -1
-  C C 1
-  ```
-
-- `--wildcard <w> <s>`: letter w matches every letter with score s (e.g.
-  `--wildcard N 0`)
-- `--case_sensitive` compares letters case sensitively (default: off)
-- `--freestartgap`, `--freeendgap` (global only) make gaps at the ends free
-- `--nogaps`, `--nogapsin1`, `--nogapsin2` forbid gaps within both, the
-  first or the second sequence (gaps at the ends are still allowed);
-  `--nogapsinlongest` forbids them within the longer one (the first if they
-  are the same length), and `--nomismatches` forbids mismatches. Used
-  together for local alignment, they list the common substrings in order of
-  length
-
-[Choosing scores](scoring.md) has guidance on matrices and penalties.
+See [Choosing scores](scoring.md) for practical advice on picking matrices and gap penalties.
 
 ## Output options
 
-| Option | Prints |
+| Option | What it prints |
 |---|---|
-| `--printscores` | The score after each global alignment (local hits always show theirs) |
-| `--pretty` | A line marking matches (`\|`), mismatches (`*`) and gaps |
-| `--colour` | Mismatches and gaps in colour, for a terminal |
-| `--printfasta` | The FASTA/FASTQ names of each pair |
-| `--printseq` | The two sequences before their local hits (`smith_waterman`) |
-| `--context <n>` | n letters either side of each local hit (`smith_waterman`) |
-| `--printmatrices` | The dynamic programming matrices |
-| `--zam` | seq-align's older format: `Br1:`/`Br2:` lines with `_` for gaps and counts of mismatches and indels (`needleman_wunsch`) |
+| `--printscores` | Score after each global alignment (local hits always print theirs) |
+| `--pretty` | Middle line with `\|` (match), `*` (mismatch), space (gap) |
+| `--colour` | ANSI terminal colour for mismatches and indels |
+| `--printfasta` | FASTA/FASTQ header lines |
+| `--printseq` | Full input sequences before local hits (`smith_waterman`) |
+| `--context <n>` | `n` flanking bases around each local hit (`smith_waterman`) |
+| `--printmatrices` | Full DP score matrices |
+| `--zam` | Legacy seq-align format (`Br1:`/`Br2:`, `_` gaps, mismatch & indel counts; cannot be combined with `--printscores`, `--printfasta`, `--pretty`, `--colour` or `--scoreonly`) |
 
-## Longest common substrings
+## Common errors
+
+- **Setting only `--match` or only `--mismatch`:** both must be given together, or neither (except `--match` alone is allowed with `--nomismatches`).
+- **Undefined character pair:** when using `--substitution_matrix` or `--substitution_pairs`, any letter not in the table (such as `U` or `J` with `scoring/BLOSUM62.txt`, or `X` with `scoring/NUC.4.4.txt`) stops the run unless you add `--wildcard <char> <score>` or provide fallback `--match`/`--mismatch`. By contrast, the built-in `--scoring` presets quietly score unknown letters with a fallback mismatch penalty (`-4` for `BLOSUM62`, `-17` for `PAM30`) instead of failing.
+- **Conflicting output flags:** `--scoreonly` cannot be combined with `--zam`, `--pretty`, `--colour` or `--printmatrices`; `--zam` cannot be combined with `--printscores`, `--printfasta`, `--pretty` or `--colour`.
+- **`--linear` refusals:** `--linear` exits with an error if combined with `--freestartgap`, `--freeendgap`, `--nogaps..`, `--nomismatches`, `--printmatrices`, or a positive `--gapopen`. Use `--linearabove` or `--scoreonly` if you want automatic fallback to the matrices.
+
+## Longest common substrings (`lcs`)
+
+`lcs` takes one positional sequence on the command line (no file input) and prints repeated substrings in descending order of length with their 0-based start positions:
 
 ```console
 $ ./bin/lcs ACGTACGTTACGACGT
@@ -298,7 +205,7 @@ T [7,8]
 T [8,15]
 ```
 
-## All options
+## Full `--help` reference
 
 <details>
 <summary><code>needleman_wunsch</code></summary>
@@ -345,6 +252,9 @@ usage: ./bin/needleman_wunsch [OPTIONS] [seq1 seq2]
                          alignment)
     --linearabove <n>    Align in linear memory where either sequence has at
                          least <n> letters (as --linearfallback)
+    --wfa                Align similar pairs by the wavefront algorithm, much
+                         faster for near-identical ones (same score, but may
+                         pick another equal-scoring alignment)
     --printmatrices      Print dynamic programming matrices
     --printfasta         Print fasta header lines
     --pretty             Print with a descriptor line

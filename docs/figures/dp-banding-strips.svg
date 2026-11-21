@@ -1,0 +1,70 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 780 264" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+  <defs>
+    <style>
+      .bg { fill: #ffffff; stroke: #d8dee4; stroke-width: 1; }
+      .panel { fill: #f6f8fa; stroke: #d0d7de; stroke-width: 1; }
+      .title { font-size: 14px; font-weight: 700; fill: #1f2328; }
+      .sub { font-size: 11px; fill: #57606a; }
+      .hdr { font-size: 11.5px; font-weight: 700; fill: #1f2328; }
+      .note { font-size: 10px; fill: #57606a; }
+      .stat { font-size: 10px; font-weight: 700; fill: #0969da; }
+      .gridbox { fill: #ffffff; stroke: #8c959f; stroke-width: 1.2; }
+    </style>
+  </defs>
+
+  <rect x="0.5" y="0.5" width="779" height="263" rx="8" class="bg"/>
+  <text x="20" y="25" class="title">Four ways Nucleics Align cuts dynamic programming work and memory</text>
+  <text x="20" y="42" class="sub">Schematic view of what each strategy computes and keeps in RAM for an N × N alignment</text>
+
+  <!-- Panel 1: Full compact matrix -->
+  <rect x="16" y="54" width="178" height="196" rx="6" class="panel"/>
+  <text x="105" y="72" text-anchor="middle" class="hdr">1. Compact matrix</text>
+  <rect x="45" y="82" width="120" height="98" class="gridbox"/>
+  <rect x="46" y="83" width="118" height="96" fill="#ddf4ff"/>
+  <line x1="46" y1="83" x2="164" y2="179" stroke="#0969da" stroke-width="1.5" stroke-dasharray="3,2"/>
+  <text x="105" y="196" text-anchor="middle" class="note">Stores 1 traceback B / cell</text>
+  <text x="105" y="210" text-anchor="middle" class="note">(vs 12 B score matrices)</text>
+  <text x="105" y="226" text-anchor="middle" class="stat">20 kb DNA: 4.6 GB → 386 MB</text>
+  <text x="105" y="240" text-anchor="middle" class="note">(Ryzen AI Max+ 395)</text>
+
+  <!-- Panel 2: Exact banding + strips -->
+  <rect x="206" y="54" width="178" height="196" rx="6" class="panel"/>
+  <text x="295" y="72" text-anchor="middle" class="hdr">2. Banding + strips</text>
+  <rect x="235" y="82" width="120" height="98" class="gridbox"/>
+  <polygon points="236,83 266,83 354,155 354,179 324,179 236,107" fill="#ddf4ff" stroke="#54aeff" stroke-width="1"/>
+  <!-- Strip dividers -->
+  <line x1="235" y1="107" x2="355" y2="107" stroke="#8c959f" stroke-width="0.9" stroke-dasharray="3,2"/>
+  <line x1="235" y1="131" x2="355" y2="131" stroke="#8c959f" stroke-width="0.9" stroke-dasharray="3,2"/>
+  <line x1="235" y1="155" x2="355" y2="155" stroke="#8c959f" stroke-width="0.9" stroke-dasharray="3,2"/>
+  <polygon points="282,131 324,131 354,155 312,155" fill="#54aeff" fill-opacity="0.45"/>
+  <text x="295" y="196" text-anchor="middle" class="note">Stores band (or 1 strip at</text>
+  <text x="295" y="210" text-anchor="middle" class="note">a time, refilled on trace)</text>
+  <text x="295" y="226" text-anchor="middle" class="stat">1 Mb 1% DNA: 319 MB</text>
+  <text x="295" y="240" text-anchor="middle" class="note">(pop-os, Ryzen 7 5700G)</text>
+
+  <!-- Panel 3: Linear space (Hirschberg) -->
+  <rect x="396" y="54" width="178" height="196" rx="6" class="panel"/>
+  <text x="485" y="72" text-anchor="middle" class="hdr">3. Linear (--linear)</text>
+  <rect x="425" y="82" width="120" height="98" class="gridbox"/>
+  <rect x="426" y="83" width="59" height="48" fill="#dafbe1" stroke="#4ac26b" stroke-width="1"/>
+  <rect x="485" y="131" width="59" height="48" fill="#dafbe1" stroke="#4ac26b" stroke-width="1"/>
+  <circle cx="485" cy="131" r="4" fill="#1a7f37"/>
+  <line x1="425" y1="131" x2="545" y2="131" stroke="#1a7f37" stroke-width="1.2" stroke-dasharray="2,2"/>
+  <text x="485" y="196" text-anchor="middle" class="note">Stores O(n) rows only;</text>
+  <text x="485" y="210" text-anchor="middle" class="note">recursively splits passes</text>
+  <text x="485" y="226" text-anchor="middle" class="stat">1 Mb 1% DNA: 49 MB, 6.4 s</text>
+  <text x="485" y="240" text-anchor="middle" class="note">(pop-os, Ryzen 7 5700G)</text>
+
+  <!-- Panel 4: Wavefront (wfa) -->
+  <rect x="586" y="54" width="178" height="196" rx="6" class="panel"/>
+  <text x="675" y="72" text-anchor="middle" class="hdr">4. Wavefront (--wfa)</text>
+  <rect x="615" y="82" width="120" height="98" class="gridbox"/>
+  <polygon points="616,83 626,83 734,171 734,179 724,179 616,91" fill="#fff8c5" stroke="#d4a72c" stroke-width="1"/>
+  <line x1="616" y1="83" x2="734" y2="179" stroke="#9a6700" stroke-width="2"/>
+  <circle cx="648" cy="109" r="2.5" fill="#cf222e"/>
+  <circle cx="696" cy="148" r="2.5" fill="#cf222e"/>
+  <text x="675" y="196" text-anchor="middle" class="note">Stores wavefront offsets</text>
+  <text x="675" y="210" text-anchor="middle" class="note">(skips matches 8 B at once)</text>
+  <text x="675" y="226" text-anchor="middle" class="stat">1 Mb 0.1%: 316 ms, 312 MB</text>
+  <text x="675" y="240" text-anchor="middle" class="note">(pop-os, Ryzen 7 5700G)</text>
+</svg>

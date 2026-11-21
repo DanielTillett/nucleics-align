@@ -5,7 +5,7 @@ Nucleics Align is derived from Isaac Turner's
 2017). Output is the same as seq-align's, byte for byte, except for the
 fixes listed under [Changes to output](#changes-to-output).
 
-## Unreleased
+## 1.1.0 - 22 Nov 2026
 
 ### Added
 
@@ -23,6 +23,17 @@ fixes listed under [Changes to output](#changes-to-output).
   where the scoring allows (one match and one mismatch score, with gap
   penalties), falling back to the matrices otherwise. Off by default, as WFA
   may choose another of several equal-scoring alignments
+
+### Fixed
+
+- Fixed memory-safety and edge-case bugs across WFA, Hirschberg, striped
+  banding, Smith-Waterman fetch, and CLI parsing (including OOM handling in
+  `alignment_wfa_align()`)
+
+### Documentation
+
+- Rewrote README and `docs/` guides with five SVG diagrams and updated
+  high-resolution benchmarks up to 1 Mb (including `--wfa`)
 
 ## 1.0.0 - 21 Nov 2026
 

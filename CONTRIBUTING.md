@@ -51,4 +51,4 @@ $ perl perl/test.pl
 ## Documentation
 
 User documentation is in [README.md](README.md) and [`docs/`](docs). It is
-written in British English, with dates as DD MMM YYYY (e.g. 21 Nov 2026).
+written in Australian English, with dates as DD MMM YYYY (e.g. 21 Nov 2026).
