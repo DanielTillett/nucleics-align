@@ -1,3 +1,8 @@
+<p align="center">
+  <img src=".github/social-preview.png" width="720"
+       alt="Nucleics Align: fast, exact Smith-Waterman and Needleman-Wunsch alignment in C, with Python and Perl. An example alignment of GATTACAGATTACA against GATCACAGTTACA shows matches, a mismatch and a gap.">
+</p>
+
 # Nucleics Align
 
 **Fast, exact pairwise sequence alignment in C:** optimal local
