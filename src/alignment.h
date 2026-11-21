@@ -253,8 +253,10 @@ extern size_t alignment_band_wfa_budget;
 // Smith-Waterman fills and scans use 8-bit lanes (4 times as many) or
 // 16-bit lanes (twice as many) where the scores allow, and start again
 // with wider lanes if they grow too big (same result): 8, then 16, then 32
-// bits. alignment_byte_enabled and alignment_narrow_enabled (default true)
-// turn off the 8- and 16-bit lanes, for tests
+// bits. The linear-space passes over every column (hirschberg.h) use
+// 16-bit lanes where the scores allow, which they check before starting.
+// alignment_byte_enabled and alignment_narrow_enabled (default true) turn
+// off the 8- and 16-bit lanes, for tests
 extern bool alignment_narrow_enabled, alignment_byte_enabled;
 
 // Needleman-Wunsch traceback-byte fills that are not banded keep each cell

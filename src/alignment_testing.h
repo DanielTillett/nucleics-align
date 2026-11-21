@@ -37,6 +37,10 @@ extern size_t hirschberg_striped_mismatches, hirschberg_banded_passes;
 // Passes of hirschberg.c skipped by reusing a saved row (see
 // hirschberg_reuse_depth)
 extern size_t hirschberg_reused_rows;
+// Most columns of a part of a 16-bit block in hirschberg.c (0: automatic,
+// as wide as the scores allow; at least 4 vectors), and how many blocks
+// were cut into more than one part
+extern size_t hirschberg_part16_max_cols, hirschberg_parts16;
 
 // Rows per strip of a strip alignment (see smith_waterman_strip_min_cells;
 // 0: automatic)

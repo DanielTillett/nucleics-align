@@ -480,6 +480,19 @@ Where the speed comes from:
   pairs: `--linear` 1% 0.50 -> 0.25 s and 5% 0.84 -> 0.38 s; `--scoreonly`
   1% 0.17 -> 0.08 s; the banded fill 1% 0.35 -> 0.25 s. Unrelated pairs
   and Smith-Waterman, where the carries rarely reach far, are unchanged
+* Linear-space passes over every column use 16-bit lanes, twice as many
+  per vector. Each block is cut into parts of a few thousand columns (about
+  6,000 with the default DNA scores, 1,150 with BLOSUM62), filled a row at a
+  time, and a part keeps each row less one 32-bit score: that of the column
+  on its left in the same row. Every cell of the row lies within a bound
+  set by the part's width and the scores (no lower than a gap across the
+  part, no higher than the best substitution score and a gap extension per
+  column), so the 16-bit values are exact and the alignment is the same.
+  Banded strips keep 32-bit lanes: their cells outside the band stand for
+  minus infinity, which no such bound covers. 100 kb pairs: 30% divergence
+  `--linear` 0.83 -> 0.48 s and `--scoreonly` 0.35 -> 0.19 s, unrelated
+  1.10 -> 0.76 s and 0.31 -> 0.21 s; on one thread `--linear` 4.5 -> 3.5 s
+  and 5.1 -> 3.1 s. Close pairs, which are banded, are unchanged
 * `--scoreonly` (`hirschberg_score()`): no alignment, no matrices. With a
   band, the forward and reverse passes run at the same time and meet in the
   middle row; otherwise one forward pass over every row

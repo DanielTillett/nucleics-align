@@ -57,6 +57,7 @@ typedef struct
   bool simd_ok; // all scores far enough from HB_NEG and overflow
   int pass_threads; // threads for the passes of one step (see hb_passes_striped())
   score_t smax; // best substitution score, at least 0, see hb_band()
+  size_t w16; // most columns (lanes x segments) of a 16-bit block; 0: none
 #endif
 } hb_state_t;
 
@@ -240,7 +241,226 @@ typedef struct {
                         // indexed by column of the pass
   score_t col0; // running deletion score in the left column, for column 0
   bool neg_left; // left column outside the band: HB_NEG in every row
+  bool real; // every cell of the top row is a real score (no HB_NEG)
 } hb_top_t;
+
+// 16-bit lanes, twice as many per vector, for hb_block_pass16()
+#define HB_VL16 (2 * ALN_VL)
+typedef int16_t v16_t __attribute__((vector_size(HB_VL16 * sizeof(int16_t))));
+
+// Stands for -infinity in 16-bit lanes: below every real score there (see
+// hb_state_init(): those stay within HB16_RANGE of 0), with room for a
+// penalty to be added
+#define HB16_NEG (-16000)
+#define HB16_RANGE 12000
+#define HB16_MAX_PARTS 1024
+
+ALN_INLINE v16_t v16splat(int16_t x) { return (v16_t){0} + x; }
+
+ALN_INLINE v16_t v16max(v16_t a, v16_t b)
+{
+  v16_t gt = a > b;
+  return (a & gt) | (b & ~gt);
+}
+
+ALN_INLINE v16_t v16shift(v16_t v, int16_t x)
+{
+#if HB_VL16 == 32
+  return __builtin_shufflevector(v, v16splat(x), 32, 0, 1, 2, 3, 4, 5, 6, 7,
+                                 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
+                                 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30);
+#elif HB_VL16 == 16
+  return __builtin_shufflevector(v, v16splat(x), 16, 0, 1, 2, 3, 4, 5, 6, 7,
+                                 8, 9, 10, 11, 12, 13, 14);
+#else
+  return __builtin_shufflevector(v, v16splat(x), 8, 0, 1, 2, 3, 4, 5, 6);
+#endif
+}
+
+ALN_INLINE bool v16any(v16_t v)
+{
+  int16_t r = 0;
+  int l;
+  for(l = 0; l < HB_VL16; l++) r |= v[l];
+  return r != 0;
+}
+
+// One part of a 16-bit block (see hb_block_pass16()): columns c0 ..
+// c0+width-1 of the pass, its rows and profile, and its reference, the
+// score of the column on its left in the row last filled
+typedef struct {
+  size_t c0, width, seg;
+  v16_t *H, *Hn, *D, *prof;
+  score_t ref;
+} hb16_part_t;
+
+// The next row of part s, given its left column's score in that row (col0)
+// and the insertion gap entering it (fstart), from the row of the sequence
+// whose character has code `code`. Gives the same for the part on the right:
+// the score of the last column (*hlast) and the gap leaving it (*fout)
+ALN_INLINE void hb16_row(hb16_part_t *s, size_t code, score_t col0,
+                         score_t fstart, score_t g, score_t h,
+                         score_t *hlast, score_t *fout)
+{
+  const size_t seg = s->seg;
+  const v16_t vg = v16splat((int16_t)g), vh = v16splat((int16_t)h);
+  const v16_t vneg = v16splat(HB16_NEG);
+  const v16_t *pr = s->prof + code * seg;
+  v16_t *H = s->H, *Hn = s->Hn, *D = s->D, vdiag, vf, vd, vc;
+  size_t k, l;
+
+  // The new reference less the old: off the row above
+  const v16_t vdelta = v16splat((int16_t)(col0 - s->ref)), vhd = vh - vdelta;
+  const long long frel = MAX2((long long)fstart - col0, (long long)HB16_NEG);
+
+  vdiag = v16shift(H[seg-1], 0) - vdelta; // the old reference less itself
+  vf = v16shift(vneg, (int16_t)frel);
+  for(k = 0; k < seg; k++)
+  {
+    vd = v16max(D[k], H[k] + vg) + vhd;
+    vc = v16max(v16max(vd, vf), vdiag + pr[k]);
+    vdiag = H[k] - vdelta;
+    D[k] = vd;
+    Hn[k] = vc;
+    vf = v16max(vf, vc + vg) + vh;
+  }
+
+  long long fo = vf[HB_VL16-1];
+
+  // Lazy F with the carries found first (see hb_block_pass())
+  vf = v16shift(vf, HB16_NEG);
+  for(l = 2; l < HB_VL16; l++) {
+    long long carry = (long long)vf[l-1] + (long long)seg * h;
+    if(carry > vf[l]) vf[l] = (int16_t)carry;
+  }
+  fo = MAX2(fo, (long long)vf[HB_VL16-1] + (long long)seg * h);
+  k = 0;
+  while(v16any(vf > Hn[k] + vg)) {
+    Hn[k] = v16max(Hn[k], vf);
+    if(++k == seg) break;
+    vf = v16max(vf + vh, vneg);
+  }
+
+  *hlast = Hn[seg-1][HB_VL16-1] + col0;
+  *fout = fo <= HB16_NEG ? HB_NEG : (score_t)(fo + col0);
+  s->H = Hn;
+  s->Hn = H;
+  s->ref = col0;
+}
+
+// hb_block_pass() with 16-bit lanes: the same values, for a block whose top
+// row (if any) is all real scores. The block is cut into parts of at most
+// st->w16 columns (a multiple of HB_VL16 but the last), filled one row at a
+// time, left to right; each part hands the next its last column's score
+// and the insertion gap leaving it, as blocks do. A part keeps each row
+// less one 32-bit score, the row's cell in the column on its left, and
+// every cell of the row lies within HB16_RANGE of it: a cell is at least
+// that cell plus a gap across the part, and at most the score of the best
+// path from the left column down to it, which crosses the part's columns
+// with at most one gap open, a substitution score per column and a gap
+// extension per row it moves down more than across, while the left column
+// loses one per row (see hb_state_init()). Moving to the next row's
+// reference takes the difference off the cells above, in the gap extension
+// for the deletion and once more for the diagonal
+ALN_TARGET_CLONES
+static void hb_block_pass16(hb_state_t *st, const char *a, ptrdiff_t astep,
+                            size_t rows, const char *b, ptrdiff_t bstep,
+                            size_t c0, size_t width, score_t t0,
+                            score_t *oc, score_t *od, ptrdiff_t ostep,
+                            void *buf, hb_boundary_t *left,
+                            hb_boundary_t *right, const hb_top_t *top)
+{
+  const scoring_t *scoring = st->scoring;
+  const sub_table_t *t = &st->table;
+  const score_t g = scoring->gap_open, h = scoring->gap_extend;
+  const size_t nparts = (width + st->w16 - 1) / st->w16;
+  const size_t pw = ((width + nparts - 1) / nparts + HB_VL16 - 1) /
+                    HB_VL16 * HB_VL16;
+  hb16_part_t parts[nparts];
+  v16_t *next = buf;
+  size_t r, s, k, l, p, c;
+  if(nparts > 1) __atomic_add_fetch(&hirschberg_parts16, 1, __ATOMIC_RELAXED);
+
+  // Each part's rows and profile, then its top row: row 0, or the strip's
+  // top row, less the reference (padding lanes copy the last column, so
+  // they stay in range too)
+  score_t col0 = t0, fstart, hl, fo;
+  for(s = 0; s < nparts; s++) {
+    hb16_part_t *q = &parts[s];
+    q->c0 = c0 + s * pw;
+    q->width = s + 1 < nparts ? pw : width - s * pw;
+    q->seg = (q->width + HB_VL16 - 1) / HB_VL16;
+    const size_t seg = q->seg;
+    q->H = next; q->Hn = q->H + seg; q->D = q->Hn + seg; q->prof = q->D + seg;
+    next = q->prof + t->n * seg;
+
+    memset(q->prof, 0, t->n * seg * sizeof(v16_t));
+    for(p = 0; p < q->width; p++) {
+      size_t row = t->code[(unsigned char)b[(ptrdiff_t)(q->c0+p) * bstep]] *
+                   t->n;
+      l = p / seg; k = p - l*seg;
+      for(c = 0; c < t->n; c++)
+        q->prof[c*seg + k][l] = (int16_t)t->scores[row + c];
+    }
+
+    if(s == 0 && left != NULL) {
+      hb_wait_row(left, 0);
+      q->ref = left->H[0];
+    }
+    else if(top != NULL) q->ref = top->H[q->c0];
+    else q->ref = q->c0 == 0 ? 0 : g + (score_t)q->c0 * h;
+    if(s == 0 && left == NULL && top != NULL) col0 = top->col0;
+
+    for(k = 0; k < seg; k++)
+      for(l = 0; l < HB_VL16; l++) {
+        p = q->c0 + MIN2(l*seg + k, q->width - 1) + 1;
+        score_t hv = top == NULL ? g + (score_t)p * h : top->H[p];
+        score_t dv = top == NULL ? hv + g : top->D[p];
+        q->H[k][l] = (int16_t)(hv - q->ref);
+        q->D[k][l] = (int16_t)(dv - q->ref);
+      }
+  }
+
+  if(right != NULL) {
+    right->H[0] = top == NULL ? g + (score_t)(c0 + width) * h
+                              : top->H[c0+width];
+    right->F[0] = HB_NEG; // not used
+    atomic_store_explicit(&right->done, 1, memory_order_release);
+  }
+
+  for(r = 0; r < rows; r++)
+  {
+    const size_t code = t->code[(unsigned char)a[(ptrdiff_t)r * astep]];
+
+    if(left == NULL) {
+      col0 += h;
+      fstart = col0 + g + h;
+    } else {
+      hb_wait_row(left, r+1);
+      col0 = left->H[r+1];
+      fstart = left->F[r+1];
+    }
+    hl = col0; fo = fstart;
+    for(s = 0; s < nparts; s++)
+      hb16_row(&parts[s], code, hl, fo, g, h, &hl, &fo);
+
+    if(right != NULL) {
+      right->H[r+1] = hl;
+      right->F[r+1] = fo;
+      atomic_store_explicit(&right->done, r+2, memory_order_release);
+    }
+  }
+
+  if(left == NULL) oc[(ptrdiff_t)c0 * ostep] = od[(ptrdiff_t)c0 * ostep] = col0;
+  for(s = 0; s < nparts; s++) {
+    const hb16_part_t *q = &parts[s];
+    for(l = 0; l < HB_VL16; l++)
+      for(k = 0, p = l*q->seg; k < q->seg && p < q->width; k++, p++) {
+        oc[(ptrdiff_t)(q->c0+p+1) * ostep] = q->H[k][l] + q->ref;
+        od[(ptrdiff_t)(q->c0+p+1) * ostep] = q->D[k][l] + q->ref;
+      }
+  }
+}
 
 // Striped SIMD (Farrar 2007) version of one pass of hb_diff() over the
 // columns c0 .. c0+width-1 of the pass: gives exactly the same values as the
@@ -266,6 +486,18 @@ static void hb_block_pass(hb_state_t *st, const char *a, ptrdiff_t astep,
                           void *buf, hb_boundary_t *left, hb_boundary_t *right,
                           const hb_top_t *top)
 {
+  // Twice the lanes where the scores fit (see hb_block_pass16())
+  // (parts of at least 4 vectors' columns keep its rows and profiles within
+  // the space this block's 32-bit ones take; at most HB16_MAX_PARTS parts,
+  // as their list is on the stack)
+  if((top == NULL || top->real) && st->w16 >= 4 * HB_VL16 &&
+     (width + st->w16 - 1) / st->w16 <= HB16_MAX_PARTS &&
+     (right == NULL || width % HB_VL16 == 0)) {
+    hb_block_pass16(st, a, astep, rows, b, bstep, c0, width, t0, oc, od,
+                    ostep, buf, left, right, top);
+    return;
+  }
+
   const scoring_t *scoring = st->scoring;
   const sub_table_t *t = &st->table;
   const score_t g = scoring->gap_open, h = scoring->gap_extend;
@@ -423,8 +655,10 @@ static void hb_pass_striped(hb_state_t *st, const char *a, ptrdiff_t astep,
     return;
   }
 
-  // Blocks of equal width (a multiple of ALN_VL); the last takes the rest
-  size_t width = (n / nblocks) / ALN_VL * ALN_VL;
+  // Blocks of equal width (a multiple of ALN_VL, or of HB_VL16 so they can
+  // take 16-bit lanes); the last takes the rest
+  const size_t unit = n / nblocks >= HB_VL16 ? HB_VL16 : ALN_VL;
+  size_t width = (n / nblocks) / unit * unit;
   size_t seg = (n - width * (nblocks-1) + ALN_VL - 1) / ALN_VL; // widest
   size_t bufsize = (3 + st->table.n) * seg * sizeof(vscore_t);
   hb_block_args_t args[nblocks];
@@ -513,7 +747,7 @@ static void hb_pass_banded(hb_state_t *st, const char *a, ptrdiff_t astep,
     for(j = jr_prev + 1; j <= jr; j++) top_h[j] = top_d[j] = HB_NEG;
     jr_prev = jr;
 
-    hb_top_t top = {top_h, top_d, i0 == 0 ? t0 : top_h[0], c0 > 0};
+    hb_top_t top = {top_h, top_d, i0 == 0 ? t0 : top_h[0], c0 > 0, false};
     hb_pass_striped(st, a + (ptrdiff_t)i0 * astep, astep, hs, b, bstep,
                     c0, jr - c0, t0, top_h, top_d, 1, buf, &top, threads);
   }
@@ -544,7 +778,7 @@ static void hb_pass_saving(hb_state_t *st, const char *a, ptrdiff_t astep,
                     save->rows[k] - done, b, bstep, 0, n, t0,
                     save->h[k], save->d[k], 1, buf, tp, threads);
     if(__atomic_load_n(&st->nomem, __ATOMIC_RELAXED)) return;
-    top = (hb_top_t){save->h[k], save->d[k], save->h[k][0], false};
+    top = (hb_top_t){save->h[k], save->d[k], save->h[k][0], false, true};
     tp = &top;
     done = save->rows[k];
   }
@@ -686,6 +920,7 @@ static void hb_passes_scalar(hb_state_t *st, const char *a, const char *b,
 
 bool hirschberg_check_striped = false;
 size_t hirschberg_striped_mismatches = 0;
+size_t hirschberg_part16_max_cols = 0, hirschberg_parts16 = 0;
 
 bool hirschberg_simd_available(void)
 {
@@ -1120,6 +1355,23 @@ static bool hb_state_init(hb_state_t *st, const char *a, const char *b,
     }
     double steps = (double)len_a + (double)len_b + ALN_VL + 2;
     st->simd_ok = steps * (gap + sub) < (double)(1 << 27);
+
+    // 16-bit blocks (hb_block_pass16()): a cell of a W-column block lies
+    // within W (smax + e) + p of the reference (e and p the gap extension
+    // and open penalties, negated), the cells above it within one more row
+    // (p + e + sub), and a sum taken before the next max adds at most p + e
+    // + sub again
+    double per_col = (double)st->smax + HB_DABS(scoring->gap_extend);
+    double fixed = 4 * gap + 2 * sub;
+    st->w16 = 0;
+    if(st->opts.narrow && fixed < HB16_RANGE) {
+      double w = per_col > 0 ? (HB16_RANGE - fixed) / per_col : 1e18;
+      st->w16 = w >= 1e15 ? (size_t)1e15 : (size_t)w / HB_VL16 * HB_VL16;
+    }
+    // Narrower parts for tests (never below the smallest used)
+    if(hirschberg_part16_max_cols > 0 && st->w16 >= 4 * HB_VL16)
+      st->w16 = MAX2(MIN2(st->w16, hirschberg_part16_max_cols / HB_VL16 *
+                                   HB_VL16), 4 * HB_VL16);
   }
 
   // Threads per pass: the forward and reverse passes already run at once

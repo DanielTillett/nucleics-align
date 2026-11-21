@@ -950,6 +950,110 @@ void simd_test_hirschberg_reuse()
   alignment_free(aln);
 }
 
+/* 16-bit lanes in the linear-space passes: the same alignment as 32-bit
+ * lanes and rows matching the scalar passes, with blocks cut into many
+ * narrow parts, column blocks on several threads, rows reused from the
+ * passes above (their tops), penalties near the limit of what 16 bits hold
+ * and penalties too big for them (32-bit lanes then) */
+static void hb_narrow_check(const char *a, const char *b,
+                            const scoring_t *scoring,
+                            alignment_t *ref, alignment_t *aln)
+{
+  alignment_narrow_enabled = false;
+  ASSERT(hirschberg_align(a, b, scoring, ref));
+  alignment_narrow_enabled = true;
+  hirschberg_check_striped = true;
+  ASSERT(hirschberg_align(a, b, scoring, aln));
+  hirschberg_check_striped = false;
+  ASSERT(aln->score == ref->score);
+  ASSERT(strcmp(aln->result_a, ref->result_a) == 0);
+  ASSERT(strcmp(aln->result_b, ref->result_b) == 0);
+  score_t s32 = 0, s16 = 0;
+  alignment_narrow_enabled = false;
+  ASSERT(hirschberg_score(a, b, scoring, &s32));
+  alignment_narrow_enabled = true;
+  ASSERT(hirschberg_score(a, b, scoring, &s16));
+  ASSERT(s16 == s32 && s16 == ref->score);
+}
+
+void simd_test_hirschberg_narrow()
+{
+  size_t min_cells = hirschberg_block_min_cells;
+  size_t min_cols = hirschberg_block_min_cols;
+  int max_threads = hirschberg_max_threads;
+  bool band = hirschberg_band_enabled, narrow = alignment_narrow_enabled;
+  size_t part_cols = hirschberg_part16_max_cols, parts = hirschberg_parts16;
+  size_t mismatches = hirschberg_striped_mismatches;
+  alignment_t *ref = alignment_create(256), *aln = alignment_create(256);
+  static char seqa[1401], seqb[1401];
+  scoring_t scoring;
+  const unsigned int rates[] = {0, 30, 150, 400};
+  size_t i;
+
+  hirschberg_band_enabled = false;
+  for(i = 0; i < 300; i++)
+  {
+    // Parts of 4 vectors (the fewest allowed) up to unlimited
+    hirschberg_part16_max_cols = i % 3 == 2 ? 0 : 1 + hb_rand(400);
+    if(i % 4 == 0) {
+      hirschberg_block_min_cells = 1;
+      hirschberg_block_min_cols = 8;
+      hirschberg_max_threads = 2 + (int)hb_rand(3);
+    } else {
+      hirschberg_block_min_cells = min_cells;
+      hirschberg_block_min_cols = min_cols;
+      hirschberg_max_threads = max_threads;
+    }
+    // Mostly small penalties; every tenth near or past the 16-bit limit
+    int big = i % 10 == 9 ? (int)hb_rand(4000) : 0;
+    scoring_init(&scoring, 1 + (int)hb_rand(5) + big / 4,
+                 -(int)hb_rand(16) - big, -(int)hb_rand(12) - big,
+                 -(int)hb_rand(6) - big / 8,
+                 false, false, false, false, false, false);
+    if(hb_rand(2)) scoring_add_wildcard(&scoring, 'n', 0);
+    hb_rand_seq(seqa, hb_rand(1401), "acgtn");
+    if(i % 8 == 7) hb_rand_seq(seqb, hb_rand(1401), "acgt");
+    else hb_mutate(seqb, seqa, rates[i % 4], "acgt");
+    hb_narrow_check(seqa, seqb, &scoring, ref, aln);
+  }
+
+  scoring_system_BLOSUM62(&scoring);
+  for(i = 0; i < 40; i++)
+  {
+    hirschberg_part16_max_cols = 1 + hb_rand(300);
+    hb_rand_seq(seqa, hb_rand(1401), "ARNDCQEGHILKMFPSTWYV");
+    hb_mutate(seqb, seqa, rates[i % 4], "ARNDCQEGHILKMFPSTWYV");
+    hb_narrow_check(seqa, seqb, &scoring, ref, aln);
+  }
+
+  // Long insertions carried across many parts, and a mismatch-heavy pair
+  // whose rows fall steeply across each part
+  hirschberg_part16_max_cols = 1;
+  memset(seqa, 'a', 1400); seqa[1400] = 0;
+  memset(seqb, 'c', 60); seqb[60] = 0;
+  scoring_init(&scoring, 1, -20, -2, -1, false, false, false, false,
+               false, true);
+  hb_narrow_check(seqa, seqb, &scoring, ref, aln);
+  hb_narrow_check(seqb, seqa, &scoring, ref, aln);
+  scoring_init(&scoring, 5, -40, -11, -9, false, false, false, false,
+               false, true);
+  hb_narrow_check(seqa, seqb, &scoring, ref, aln);
+  hb_narrow_check(seqb, seqa, &scoring, ref, aln);
+
+  // Blocks were cut into parts, and every pass matched the scalar one
+  ASSERT(hirschberg_parts16 > parts + 100 || !hirschberg_simd_available());
+  ASSERT(hirschberg_striped_mismatches == mismatches);
+
+  hirschberg_part16_max_cols = part_cols;
+  hirschberg_block_min_cells = min_cells;
+  hirschberg_block_min_cols = min_cols;
+  hirschberg_max_threads = max_threads;
+  hirschberg_band_enabled = band;
+  alignment_narrow_enabled = narrow;
+  alignment_free(ref);
+  alignment_free(aln);
+}
+
 /* Column-block threading of the full-matrix fill: force small blocks so
  * short sequences are split across several threads */
 void simd_test_fill_blocks()
@@ -1802,6 +1906,7 @@ void test_simd()
   simd_test_fill_blocks();
   simd_test_hirschberg_band();
   simd_test_hirschberg_reuse();
+  simd_test_hirschberg_narrow();
   simd_test_hirschberg_blocks();
   simd_test_hirschberg();
   simd_test_matches_scalar();
