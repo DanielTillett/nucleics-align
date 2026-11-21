@@ -287,7 +287,8 @@ project's rule that speed-ups never change output, and
 
 ## Licence
 
-Nucleics Align is released under the [BSD 3-Clause License](LICENSE).
+Nucleics Align is released under the [BSD 3-Clause License](LICENSE);
+[NOTICE](NOTICE) sets out where its parts come from.
 
 It is derived from seq-align, written by Isaac Turner and released into the
 public domain (Unlicense). The bundled libraries in `libs/` keep their own
