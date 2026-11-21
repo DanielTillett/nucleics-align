@@ -1,0 +1,3 @@
+Error: substitution pairs : Invalid number
+File: tests/cli/input/bad_pairs.txt
+Line: 2

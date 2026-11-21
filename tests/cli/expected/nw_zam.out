@@ -1,0 +1,25 @@
+Br1:AAA
+    || 
+Br2:AA_
+0 1
+
+Br1:ACGTACGT
+    ||| ||||
+Br2:ACG_ACGT
+0 1
+
+Br1:GATTACA
+    |**|*|*
+Br2:GCATGCU
+4 0
+
+Br1:AAAACCCC____
+        ||||    
+Br2:____CCCCAAAA
+0 8
+
+Br1:ACGTTTGCA
+    ||||  |||
+Br2:ACGT__GCA
+0 2
+

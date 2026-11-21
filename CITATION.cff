@@ -1,0 +1,29 @@
+cff-version: 1.2.0
+message: "If you use Nucleics Align, please cite it as below."
+title: "Nucleics Align"
+abstract: >-
+  Fast, exact pairwise sequence alignment in C: optimal local
+  (Smith-Waterman) and global (Needleman-Wunsch) alignment with affine gaps,
+  using striped SIMD fills, exact banding and a linear-space global aligner.
+type: software
+authors:
+  - family-names: Tillett
+    given-names: Daniel
+version: 1.0.0
+license: BSD-3-Clause
+repository-code: "https://github.com/DanielTillett/nucleics-align"
+url: "https://github.com/DanielTillett/nucleics-align"
+keywords:
+  - sequence alignment
+  - Smith-Waterman
+  - Needleman-Wunsch
+  - bioinformatics
+  - SIMD
+references:
+  - type: software
+    title: "seq-align"
+    authors:
+      - family-names: Turner
+        given-names: Isaac
+    repository-code: "https://github.com/noporpoise/seq-align"
+    notes: "Nucleics Align is derived from seq-align."

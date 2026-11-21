@@ -1,0 +1,7 @@
+>x
+ACGTACGTTTGACGT
+>y
+TTACGTTTGACGAA
+h
+h
+a

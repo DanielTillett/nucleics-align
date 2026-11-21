@@ -1,0 +1,69 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        cc: [gcc, clang]
+        sanitize: ['', '1']
+        native: ['']
+        lanes: ['']
+        exclude:
+          # gcc on macOS is an alias for Apple clang
+          - os: macos-latest
+            cc: gcc
+        include:
+          # -march=native: exercises the SIMD paths that need SSE4.1/AVX2
+          # (plain x86-64 builds use the scalar linear-space aligner)
+          - os: ubuntu-latest
+            cc: gcc
+            sanitize: '1'
+            native: '1'
+          - os: ubuntu-latest
+            cc: clang
+            sanitize: ''
+            native: '1'
+          # Linux on Arm64 (macOS runners are Arm64 too): NEON vectors,
+          # without the x86 dispatch
+          - os: ubuntu-24.04-arm
+            cc: gcc
+            sanitize: '1'
+            native: ''
+            lanes: ''
+          - os: ubuntu-24.04-arm
+            cc: clang
+            sanitize: ''
+            native: ''
+            lanes: ''
+          # The lane counts this CPU would not pick (vectors of 8 and 16
+          # 32-bit lanes, and twice that in the 16-bit fill), so the
+          # shuffles and segment boundaries of each width are tested. On
+          # Arm, as no dispatch build limits the width
+          - os: ubuntu-24.04-arm
+            cc: gcc
+            sanitize: '1'
+            native: ''
+            lanes: '16'
+          - os: ubuntu-24.04-arm
+            cc: clang
+            sanitize: ''
+            native: ''
+            lanes: '8'
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Install zlib (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y zlib1g-dev
+      - name: Build and test
+        run: make CC=${{ matrix.cc }} ${{ matrix.sanitize && 'SANITIZE=1' || '' }} ${{ matrix.native && 'NATIVE=1' || '' }} ${{ matrix.lanes && format('LANES={0}', matrix.lanes) || '' }} all test
+      - name: Python and Perl modules
+        run: python3 -m unittest discover python && perl perl/test.pl

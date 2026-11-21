@@ -1,14 +1,14 @@
 /*
  tools/nw_cmdline.h
- url: https://github.com/noporpoise/seq-align
- maintainer: Isaac Turner <turner.isaac@gmail.com>
- license: Public Domain, no warranty
+ url: https://github.com/DanielTillett/nucleics-align
+ original author: Isaac Turner <turner.isaac@gmail.com>
+ license: BSD 3-Clause, see LICENSE
  date: Nov 2013
  */
 
 // request decent POSIX version
 #define _XOPEN_SOURCE 700
-#define _BSD_SOURCE
+#define _DEFAULT_SOURCE
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -19,23 +19,70 @@
 #include "alignment_cmdline.h"
 
 #include "needleman_wunsch.h"
+#include "hirschberg.h"
 
 // For this run
-cmdline_t *cmd;
-scoring_t scoring;
+static cmdline_t *cmd;
+static scoring_t scoring;
 
-// Alignment results stored here
-nw_aligner_t *nw;
-alignment_t *result;
-
-static void nw_set_default_scoring()
+static void nw_set_default_scoring(void)
 {
   scoring_system_default(&scoring);
 }
 
-static void align_zam(const char *seq_a, const char *seq_b)
+static void* nw_aligner_new(const cmdline_t *c)
 {
-  needleman_wunsch_align(seq_a, seq_b, &scoring, nw, result);
+  nw_aligner_t *nw = needleman_wunsch_new();
+  // Traceback bytes instead of score matrices, unless they are printed
+  nw->compact = !c->print_matrices;
+  return nw;
+}
+
+static void nw_aligner_free(void *nw)
+{
+  needleman_wunsch_free(nw);
+}
+
+static void nw_set_options(void *nw, const alignment_options_t *opts)
+{
+  ((nw_aligner_t*)nw)->options = opts;
+}
+
+// Write an error as the library would before exiting, or --linear's own
+// message. Returns 0 for none, else EXIT_FAILURE
+static int nw_error(const aln_error_t *e, FILE *err)
+{
+  if(e->status == ALN_OK) return 0;
+  if(e->status == ALN_ERR_UNSUPPORTED)
+    fprintf(err, "Error: --linear does not support these scoring options "
+                 "(or penalties this large)\n");
+  else alignment_fprint_error(err, e);
+  fflush(err);
+  return EXIT_FAILURE;
+}
+
+// Returns 0, or EXIT_FAILURE with the error written to err
+static int nw_align(tool_worker_t *wk, const char *seq_a, const char *seq_b,
+                    FILE *err)
+{
+  nw_aligner_t *nw = wk->aligner;
+  const size_t len_a = strlen(seq_a), len_b = strlen(seq_b);
+  aln_error_t e;
+  if(!cmd->linear_space)
+    needleman_wunsch_align_checked(seq_a, seq_b, len_a, len_b, &scoring,
+                                   nw, wk->result, &e);
+  else
+    hirschberg_align_checked(seq_a, seq_b, len_a, len_b, &scoring,
+                             nw->options, wk->result, &e);
+  return nw_error(&e, err);
+}
+
+static int align_zam(tool_worker_t *wk, const char *seq_a, const char *seq_b,
+                     FILE *out, FILE *err)
+{
+  alignment_t *result = wk->result;
+  int status = nw_align(wk, seq_a, seq_b, err);
+  if(status != 0) return status;
 
   // Swap '-' for '_'
   int i;
@@ -49,148 +96,149 @@ static void align_zam(const char *seq_a, const char *seq_b)
   int num_of_indels = 0;
 
   // Print branch 1 and spacer
-  printf("Br1:%s\n    ", result->result_a);
+  fprintf(out, "Br1:%s\n    ", result->result_a);
 
   for(i = 0; result->result_a[i] != '\0'; i++)
   {
     if(result->result_a[i] == '_' || result->result_b[i] == '_')
     {
-      putc(' ', stdout);
+      putc(' ', out);
       num_of_indels++;
     }
     else if((scoring.case_sensitive && result->result_a[i] != result->result_b[i]) ||
-            tolower(result->result_a[i]) != tolower(result->result_b[i]))
+            tolower((unsigned char)result->result_a[i]) !=
+            tolower((unsigned char)result->result_b[i]))
     {
-      putc('*', stdout);
+      putc('*', out);
       num_of_mismatches++;
     }
     else
     {
-      putc('|', stdout);
+      putc('|', out);
     }
   }
 
   // Print branch 2 and mismatch indel numbers
-  printf("\nBr2:%s\n%i %i\n\n", result->result_b,
-         num_of_mismatches, num_of_indels);
+  fprintf(out, "\nBr2:%s\n%i %i\n\n", result->result_b,
+          num_of_mismatches, num_of_indels);
+  return 0;
 }
 
-static void align(const char *seq_a, const char *seq_b,
-                  const char *seq_a_name, const char *seq_b_name)
+// Align a pair and print it to out (errors to err). Returns 0, or a status
+// to exit with. Pairs are not numbered
+static int align(tool_worker_t *wk, const char *seq_a, const char *seq_b,
+                 const char *seq_a_name, const char *seq_b_name,
+                 size_t number, FILE *out, FILE *err)
 {
-  if(cmd->zam_stle_output)
+  nw_aligner_t *nw = wk->aligner;
+  alignment_t *result = wk->result;
+  (void)number;
+  int status;
+
+  if(cmd->score_only)
   {
-    align_zam(seq_a, seq_b);
-    fflush(stdout);
-    return;
+    // One linear-memory pass; options it cannot handle use the full matrices
+    score_t score;
+    const size_t len_a = strlen(seq_a), len_b = strlen(seq_b);
+    aln_error_t e;
+    if(hirschberg_score_checked(seq_a, seq_b, len_a, len_b, &scoring,
+                                nw->options, &score, &e)
+       == ALN_ERR_UNSUPPORTED) {
+      needleman_wunsch_align_checked(seq_a, seq_b, len_a, len_b, &scoring,
+                                     nw, result, &e);
+      score = result->score;
+    }
+    if(e.status != ALN_OK) return nw_error(&e, err);
+    if(cmd->print_fasta && seq_a_name != NULL) fprintf(out, "%s\n", seq_a_name);
+    if(cmd->print_fasta && seq_b_name != NULL) fprintf(out, "%s\n", seq_b_name);
+    fprintf(out, "score: %i\n\n", score);
+    fflush(out);
+    return 0;
   }
 
-  needleman_wunsch_align(seq_a, seq_b, &scoring, nw, result);
+  if(cmd->zam_stle_output)
+  {
+    status = align_zam(wk, seq_a, seq_b, out, err);
+    fflush(out);
+    return status;
+  }
+
+  if((status = nw_align(wk, seq_a, seq_b, err)) != 0) return status;
 
   if(cmd->print_matrices)
   {
+    // Only one pair at a time, so out is stdout
     alignment_print_matrices(nw);
   }
 
   if(cmd->print_fasta && seq_a_name != NULL)
   {
-    fputs(seq_a_name, stdout);
-    putc('\n', stdout);
+    fputs(seq_a_name, out);
+    putc('\n', out);
   }
 
   if(cmd->print_fasta && cmd->print_pretty && seq_b_name != NULL)
   {
-    fputs(seq_b_name, stdout);
-    putc('\n', stdout);
+    fputs(seq_b_name, out);
+    putc('\n', out);
   }
 
   if(cmd->print_colour)
   {
     // Print alignment line 1
-    alignment_colour_print_against(result->result_a, result->result_b,
-                                   scoring.case_sensitive);
+    alignment_colour_fprint_against(out, result->result_a, result->result_b,
+                                    scoring.case_sensitive);
   }
   else
   {
-    fputs(result->result_a, stdout);
+    fputs(result->result_a, out);
   }
-  putc('\n', stdout);
+  putc('\n', out);
 
   if(cmd->print_pretty)
   {
     // Print spacer
-    alignment_print_spacer(result->result_a, result->result_b, &scoring);
-    putc('\n', stdout);
+    alignment_fprint_spacer(out, result->result_a, result->result_b, &scoring);
+    putc('\n', out);
   }
   else if(cmd->print_fasta && seq_b_name != NULL)
   {
-    fputs(seq_b_name, stdout);
-    putc('\n', stdout);
+    fputs(seq_b_name, out);
+    putc('\n', out);
   }
 
   if(cmd->print_colour)
   {
     // Print alignment line 2
-    alignment_colour_print_against(result->result_b, result->result_a,
-                                   scoring.case_sensitive);
+    alignment_colour_fprint_against(out, result->result_b, result->result_a,
+                                    scoring.case_sensitive);
   }
   else
   {
-    fputs(result->result_b, stdout);
+    fputs(result->result_b, out);
   }
-  putc('\n', stdout);
+  putc('\n', out);
 
   if(cmd->print_scores) {
-    printf("score: %i\n", result->score);
+    fprintf(out, "score: %i\n", result->score);
   }
 
-  putc('\n', stdout);
-  fflush(stdout);
-}
-
-static void align_pair_from_file(read_t *read1, read_t *read2)
-{
-  align(read1->seq.b, read2->seq.b,
-        (read1->name.end == 0 ? NULL : read1->name.b),
-        (read2->name.end == 0 ? NULL : read2->name.b));
+  putc('\n', out);
+  fflush(out);
+  return 0;
 }
 
 int main(int argc, char* argv[])
 {
-  #ifdef SEQ_ALIGN_VERBOSE
+  #ifdef NUCLEICS_ALIGN_VERBOSE
   printf("VERBOSE: on\n");
   #endif
 
   nw_set_default_scoring();
-  cmd = cmdline_new(argc, argv, &scoring, SEQ_ALIGN_NW_CMD);
+  cmd = cmdline_new(argc, argv, &scoring, NUCLEICS_ALIGN_NW_CMD);
+  alignment_linear_fallback = cmd->linear_fallback;
 
-  // Align!
-  nw = needleman_wunsch_new();
-  result = alignment_create(256);
-
-  if(cmd->seq1 != NULL)
-  {
-    // Align seq1 and seq2 pair passed on the command line
-    align(cmd->seq1, cmd->seq2, NULL, NULL);
-  }
-
-  // Align from files
-  size_t i, num_of_file_pairs = cmdline_get_num_of_file_pairs(cmd);
-  for(i = 0; i < num_of_file_pairs; i++)
-  {
-    const char *file1 = cmdline_get_file1(cmd, i);
-    const char *file2 = cmdline_get_file2(cmd, i);
-    if(file1 != NULL && *file1 == '\0' && file2 == NULL) {
-      file1 = "-";
-    }
-    align_from_file(file1, file2, &align_pair_from_file, !cmd->interactive);
-  }
-
-  // Free memory for storing alignment results
-  needleman_wunsch_free(nw);
-  alignment_free(result);
-
-  cmdline_free(cmd);
-
-  return EXIT_SUCCESS;
+  static const cmd_tool_t tool = {nw_aligner_new, nw_aligner_free,
+                                  nw_set_options, align, NULL, NULL};
+  return cmdline_run_tool(cmd, &tool);
 }

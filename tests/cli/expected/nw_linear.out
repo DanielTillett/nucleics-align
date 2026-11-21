@@ -1,0 +1,20 @@
+AAA
+-AA
+score: -3
+
+ACGTACGT
+ACG-ACGT
+score: 2
+
+GATTACA
+GCATGCU
+score: -5
+
+AAAACCCC----
+----CCCCAAAA
+score: -12
+
+ACGTTTGCA
+ACG--TGCA
+score: 1
+

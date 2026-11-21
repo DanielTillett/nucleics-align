@@ -1,0 +1,35 @@
+tie1 equal-scoring gap placements
+tie2
+AAA
+|| 
+AA-
+score: -3
+
+t3
+t4
+ACGTACGT
+||| ||||
+ACG-ACGT
+score: 2
+
+t5
+t6
+GATTACA
+|**|*|*
+GCATGCU
+score: -5
+
+t7
+t8
+AAAACCCC----
+    ||||    
+----CCCCAAAA
+score: -12
+
+t9
+t10
+ACGTTTGCA
+||||  |||
+ACGT--GCA
+score: 1
+

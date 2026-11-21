@@ -1,0 +1,22 @@
+== Alignment 0 lengths (10, 7):
+
+hit 0.0 score: 26
+  AWGHE  [pos: 4; len: 5]
+  AW-HE  [pos: 1; len: 4]
+
+hit 0.1 score: 23
+  HEA  [pos: 0; len: 3]
+  HEA  [pos: 3; len: 3]
+
+==
+== Alignment 1 lengths (22, 33):
+
+hit 1.0 score: 169
+  MKTAYIAKQRQISFVKSHFSRQ  [pos: 0; len: 22]
+  MKTAYIAKQRQISFVKSHFSRQ  [pos: 0; len: 22]
+
+hit 1.1 score: 7
+  K  [pos: 1; len: 1]
+  K  [pos: 7; len: 1]
+
+==

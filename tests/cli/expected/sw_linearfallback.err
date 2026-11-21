@@ -1,0 +1,56 @@
+Error: --linearfallback only valid with Needleman-Wunsch
+usage: ./bin/smith_waterman [OPTIONS] [seq1 seq2]
+  Smith-Waterman optimal local alignment (maximises score).  
+  Takes a pair of sequences on the command line, or can read from a
+  file and from sequence piped in.  Can read gzip files, FASTA and FASTQ.
+
+  OPTIONS:
+    --file <file>        Sequence file reading with gzip support - read two
+                         sequences at a time and align them
+    --files <f1> <f2>    Read one sequence from each file to align at one time
+    --stdin              Read pairs from STDIN one at a time, interactively
+                         (for a batch, use '--file -')
+
+    --case_sensitive     Use case sensitive character comparison [default: off]
+
+    --match <score>      [default: 2]
+    --mismatch <score>   [default: -2]
+    --gapopen <score>    [default: -2]
+    --gapextend <score>  [default: -1]
+
+    --scoring <PAM30|PAM70|BLOSUM80|BLOSUM62|DNA_HYBRIDIZATION>
+    --substitution_matrix <file>  see details for formatting
+    --substitution_pairs <file>   see details for formatting
+
+    --wildcard <w> <s>   Character <w> matches all characters with score <s>
+
+    --threads <n>        Threads to use, within an alignment and for aligning
+                         pairs from a file at once [default: half the CPUs]
+
+    --minscore <score>   Minimum required score
+                         [default: match * MAX(0.2 * length, 2)]
+    --maxhits <hits>     Maximum number of results per alignment
+                         [default: no limit]
+
+    --context <n>        Print <n> bases of context
+    --printseq           Print sequences before local alignments
+    --printmatrices      Print dynamic programming matrices
+    --printfasta         Print fasta header lines
+    --pretty             Print with a descriptor line
+    --colour             Print with colour
+
+  Experimental Options:
+    --nogapsin1          No gaps allowed within the first sequence
+    --nogapsin2          No gaps allowed within the second sequence
+    --nogaps             No gaps allowed in either sequence
+    --nogapsinlongest    No gaps allowed within the longer sequence
+    --nomismatches       No mismatches allowed
+
+ DETAILS:
+  * For help choosing scoring, see docs/scoring.md.
+  * Gap (of length N) penalty is: (open+N*extend)
+  * To do alignment without affine gap penalty, set '--gapopen 0'.
+  * Scoring files should be matrices, with entries separated by a single
+    character or whitespace. See files in the 'scoring' directory for examples.
+
+  https://github.com/DanielTillett/nucleics-align  (compiled: <date>)

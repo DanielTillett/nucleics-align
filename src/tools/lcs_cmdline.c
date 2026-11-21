@@ -1,14 +1,14 @@
 /*
  tools/lcs_cmdline.c
- url: https://github.com/noporpoise/seq-align
- maintainer: Isaac Turner <turner.isaac@gmail.com>
- license: Public Domain, no warranty
+ url: https://github.com/DanielTillett/nucleics-align
+ original author: Isaac Turner <turner.isaac@gmail.com>
+ license: BSD 3-Clause, see LICENSE
  date: Feb 2015
  */
 
 // request decent POSIX version
 #define _XOPEN_SOURCE 700
-#define _BSD_SOURCE
+#define _DEFAULT_SOURCE
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -21,10 +21,6 @@ static void print_usage(char **argv)
 {
   fprintf(stderr, "%s [options] <sequence>\n", argv[0]);
   fprintf(stderr, "  Print substrings in decreasing order of length\n");
-//   fprintf(stderr, "Options:\n"
-// "  -c,--case-insensitive  Case insensitive matching\n"
-// "  -C,--case-sensitive    Case sensitive matching [default]\n"
-// "  -p,--positions         Print positions\n");
   exit(EXIT_FAILURE);
 }
 

@@ -1,14 +1,14 @@
 /*
  tools/sw_cmdline.c
- url: https://github.com/noporpoise/seq-align
- maintainer: Isaac Turner <turner.isaac@gmail.com>
- license: Public Domain, no warranty
+ url: https://github.com/DanielTillett/nucleics-align
+ original author: Isaac Turner <turner.isaac@gmail.com>
+ license: BSD 3-Clause, see LICENSE
  date: Nov 2013
  */
 
 // request decent POSIX version
 #define _XOPEN_SOURCE 700
-#define _BSD_SOURCE
+#define _DEFAULT_SOURCE
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -23,18 +23,15 @@
 #include "alignment_macros.h"
 
 #include "smith_waterman.h"
+#include "hirschberg.h"
 
-cmdline_t *cmd;
-scoring_t scoring;
+static cmdline_t *cmd;
+static scoring_t scoring;
 
-// Alignment results stored here
-sw_aligner_t *sw;
-alignment_t *result;
+static size_t alignment_index = 0;
+static bool wait_on_keystroke = 0;
 
-size_t alignment_index = 0;
-bool wait_on_keystroke = 0;
-
-static void sw_set_default_scoring()
+static void sw_set_default_scoring(void)
 {
   scoring_system_default(&scoring);
 
@@ -45,43 +42,69 @@ static void sw_set_default_scoring()
   scoring.gap_extend = -1;
 }
 
+static void* sw_aligner_new(const cmdline_t *c)
+{
+  sw_aligner_t *sw = smith_waterman_new();
+  // Just the best hit: traceback bytes instead of score matrices
+  smith_waterman_set_compact(sw, c->max_hits_per_alignment_set &&
+                                 c->max_hits_per_alignment == 1 &&
+                                 !c->print_matrices);
+  return sw;
+}
+
+static void sw_aligner_free(void *sw)
+{
+  smith_waterman_free(sw);
+}
+
+static void sw_set_options(void *sw, const alignment_options_t *opts)
+{
+  smith_waterman_set_options(sw, opts);
+}
+
+// Interactive input: wait for a key after each hit
+static void sw_on_stdin(void)
+{
+  wait_on_keystroke = 1;
+}
+
 // Print one line of an alignment
-void print_alignment_part(const char* seq1, const char* seq2,
-                          size_t pos, size_t len,
-                          const char* context_str,
-                          size_t spaces_left, size_t spaces_right,
-                          size_t context_left, size_t context_right)
+static void print_alignment_part(FILE *out, const char* seq1, const char* seq2,
+                                 size_t pos, size_t len,
+                                 const char* context_str,
+                                 size_t spaces_left, size_t spaces_right,
+                                 size_t context_left, size_t context_right)
 {
   size_t i;
-  printf("  ");
+  fprintf(out, "  ");
 
-  for(i = 0; i < spaces_left; i++) printf(" ");
+  for(i = 0; i < spaces_left; i++) fprintf(out, " ");
 
   if(context_left > 0)
   {
-    if(cmd->print_colour) fputs(align_col_context, stdout);
-    printf("%.*s", (int)context_left, context_str+pos-context_left);
-    if(cmd->print_colour) fputs(align_col_stop, stdout);
+    if(cmd->print_colour) fputs(align_col_context, out);
+    fprintf(out, "%.*s", (int)context_left, context_str+pos-context_left);
+    if(cmd->print_colour) fputs(align_col_stop, out);
   }
 
   if(cmd->print_colour)
-    alignment_colour_print_against(seq1, seq2, scoring.case_sensitive);
+    alignment_colour_fprint_against(out, seq1, seq2, scoring.case_sensitive);
   else
-    fputs(seq1, stdout);
+    fputs(seq1, out);
 
   if(context_right > 0)
   {
-    if(cmd->print_colour) fputs(align_col_context, stdout);
-    printf("%.*s", (int)context_right, context_str+pos+len);
-    if(cmd->print_colour) fputs(align_col_stop, stdout);
+    if(cmd->print_colour) fputs(align_col_context, out);
+    fprintf(out, "%.*s", (int)context_right, context_str+pos+len);
+    if(cmd->print_colour) fputs(align_col_stop, out);
   }
 
-  for(i = 0; i < spaces_right; i++) putc(' ', stdout);
+  for(i = 0; i < spaces_right; i++) putc(' ', out);
 
-  printf("  [pos: %li; len: %lu]\n", pos, len);
+  fprintf(out, "  [pos: %zu; len: %zu]\n", pos, len);
 }
 
-static char get_next_hit()
+static char get_next_hit(void)
 {
   if(!wait_on_keystroke)
     return 1;
@@ -121,87 +144,100 @@ static char get_next_hit()
   return next_hit;
 }
 
-// Align two sequences against each other to find local alignments between them
-void align(const char *seq_a, const char *seq_b,
-           const char *seq_a_name, const char *seq_b_name)
+// Align two sequences against each other to find local alignments between
+// them, and print them to out (errors to err) as alignment number index
+static int align(tool_worker_t *wk, const char *seq_a, const char *seq_b,
+                  const char *seq_a_name, const char *seq_b_name,
+                  size_t index, FILE *out, FILE *err)
 {
+  sw_aligner_t *sw = wk->aligner;
+  alignment_t *result = wk->result;
+
   if((seq_a_name != NULL || seq_b_name != NULL) && wait_on_keystroke)
   {
-    fprintf(stderr, "Error: Interactive input takes seq only "
-                    "(no FASTA/FASTQ) '%s:%s'\n", seq_a_name, seq_b_name);
-    fflush(stderr);
+    fprintf(err, "Error: Interactive input takes seq only "
+                 "(no FASTA/FASTQ) '%s:%s'\n", seq_a_name, seq_b_name);
+    fflush(err);
     exit(EXIT_FAILURE);
   }
 
   // Check both arguments have length > 0
   if(seq_a[0] == '\0' || seq_b[0] == '\0')
   {
-    fprintf(stderr, "Error: Sequences must have length > 0\n");
-    fflush(stderr);
+    fprintf(err, "Error: Sequences must have length > 0\n");
+    fflush(err);
 
     if(cmd->print_fasta && seq_a_name != NULL && seq_b_name != NULL)
     {
-      fprintf(stderr, "%s\n%s\n", seq_a_name, seq_b_name);
+      fprintf(err, "%s\n%s\n", seq_a_name, seq_b_name);
     }
 
-    fflush(stderr);
+    fflush(err);
 
-    return;
+    return 0;
   }
 
-  smith_waterman_align(seq_a, seq_b, &scoring, sw);
+  size_t len_a = strlen(seq_a), len_b = strlen(seq_b);
+
+  // If min_score hasn't been set, set a limit based on the lengths of seqs
+  // or zero if we're running interactively
+  score_t min_score = cmd->min_score_set ? cmd->min_score
+                      : wait_on_keystroke ? 0
+                      : scoring.match * MAX2(0.2 * MIN2(len_a, len_b), 2);
+
+  #ifdef NUCLEICS_ALIGN_VERBOSE
+  fprintf(out, "min_score: %i\n", min_score);
+  #endif
+
+  // Hits below min_score are never printed, so do not index them
+  smith_waterman_set_min_score(sw, min_score);
+  aln_error_t e;
+  if(smith_waterman_align_checked(seq_a, seq_b, len_a, len_b, &scoring, sw,
+                                  &e) != ALN_OK) {
+    alignment_fprint_error(err, &e);
+    fflush(err);
+    return EXIT_FAILURE;
+  }
 
   aligner_t *aligner = smith_waterman_get_aligner(sw);
-  size_t len_a = aligner->score_width-1, len_b = aligner->score_height-1;
 
-  printf("== Alignment %zu lengths (%lu, %lu):\n", alignment_index, len_a, len_b);
+  fprintf(out, "== Alignment %zu lengths (%zu, %zu):\n", index, len_a, len_b);
 
   if(cmd->print_matrices)
   {
+    // Only one pair at a time, so out is stdout
     alignment_print_matrices(aligner);
   }
 
   // seqA
   if(cmd->print_fasta && seq_a_name != NULL)
   {
-    fputs(seq_a_name, stdout);
-    putc('\n', stdout);
+    fputs(seq_a_name, out);
+    putc('\n', out);
   }
 
   if(cmd->print_seq)
   {
-    fputs(seq_a, stdout);
-    putc('\n', stdout);
+    fputs(seq_a, out);
+    putc('\n', out);
   }
 
   // seqB
   if(cmd->print_fasta && seq_b_name != NULL)
   {
-    fputs(seq_b_name, stdout);
-    putc('\n', stdout);
+    fputs(seq_b_name, out);
+    putc('\n', out);
   }
 
   if(cmd->print_seq)
   {
-    fputs(seq_b, stdout);
-    putc('\n', stdout);
+    fputs(seq_b, out);
+    putc('\n', out);
   }
 
-  putc('\n', stdout);
+  putc('\n', out);
 
-  if(!cmd->min_score_set)
-  {
-    // If min_score hasn't been set, set a limit based on the lengths of seqs
-    // or zero if we're running interactively
-    cmd->min_score = wait_on_keystroke ? 0
-                       : scoring.match * MAX2(0.2 * MIN2(len_a, len_b), 2);
-
-    #ifdef SEQ_ALIGN_VERBOSE
-    printf("min_score: %i\n", cmd->min_score);
-    #endif
-  }
-
-  fflush(stdout);
+  fflush(out);
 
   size_t hit_index = 0;
 
@@ -211,12 +247,15 @@ void align(const char *seq_a, const char *seq_b,
   size_t right_spaces_a = 0, right_spaces_b = 0;
 
 
+  // Check the hit limit before fetching: finding a hit that would not be
+  // printed can mean following many rejected paths
   while(get_next_hit() &&
-        smith_waterman_fetch(sw, result) && result->score >= cmd->min_score &&
         (!cmd->max_hits_per_alignment_set ||
-         hit_index < cmd->max_hits_per_alignment))
+         hit_index < cmd->max_hits_per_alignment) &&
+        smith_waterman_fetch_checked(sw, result, &e) &&
+        result->score >= min_score)
   {
-    printf("hit %zu.%zu score: %i\n", alignment_index, hit_index++, result->score);
+    fprintf(out, "hit %zu.%zu score: %i\n", index, hit_index++, result->score);
 
     if(cmd->print_context)
     {
@@ -240,15 +279,15 @@ void align(const char *seq_a, const char *seq_b,
       right_spaces_b = (context_right > rem_b) ? context_right - rem_b : 0;
     }
 
-    #ifdef SEQ_ALIGN_VERBOSE
-    printf("context left = %lu; right = %lu spacing: [%lu,%lu] [%lu,%lu]\n",
-           context_left, context_right,
-           left_spaces_a, right_spaces_a,
-           left_spaces_b, right_spaces_b);
+    #ifdef NUCLEICS_ALIGN_VERBOSE
+    fprintf(out, "context left = %zu; right = %zu spacing: [%zu,%zu] [%zu,%zu]\n",
+            context_left, context_right,
+            left_spaces_a, right_spaces_a,
+            left_spaces_b, right_spaces_b);
     #endif
 
     // seq a
-    print_alignment_part(result->result_a, result->result_b,
+    print_alignment_part(out, result->result_a, result->result_b,
                          result->pos_a, result->len_a,
                          seq_a,
                          left_spaces_a, right_spaces_a,
@@ -257,7 +296,7 @@ void align(const char *seq_a, const char *seq_b,
 
     if(cmd->print_pretty)
     {
-      fputs("  ", stdout);
+      fputs("  ", out);
 
       size_t max_left_spaces = MAX2(left_spaces_a, left_spaces_b);
       size_t max_right_spaces = MAX2(right_spaces_a, right_spaces_b);
@@ -266,97 +305,77 @@ void align(const char *seq_a, const char *seq_b,
       // Print spaces for lefthand spacing
       for(spacer = 0; spacer < max_left_spaces; spacer++)
       {
-        putc(' ', stdout);
+        putc(' ', out);
       }
 
       // Print dots for lefthand context sequence
       for(spacer = 0; spacer < context_left-max_left_spaces; spacer++)
       {
-        putc('.', stdout);
+        putc('.', out);
       }
 
-      alignment_print_spacer(result->result_a, result->result_b, &scoring);
+      alignment_fprint_spacer(out, result->result_a, result->result_b,
+                              &scoring);
 
       // Print dots for righthand context sequence
       for(spacer = 0; spacer < context_right-max_right_spaces; spacer++)
       {
-        putc('.', stdout);
+        putc('.', out);
       }
 
       // Print spaces for righthand spacing
       for(spacer = 0; spacer < max_right_spaces; spacer++)
       {
-        putc(' ', stdout);
+        putc(' ', out);
       }
 
-      putc('\n', stdout);
+      putc('\n', out);
     }
 
     // seq b
-    print_alignment_part(result->result_b, result->result_a,
+    print_alignment_part(out, result->result_b, result->result_a,
                          result->pos_b, result->len_b,
                          seq_b,
                          left_spaces_b, right_spaces_b,
                          context_left-left_spaces_b,
                          context_right-right_spaces_b);
 
-    printf("\n");
+    fprintf(out, "\n");
 
     // Flush output here
-    fflush(stdout);
+    fflush(out);
   }
 
-  fputs("==\n", stdout);
-  fflush(stdout);
+  // Out of memory fetching a hit: the hits before it are printed
+  if(e.status != ALN_OK) {
+    alignment_fprint_error(err, &e);
+    fflush(err);
+    return EXIT_FAILURE;
+  }
 
-  // Increment sequence alignment counter
-  alignment_index++;
+  fputs("==\n", out);
+  fflush(out);
+  return 0;
 }
 
-void align_pair_from_file(read_t *read1, read_t *read2)
+// The number of the next alignment: pairs that align() rejects as empty
+// (it reads them as strings) get none
+static size_t number_pair(const char *seq_a, const char *seq_b)
 {
-  align(read1->seq.b, read2->seq.b,
-       (read1->name.end == 0 ? NULL : read1->name.b),
-       (read2->name.end == 0 ? NULL : read2->name.b));
+  return seq_a[0] == '\0' || seq_b[0] == '\0' ? 0 : alignment_index++;
 }
 
 int main(int argc, char* argv[])
 {
-  #ifdef SEQ_ALIGN_VERBOSE
+  #ifdef NUCLEICS_ALIGN_VERBOSE
   printf("VERBOSE: on\n");
   #endif
 
   sw_set_default_scoring();
-  cmd = cmdline_new(argc, argv, &scoring, SEQ_ALIGN_SW_CMD);
+  cmd = cmdline_new(argc, argv, &scoring, NUCLEICS_ALIGN_SW_CMD);
 
-  // Align!
-  sw = smith_waterman_new();
-  result = alignment_create(256);
-
-  if(cmd->seq1 != NULL)
-  {
-    // Align seq1 and seq2
-    align(cmd->seq1, cmd->seq2, NULL, NULL);
-  }
-
-  // Align from files
-  size_t i, num_of_file_pairs = cmdline_get_num_of_file_pairs(cmd);
-  for(i = 0; i < num_of_file_pairs; i++)
-  {
-    const char *file1 = cmdline_get_file1(cmd, i);
-    const char *file2 = cmdline_get_file2(cmd, i);
-    if(file1 != NULL && *file1 == '\0' && file2 == NULL) {
-      wait_on_keystroke = 1;
-      file1 = "-";
-    }
-    align_from_file(file1, file2, &align_pair_from_file, !cmd->interactive);
-  }
-
-  // Free memory for storing alignment results
-  smith_waterman_free(sw);
-  alignment_free(result);
-
-  cmdline_free(cmd);
-
-  return EXIT_SUCCESS;
+  static const cmd_tool_t tool = {sw_aligner_new, sw_aligner_free,
+                                  sw_set_options, align, number_pair,
+                                  sw_on_stdin};
+  return cmdline_run_tool(cmd, &tool);
 }

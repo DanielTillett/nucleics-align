@@ -1,18 +1,19 @@
 /*
  alignment_scoring.c
- url: https://github.com/noporpoise/seq-align
- maintainer: Isaac Turner <turner.isaac@gmail.com>
- license: Public Domain, no warranty
+ url: https://github.com/DanielTillett/nucleics-align
+ original author: Isaac Turner <turner.isaac@gmail.com>
+ license: BSD 3-Clause, see LICENSE
  date: Nov 2013
  */
 
-// Turn on debugging output by defining SEQ_ALIGN_VERBOSE
-//#define SEQ_ALIGN_VERBOSE
+// Turn on debugging output by defining NUCLEICS_ALIGN_VERBOSE
+//#define NUCLEICS_ALIGN_VERBOSE
 
 #include <stdlib.h>
 #include <stdio.h>
 #include <limits.h> // INT_MAX
 #include <string.h> // memset
+#include <strings.h> // strcasecmp
 #include <ctype.h> // tolower
 
 #include "alignment_scoring.h"
@@ -36,6 +37,7 @@ void scoring_init(scoring_t* scoring,
   scoring->no_gaps_in_a = no_gaps_in_a;
   scoring->no_gaps_in_b = no_gaps_in_b;
   scoring->no_mismatches = no_mismatches;
+  scoring->no_gaps_in_longest = false;
 
   scoring->use_match_mismatch = 1;
   scoring->match = match;
@@ -46,26 +48,55 @@ void scoring_init(scoring_t* scoring,
   memset(scoring->wildcards, 0, sizeof(scoring->wildcards));
   memset(scoring->swap_set, 0, sizeof(scoring->swap_set));
 
-  scoring->min_penalty = MIN2(match, mismatch);
-  scoring->max_penalty = MAX2(match, mismatch);
-  if(!no_gaps_in_a || !no_gaps_in_b) {
-    scoring->min_penalty = MIN3(scoring->min_penalty,gap_open+gap_extend,gap_extend);
-    scoring->max_penalty = MAX3(scoring->max_penalty,gap_open+gap_extend,gap_extend);
-  }
+  // Gaps are always included: even with no_gaps_in_a/b set, gaps are
+  // permitted at the ends of an alignment
+  scoring->min_penalty = MIN3(MIN2(match, mismatch), gap_open+gap_extend, gap_extend);
+  scoring->max_penalty = MAX3(MAX2(match, mismatch), gap_open+gap_extend, gap_extend);
 }
 
 void scoring_add_wildcard(scoring_t* scoring, char c, int score)
 {
-  if(!scoring->case_sensitive) c = tolower(c);
+  if(!scoring->case_sensitive) c = (char)tolower((unsigned char)c);
   set_wildcard_bit(scoring,c);
-  scoring->wildscores[(size_t)c] = score;
+  scoring->wildscores[(unsigned char)c] = score;
   scoring->min_penalty = MIN2(scoring->min_penalty, score);
   scoring->max_penalty = MAX2(scoring->max_penalty, score);
 }
 
+// Pairs and wildcards set while case insensitive were stored in lower case:
+// give every mix of cases the same scores, so text in either case scores as
+// before, apart from a character against the other case of itself
+void scoring_make_case_sensitive(scoring_t* scoring)
+{
+  if(scoring->case_sensitive) return;
+  scoring->case_sensitive = true;
+  int a, b, i, j;
+  for(a = 0; a < 256; a++) {
+    if(get_wildcard_bit(scoring, a) && toupper(a) != a &&
+       !get_wildcard_bit(scoring, toupper(a)))
+      scoring_add_wildcard(scoring, (char)toupper(a), scoring->wildscores[a]);
+    // Pairs added hold an upper-case character in place of a lower-case one
+    // the loop has passed, so none is copied again
+    for(b = 0; b < 256; b++) {
+      if(!get_swap_bit(scoring, a, b) || (!islower(a) && !islower(b)))
+        continue;
+      const int ca[2] = {a, toupper(a)}, cb[2] = {b, toupper(b)};
+      for(i = 0; i < 2; i++) {
+        for(j = 0; j < 2; j++) {
+          // Not a character against the other case of itself
+          if((i != j && a == b) || get_swap_bit(scoring, ca[i], cb[j]))
+            continue;
+          scoring_add_mutation(scoring, (char)ca[i], (char)cb[j],
+                               scoring->swap_scores[a][b]);
+        }
+      }
+    }
+  }
+}
+
 void scoring_add_mutation(scoring_t* scoring, char a, char b, int score)
 {
-  scoring->swap_scores[(size_t)a][(size_t)b] = score;
+  scoring->swap_scores[(unsigned char)a][(unsigned char)b] = score;
   set_swap_bit(scoring,a,b);
   scoring->min_penalty = MIN2(scoring->min_penalty, score);
   scoring->max_penalty = MAX2(scoring->max_penalty, score);
@@ -80,11 +111,11 @@ void scoring_add_mutations(scoring_t* scoring, const char *str, const int *score
 
   for(i = 0; i < len; i++)
   {
-    a = scoring->case_sensitive ? str[i] : tolower(str[i]);
+    a = scoring->case_sensitive ? str[i] : (char)tolower((unsigned char)str[i]);
 
     for(j = 0; j < len; j++)
     {
-      b = scoring->case_sensitive ? str[j] : tolower(str[j]);
+      b = scoring->case_sensitive ? str[j] : (char)tolower((unsigned char)str[j]);
       score = ARR_LOOKUP(scores, len, i, j);
 
       scoring_add_mutation(scoring, a, b, score);
@@ -103,8 +134,10 @@ void scoring_print(const scoring_t* scoring)
   printf("  gap_open: %i; gap_extend: %i;\n",
          scoring->gap_open, scoring->gap_extend);
 
-  printf("  no_gaps_in_a: %i; no_gaps_in_b: %i; no_mismatches: %i;\n",
-         scoring->no_gaps_in_a, scoring->no_gaps_in_b, scoring->no_mismatches);
+  printf("  no_gaps_in_a: %i; no_gaps_in_b: %i; no_gaps_in_longest: %i;\n",
+         scoring->no_gaps_in_a, scoring->no_gaps_in_b,
+         scoring->no_gaps_in_longest);
+  printf("  no_mismatches: %i;\n", scoring->no_mismatches);
 
   printf("  no_start_gap_penalty: %i; no_end_gap_penalty: %i;\n",
          scoring->no_start_gap_penalty, scoring->no_end_gap_penalty);
@@ -117,8 +150,8 @@ static char _scoring_check_wildcards(const scoring_t* scoring, char a, char b,
 {
   // Check if either characters are wildcards
   int tmp_score = INT_MAX;
-  if(get_wildcard_bit(scoring,a)) tmp_score = scoring->wildscores[(size_t)a];
-  if(get_wildcard_bit(scoring,b)) tmp_score = MIN2(scoring->wildscores[(size_t)b],tmp_score);
+  if(get_wildcard_bit(scoring,a)) tmp_score = scoring->wildscores[(unsigned char)a];
+  if(get_wildcard_bit(scoring,b)) tmp_score = MIN2(scoring->wildscores[(unsigned char)b],tmp_score);
   if(tmp_score != INT_MAX) {
     *score = tmp_score;
     return 1;
@@ -135,13 +168,9 @@ void scoring_lookup(const scoring_t* scoring, char a, char b,
 {
   if(!scoring->case_sensitive)
   {
-    a = tolower(a);
-    b = tolower(b);
+    a = (char)tolower((unsigned char)a);
+    b = (char)tolower((unsigned char)b);
   }
-
-  //#ifdef SEQ_ALIGN_VERBOSE
-  //printf(" scoring_lookup(%c,%c)\n", a, b);
-  //#endif
 
   *is_match = (a == b);
 
@@ -155,7 +184,7 @@ void scoring_lookup(const scoring_t* scoring, char a, char b,
   // Look up in table
   if(get_swap_bit(scoring,a,b))
   {
-    *score = scoring->swap_scores[(size_t)a][(size_t)b];
+    *score = scoring->swap_scores[(unsigned char)a][(unsigned char)b];
     return;
   }
 
@@ -181,11 +210,26 @@ void scoring_lookup(const scoring_t* scoring, char a, char b,
   exit(EXIT_FAILURE);
 }
 
+// The same checks as scoring_lookup(), in the same order
+bool scoring_has_pair(const scoring_t* scoring, char a, char b)
+{
+  if(!scoring->case_sensitive)
+  {
+    a = (char)tolower((unsigned char)a);
+    b = (char)tolower((unsigned char)b);
+  }
+
+  if(scoring->no_mismatches && a != b) return true;
+
+  return get_swap_bit(scoring,a,b) || get_wildcard_bit(scoring,a) ||
+         get_wildcard_bit(scoring,b) || scoring->use_match_mismatch;
+}
+
 //
 // Some scoring systems
 //
 
-static char amino_acids[] = "ARNDCQEGHILKMFPSTWYVBZX*";
+static const char amino_acids[] = "ARNDCQEGHILKMFPSTWYVBZX*";
 
 static const int pam30[576] =
 { 6, -7, -4, -3, -6, -4, -2, -2, -7, -5, -6, -7, -5, -8, -2,  0, -1,-13, -8, -2, -3, -3, -3,-17,
@@ -265,7 +309,7 @@ static const int blosum80[576] =
  -1,-2,-2,-3,-4,-2,-2,-3,-2,-2,-2,-2,-2,-3,-3,-1,-1,-5,-3,-2,-3,-1,-2,-8,
  -8,-8,-8,-8,-8,-8,-8,-8,-8,-8,-8,-8,-8,-8,-8,-8,-8,-8,-8,-8,-8,-8,-8, 1};
 
-int blosum62[576] =
+static const int blosum62[576] =
 { 4,-1,-2,-2, 0,-1,-1, 0,-2,-1,-1,-1,-1,-2,-1, 1, 0,-3,-2, 0,-2,-1, 0,-4,
  -1, 5, 0,-2,-3, 1, 0,-2, 0,-3,-2, 2,-1,-3,-2,-1,-1,-3,-2,-3,-1, 0,-1,-4,
  -2, 0, 6, 1,-3, 0, 0, 0, 1,-3,-3, 0,-2,-3,-2, 1, 0,-4,-2,-3, 3, 0,-1,-4,
@@ -303,60 +347,41 @@ static const int sub_matrix[64] =
  -4,-4,-4,-4,-4,-4, 2, 2,
  -4,-4,-4,-4,-4,-4, 2, 2};
 
+// A built-in scoring system: the scores of the matrix over alphabet, and
+// match/mismatch for other pairs where use_match_mismatch (no free end
+// gaps, case insensitive)
+static void scoring_system_matrix(scoring_t *scoring, int match, int mismatch,
+                                  int gap_open, int gap_extend,
+                                  const char *alphabet, const int *matrix,
+                                  char use_match_mismatch)
+{
+  scoring_init(scoring, match, mismatch, gap_open, gap_extend,
+               0, 0, 0, 0, 0, 0);
+  scoring_add_mutations(scoring, alphabet, matrix, use_match_mismatch);
+}
+
 // Scoring for protein comparisons of length <35bp
 void scoring_system_PAM30(scoring_t* scoring)
 {
-  // *->* match: 1
-  // *->* mismatch: -17
-  // Gap open -9, gap extend -1
-  // no_start_gap_penalty, no_end_gap_penalty = 0
-  // case_sensitive = 0
-  scoring_init(scoring, 1, -17, -9, -1, 0, 0, 0, 0, 0, 0);
-
-  // use_match_mismatch=1
-  scoring_add_mutations(scoring, amino_acids, pam30, 1);
+  scoring_system_matrix(scoring, 1, -17, -9, -1, amino_acids, pam30, 1);
 }
 
 // Scoring for protein comparisons of length 35-50
 void scoring_system_PAM70(scoring_t* scoring)
 {
-  // *->* match: 1
-  // *->* mismatch: -11
-  // Gap open -10, gap extend -1
-  // no_start_gap_penalty, no_end_gap_penalty = 0
-  // case_sensitive = 0
-  scoring_init(scoring, 1, -11, -10, -1, 0, 0, 0, 0, 0, 0);
-
-  // use_match_mismatch=1
-  scoring_add_mutations(scoring, amino_acids, pam70, 1);
+  scoring_system_matrix(scoring, 1, -11, -10, -1, amino_acids, pam70, 1);
 }
 
 // Scoring for protein comparisons of length 50-85
 void scoring_system_BLOSUM80(scoring_t* scoring)
 {
-  // *->* match: 1
-  // *->* mismatch: -8
-  // Gap open -10, gap extend -1
-  // no_start_gap_penalty, no_end_gap_penalty = 0
-  // case_sensitive = 0
-  scoring_init(scoring, 1, -8, -10, -1, 0, 0, 0, 0, 0, 0);
-
-  // use_match_mismatch=1
-  scoring_add_mutations(scoring, amino_acids, blosum80, 1);
+  scoring_system_matrix(scoring, 1, -8, -10, -1, amino_acids, blosum80, 1);
 }
 
 // Scoring for protein comparisons of length >85
 void scoring_system_BLOSUM62(scoring_t* scoring)
 {
-  // *->* match: 1
-  // *->* mismatch: -4
-  // Gap open -10, gap extend -1
-  // no_start_gap_penalty, no_end_gap_penalty = 0
-  // case_sensitive = 0
-  scoring_init(scoring, 1, -4, -10, -1, 0, 0, 0, 0, 0, 0);
-
-  // use_match_mismatch=1
-  scoring_add_mutations(scoring, amino_acids, blosum62, 1);
+  scoring_system_matrix(scoring, 1, -4, -10, -1, amino_acids, blosum62, 1);
 }
 
 // Scoring system for predicting DNA hybridization
@@ -365,15 +390,47 @@ void scoring_system_BLOSUM62(scoring_t* scoring)
 // http://www.ncbi.nlm.nih.gov/pmc/articles/PMC2831327/
 void scoring_system_DNA_hybridization(scoring_t* scoring)
 {
-  // match: 0
-  // mismatch: 0
-  // Gap open -10, gap extend -10
-  // no_start_gap_penalty, no_end_gap_penalty = 0
-  // case_sensitive = 0
-  scoring_init(scoring, 0, 0, -10, -10, 0, 0, 0, 0, 0, 0);
+  // match and mismatch 0: only the matrix's pairs are scored
+  scoring_system_matrix(scoring, 0, 0, -10, -10, dna_bases, sub_matrix, 0);
+}
 
-  // use_match_mismatch=0
-  scoring_add_mutations(scoring, dna_bases, sub_matrix, 0);
+// The built-in scoring systems by name (--scoring)
+static const struct {
+  const char *name;
+  void (*set)(scoring_t *scoring);
+} scoring_systems[] = {
+  {"PAM30", scoring_system_PAM30},
+  {"PAM70", scoring_system_PAM70},
+  {"BLOSUM80", scoring_system_BLOSUM80},
+  {"BLOSUM62", scoring_system_BLOSUM62},
+  {"DNA_HYBRIDIZATION", scoring_system_DNA_hybridization}
+};
+
+#define NUM_SCORING_SYSTEMS (sizeof(scoring_systems) / sizeof(scoring_systems[0]))
+
+bool scoring_system_by_name(scoring_t *scoring, const char *name)
+{
+  size_t i;
+  for(i = 0; i < NUM_SCORING_SYSTEMS; i++) {
+    if(strcasecmp(name, scoring_systems[i].name) == 0) {
+      scoring_systems[i].set(scoring);
+      return true;
+    }
+  }
+  return false;
+}
+
+const char* scoring_system_names(void)
+{
+  // Long enough for every name and a separator after each
+  static char names[128];
+  if(names[0] == '\0') {
+    size_t i, len = 0;
+    for(i = 0; i < NUM_SCORING_SYSTEMS; i++)
+      len += (size_t)snprintf(names + len, sizeof(names) - len, "%s%s",
+                              i ? "|" : "", scoring_systems[i].name);
+  }
+  return names;
 }
 
 // Default
