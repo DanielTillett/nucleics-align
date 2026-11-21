@@ -1,5 +1,7 @@
 # Using the C library
 
+[Documentation index](README.md)
+
 The aligners are a static C library, `src/libalign.a`, with headers in
 `src/`. Complete C and C++ programs are in [`examples/`](../examples).
 
@@ -41,8 +43,7 @@ $ cc -std=c11 -I src -I libs example.c -L src -L libs/string_buffer \
   Set `compact` on the aligner to keep one traceback byte per cell instead
   of the three score matrices (12x less memory, same alignment); the
   matrices are then not available, e.g. to `alignment_print_matrices()`.
-  `aligner_t` gained fields for this, so code built against an older
-  `alignment.h` must be recompiled. Compact fills of similar sequences skip
+  Compact fills of similar sequences skip
   cells that cannot be on a best path (`alignment_band_enabled`, default
   true), with the same alignment
 * `smith_waterman_align()` then `smith_waterman_fetch()` repeatedly
@@ -59,8 +60,9 @@ $ cc -std=c11 -I src -I libs example.c -L src -L libs/string_buffer \
   hits are the same either way
 * `hirschberg_align()` (`src/hirschberg.h`): global alignment in O(n) memory;
   same scores as `needleman_wunsch_align()`, but returns false for options it
-  does not support (a positive gap open, free end gaps, `no_gaps_in_*`,
-  `no_mismatches`). Large sub-problems run their forward and reverse passes
+  does not support (a positive gap open, free start or end gaps,
+  `no_gaps_in_*`, `no_mismatches`, or penalties large enough to risk
+  overflow). Large sub-problems run their forward and reverse passes
   at the same time, each split into column blocks on several threads
   (tunable with `hirschberg_block_min_cells`, `hirschberg_block_min_cols`
   and `hirschberg_max_threads`, shared by the two passes). Passes skip cells
@@ -71,7 +73,9 @@ $ cc -std=c11 -I src -I libs example.c -L src -L libs/string_buffer \
 * `hirschberg_score()` (`src/hirschberg.h`): only the global alignment score,
   in O(n) memory; same options as `hirschberg_align()`
 * `scoring_init()` and the `scoring_system_*()` functions
-  (`src/alignment_scoring.h`): set up a scoring system
+  (`src/alignment_scoring.h`): set up a scoring system;
+  `scoring_make_case_sensitive()` switches one to case-sensitive
+  comparison, keeping its scores for upper case too
 
 ## Settings
 
@@ -82,7 +86,8 @@ Settings that change speed but never a result (threads, SIMD, banding,
 `hirschberg_align_opts()`/`hirschberg_score_opts()`; threads with different
 options can then align at the same time. Without options, the process-wide
 defaults apply: `alignment_options_default()` reads them from the
-`alignment_*`, `hirschberg_*` and `smith_waterman_rect_min_cells`
+`alignment_*`, `hirschberg_*`, `smith_waterman_rect_min_cells` and
+`smith_waterman_strip_min_cells`
 variables, which keep their old meaning (e.g. `alignment_striped_enabled =
 false` switches SIMD off everywhere).
 
@@ -129,37 +134,30 @@ Smith-Waterman hits kept in strips, which reproduce the same bytes):
 The aligners above end the program on an error. The `*_checked()` versions
 (`needleman_wunsch_align_checked()`, `smith_waterman_align_checked()`,
 `smith_waterman_fetch_checked()`, `hirschberg_align_checked()`,
-`hirschberg_score_checked()`) return it instead, as an `aln_status_t`.
-Errors in the input are found before any work: a character pair the scoring
-does not define (`ALN_ERR_SCORING`, naming the pair), sequences too long to
-address (`ALN_ERR_TOO_LONG`), scores that could pass `INT_MAX`
-(`ALN_ERR_OVERFLOW`) or, for linear space, options it refuses
-(`ALN_ERR_UNSUPPORTED`). Running out of memory (`ALN_ERR_NOMEM`) is found as
-it happens, on any of the alignment's threads: what was allocated is freed,
-there is no alignment or hit to read, and the aligner can be used again.
-Fetching a second Smith-Waterman hit can run out of memory too, as it fills
+`hirschberg_score_checked()`) return it instead, as an `aln_status_t`, and
+fill an `aln_error_t` if you pass one (`alignment_fprint_error()` prints
+the message the aligners would have):
+
+| Status | Cause |
+|---|---|
+| `ALN_OK` | Success |
+| `ALN_ERR_SCORING` | A character pair has no score (`err->a`, `err->b` name it) |
+| `ALN_ERR_TOO_LONG` | The sequences are too long to address the matrices |
+| `ALN_ERR_OVERFLOW` | Scores could pass `INT_MAX` |
+| `ALN_ERR_UNSUPPORTED` | Linear space refuses these options, or penalties this large |
+| `ALN_ERR_NOMEM` | Out of memory, while aligning or when fetching a second Smith-Waterman hit |
+
+Errors in the input are found before any work. Running out of memory is
+found as it happens, on any of the alignment's threads: what was allocated
+is freed, there is no alignment or hit to read, and the aligner can be used
+again. A second Smith-Waterman hit can run out of memory too, as it fills
 the score matrices if a compact alignment has not. Creating an aligner or a
 result (`needleman_wunsch_new()`, `alignment_create()` and so on) still ends
-the program if out of memory. `alignment_fprint_error()` prints the message
-the aligners would have. Scores should lie within plus or minus
+the program if out of memory. Scores should lie within plus or minus
 `SCORE_ABS_MAX` (`INT_MAX / 4`); the command line tools and the scoring file
 loaders refuse others.
 
 ## Printing
 
 `alignment_colour_fprint_against()` and `alignment_fprint_spacer()` print to
-a given stream instead of stdout. `scoring_make_case_sensitive()` switches a
-scoring system to case-sensitive comparison, keeping its scores for upper
-case too.
-
-
-## Threads in the command line tools
-
-The command line tools use half the CPUs by default (`--threads <n>` to
-change it). Pairs read from a file are aligned several at a time, on
-separate threads, and printed in input order, so the output is the same as
-one at a time. Each pair is printed as soon as those before it are. A pair
-of more than 4 million cells runs on its own with all the threads. An error
-in a pair (a character pair the scoring does not define, or scores big
-enough to overflow) is reported after the output of the pairs before it,
-and stops the program as before.
+a given stream instead of stdout.

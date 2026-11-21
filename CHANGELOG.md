@@ -30,9 +30,11 @@ See [docs/performance.md](docs/performance.md) for what each change gained.
 
 ### Changed
 
-- The public header is `nucleics_align.h` (was `seq_align.h`), with
+- The version header is `nucleics_align.h` (was `seq_align.h`), with
   `NUCLEICS_ALIGN_*` macros; the test binary is `bin/nucleics_align_tests`
   and its seed variable `NUCLEICS_ALIGN_TEST_SEED`
+- `aligner_t` gained fields (for one traceback byte per cell), so code
+  built against seq-align's `alignment.h` must be recompiled
 - The Perl modules take every tool option, add
   `NeedlemanWunsch::do_score()` and `SmithWaterman::get_all_hits()`, wait
   without a time limit unless `timeout` is set, and refuse unknown options

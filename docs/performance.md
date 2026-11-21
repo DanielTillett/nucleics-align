@@ -1,5 +1,7 @@
 # Performance
 
+[Documentation index](README.md)
+
 Every speed-up here gives the same scores and alignments as the code before
 it; see [Changelog](../CHANGELOG.md) for the few deliberate output changes.
 
@@ -49,48 +51,55 @@ version gives identical scores and alignments.
 Timings vary by a few per cent between runs.
 
 Time and peak memory for one global alignment (`needleman_wunsch
---printscores`, whole program):
+--printscores`, whole program, best of three; measured on 21 Nov 2026 with
+the default build, over pairs from 1% divergence to unrelated):
 
 | Sequences | Full matrices | `--linear` | `--scoreonly` |
 |---|---|---|---|
-| 5 kb | 0.01 s, 26 MB | 0.01 s, 2 MB | <0.01 s, 2 MB |
-| 20 kb | 0.03-0.08 s, 19-388 MB | 0.05-0.15 s, 7 MB | 0.01-0.03 s, 7 MB |
-| 50 kb | 0.15-0.41 s, 92 MB-2.4 GB | 0.18-0.63 s, 7 MB | 0.05-0.18 s, 7 MB |
+| 5 kb | <0.01-0.01 s, 2-26 MB | <0.01 s, 2 MB | <0.01 s, 2 MB |
+| 20 kb | 0.01-0.06 s, 11-388 MB | 0.02-0.04 s, 2 MB | <0.01-0.01 s, 2 MB |
+| 50 kb | 0.06-0.36 s, 54 MB-2.4 GB | 0.07-0.19 s, 3-7 MB | 0.02-0.07 s, 3-7 MB |
 
 The full-matrix aligner keeps one traceback byte per cell, and for similar
 sequences only near the main diagonals (see below); with `--printmatrices`
 it keeps the score matrices, 12 bytes per cell (5 kb 289 MB, 20 kb 4.6 GB).
-By divergence, full-matrix aligner, 50 kb: 1% 0.15 s and 92 MB, 5% 0.16 s
-and 411 MB, 10% 0.18 s and 744 MB, 25% or unrelated 0.39-0.41 s and 2.4 GB
-(the whole matrix); 20 kb: 1% 0.03 s and 19 MB, otherwise 0.07-0.08 s and
-388 MB.
+By divergence, full-matrix aligner, 50 kb: 1% 0.06 s and 54 MB, 5% 0.34 s
+and 2.4 GB, 10% 0.11 s and 474 MB, 25% 0.36 s and 2.4 GB, unrelated 0.29 s
+and 2.4 GB; 20 kb: 1% 0.01 s and 11 MB, otherwise 0.05-0.06 s and 386-388
+MB. At 5% the band did not pay and the whole matrix was filled, so that pair
+took longer than the 10% one.
 
-`--linear` and `--scoreonly` are fastest for similar sequences, where most
-of the matrix can be skipped (see banding below). For 20 kb and 50 kb pairs
-with substitutions and equal numbers of insertions and deletions:
+For 20 kb and 50 kb pairs with substitutions and equal numbers of
+insertions and deletions, `--linear` and `--scoreonly` took:
 
 | Divergence | 20 kb `--linear` | 20 kb `--scoreonly` | 50 kb `--linear` | 50 kb `--scoreonly` |
 |---|---|---|---|---|
-| 1% substitutions, 0.2% indels | 0.05 s | 0.01 s | 0.18 s | 0.05 s |
-| 5%, 1% | 0.09 s | 0.03 s | 0.32 s | 0.06 s |
-| 10%, 2% | 0.11 s | 0.03 s | 0.43 s | 0.10 s |
-| 25%, 5% | 0.15 s | 0.04 s | 0.63 s | 0.18 s |
-| unrelated | 0.08 s | 0.01 s | 0.33 s | 0.07 s |
+| 1% substitutions, 0.2% indels | 0.02 s | <0.01 s | 0.07 s | 0.02 s |
+| 5%, 1% | 0.03 s | 0.01 s | 0.13 s | 0.02 s |
+| 10%, 2% | 0.04 s | 0.01 s | 0.16 s | 0.03 s |
+| 25%, 5% | 0.04 s | 0.01 s | 0.19 s | 0.06 s |
+| unrelated | 0.04 s | 0.01 s | 0.16 s | 0.07 s |
 
 Before banding the same runs took 0.11-0.22 s, 0.02-0.05 s, 0.53-1.06 s and
-0.11-0.27 s, fastest for the unrelated pair.
+0.11-0.27 s.
 
 Measured on 32 CPUs; large fills and passes use up to half of them. Threads
 wait for each other by spinning, so CPU time can be several times the wall
-time (50 kb unrelated sequences, `--linear`: 0.33 s wall, 2.1 s CPU).
+time (50 kb unrelated sequences, `--linear`: 0.18 s wall, 1.0 s CPU).
 
-Pairs from a file are aligned several at a time (see [threads in the command line tools](library.md#threads-in-the-command-line-tools)):
+Pairs from a file are aligned several at a time (see [threads](command-line.md#threads)):
 3,000 pairs of 0.2-2 kb took 0.50 s instead of 4.93 s (Needleman-Wunsch),
 0.69 s instead of 7.48 s (`--linear`), 0.31 s instead of 2.54 s
 (`--scoreonly`) and 0.63 s instead of 5.05 s (`smith_waterman --maxhits
 1`), with the same output.
 
 ## Where the speed comes from
+
+Each change, roughly in the order it was made. The timings in each item
+were measured when that change went in, against the code just before it;
+later changes sped several cases up further, so the tables above and the
+[comparison](#comparison-with-other-aligners) below give the current
+figures.
 * A substitution score table for the characters in the two sequences replaces
   a `scoring_lookup()` call per cell
 * The matrix fill uses Farrar's striped SIMD layout (Farrar 2007,
@@ -347,8 +356,8 @@ time is shown in brackets where it is well above the wall time.
 
 Nucleics Align was run through `needleman_wunsch` and `smith_waterman`, and the
 others through a small C program that reads the two sequences and aligns them
-once. The Nucleics Align rows were measured again after each change that
-affects them (most recently the difference-encoded lanes, best of 5); the
+once. The Nucleics Align rows were measured again on 21 Nov 2026 (best of 3,
+with `benchmarks/run.sh`, after the 16-bit linear-space passes); the
 other rows are from the earlier run, on the same sequences and machine.
 
 ### Global alignment, 20 kb
@@ -356,8 +365,8 @@ other rows are from the earlier run, on the same sequences and machine.
 | Tool | 1% | 10% | Unrelated | Peak memory |
 |---|---|---|---|---|
 | seq-align (original) | 9.55 s | 9.75 s | 10.56 s | 4.6 GB |
-| Nucleics Align, full matrix | 0.01 s | 0.05 s (0.8 s) | 0.05 s (0.7 s) | 13 - 388 MB |
-| Nucleics Align `--linear` | 0.05 s | 0.12 s | 0.08 s (0.29 s) | 7 MB |
+| Nucleics Align, full matrix | 0.01 s | 0.06 s (0.57 s) | 0.06 s (0.58 s) | 11 - 386 MB |
+| Nucleics Align `--linear` | 0.02 s | 0.04 s (0.07 s) | 0.04 s (0.12 s) | 2 MB |
 | parasail | 1.17 s | 1.28 s | 0.76 s | 1.5 GB |
 | ksw2 | 0.33 s | 0.35 s | 0.34 s | 524 MB |
 | WFA2 | 0.01 s | 0.90 s | 23.3 s | 23 MB - 16.9 GB |
@@ -369,8 +378,8 @@ The original would need about 30 GB, so was not run.
 
 | Tool | 1% | 10% | Unrelated | Peak memory |
 |---|---|---|---|---|
-| Nucleics Align, full matrix | 0.10 s | 0.15 s (1.3 s) | 0.26 s (3.9 s) | 71 MB - 2.4 GB |
-| Nucleics Align `--linear` | 0.18 s (0.23 s) | 0.41 s (1.2 s) | 0.31 s (1.8 s) | 7 MB |
+| Nucleics Align, full matrix | 0.06 s | 0.14 s (0.97 s) | 0.29 s (4.4 s) | 54 MB - 2.4 GB |
+| Nucleics Align `--linear` | 0.07 s (0.09 s) | 0.17 s (0.46 s) | 0.18 s (1.0 s) | 3 - 6 MB |
 | parasail | 10.1 s | 8.74 s | 5.25 s | 9.5 GB |
 | ksw2 | 1.77 s | 1.78 s | 1.71 s | 2.8 GB |
 | WFA2 | 0.07 s | 5.23 s | out of memory (28 GB limit) | 87 MB - 6.2 GB |
@@ -382,7 +391,7 @@ Every tool used under 40 MB.
 
 | Tool | 20 kb 1% | 20 kb 10% | 20 kb unrelated | 50 kb 1% | 50 kb 10% | 50 kb unrelated |
 |---|---|---|---|---|---|---|
-| Nucleics Align `--scoreonly` | 0.01 s | 0.02 s (0.06 s) | 0.01 s (0.13 s) | 0.05 s (0.09 s) | 0.10 s (0.66 s) | 0.07 s (0.84 s) |
+| Nucleics Align `--scoreonly` | <0.01 s | 0.01 s (0.03 s) | 0.01 s (0.07 s) | 0.02 s (0.03 s) | 0.03 s (0.25 s) | 0.06 s (0.67 s) |
 | parasail | 0.18 s | 0.17 s | 0.07 s | 1.14 s | 1.00 s | 0.45 s |
 | ksw2 | 0.10 s | 0.10 s | 0.10 s | 0.63 s | 0.62 s | 0.61 s |
 | WFA2 | <0.01 s | 0.46 s | 8.47 s | 0.03 s | 2.74 s | 49.5 s |
@@ -418,28 +427,25 @@ best score (see [equal-scoring alignments](library.md#equal-scoring-alignments))
 | Tool | 1% | 10% | Unrelated | Peak memory |
 |---|---|---|---|---|
 | seq-align (original) | 71.1 s | 61.2 s | 34.5 s | 6.3 - 8.5 GB |
-| Nucleics Align | 0.12 s (0.9 s) | 0.11 s (0.8 s) | 0.01 s (0.14 s) | 5 - 23 MB |
+| Nucleics Align | 0.11 s (0.52 s) | 0.12 s (0.56 s) | 0.01 s (0.11 s) | 3 - 21 MB |
 | parasail | 0.90 s | 0.83 s | 0.72 s | 1.5 GB |
 | SSW | 0.27 s | 0.22 s | 0.03 s | 7 MB |
 
 For the unrelated pair Nucleics Align reports no hit, as the best (score 14) is
-below the default `--minscore`. The Nucleics Align row was measured again
-after the 8-bit lanes and strip alignments were added (best of 5; the
-version before them took 0.13 s, 0.14 s and 0.09 s with 448-451 MB in the
-same session). With `NATIVE=1` on AVX-512 the unrelated pair takes under
-0.005 s. At 50 kb Nucleics Align's best hit takes 0.62 s (6.1 s CPU) and 85
-MB when it spans both sequences (1.27 s and 2.9 GB before strip
-alignments), and 0.06 s and 10 MB for the unrelated pair (the other tools
-were not run). At 5 kb every global aligner
+below the default `--minscore`. With `NATIVE=1` on AVX-512 the unrelated
+pair took under 0.005 s in an earlier run. At 50 kb Nucleics Align's best
+hit takes 0.43-0.51 s (4.3-5.2 s CPU) and 86 MB when it spans both
+sequences (1.27 s and 2.9 GB before strip alignments), and 0.07 s and 10 MB
+for the unrelated pair (the other tools were not run). At 5 kb every global aligner
 took 0.07 s or less, except the original seq-align (0.53-0.63 s) and
 WFA2 on the unrelated pair (0.65-0.96 s).
 
 ## Summary
 * Against the original seq-align, the same full-matrix alignment is
-  140-320x faster with 12-240x less memory, and the best local hit
-  550-3,400x faster with over 250x less memory
+  160-960x faster with 12-420x less memory, and the best local hit
+  510-3,400x faster with over 300x less memory
 * For global alignment Nucleics Align has the lowest wall time of the exact
-  aligners tested, except WFA2 on near-identical sequences: 0.01-0.05 s for
+  aligners tested, except WFA2 on near-identical sequences: 0.01-0.06 s for
   the full-matrix aligner at 20 kb against 0.33-0.35 s for ksw2. WFA2's time
   grows with the number of differences, so it is far slower on divergent or
   unrelated pairs. `--linear` needs only megabytes at any length
@@ -451,8 +457,8 @@ WFA2 on the unrelated pair (0.65-0.96 s).
   0.07 s and 0.28 s of CPU on the unrelated pair. On similar pairs banding
   skips most cells (20 kb at 1%: 0.01 s of CPU)
 * For the best local hit Nucleics Align is now faster than parasail and SSW
-  in wall time, on unrelated pairs too (0.01 s and 5 MB against SSW's 0.03 s
-  and 7 MB), and needs 23 MB where a 20 kb hit spans the sequences (SSW 7
-  MB, parasail 1.5 GB). SSW still uses about 3x less CPU time on related
+  in wall time, on unrelated pairs too (0.01 s and 3 MB against SSW's 0.03 s
+  and 7 MB), and needs 21 MB where a 20 kb hit spans the sequences (SSW 7
+  MB, parasail 1.5 GB). SSW still uses about 2x less CPU time on related
   pairs. On one core Nucleics Align's score scan of the unrelated pair takes
   0.017 s (0.014 s with `NATIVE=1` on AVX-512)

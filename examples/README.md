@@ -5,8 +5,10 @@ point for your own:
 
 | File | Shows |
 |---|---|
-| [`nw_example.c`](nw_example.c), [`nw_example.cpp`](nw_example.cpp) | Global alignment (Needleman-Wunsch) with a custom substitution score |
-| [`sw_example.c`](sw_example.c), [`sw_example.cpp`](sw_example.cpp) | Local alignments (Smith-Waterman), fetching hits best first |
+| [`nw_example.c`](nw_example.c) | Global alignment (Needleman-Wunsch) with free start and end gaps and custom substitution scores |
+| [`sw_example.c`](sw_example.c) | Local alignments (Smith-Waterman) with custom substitution scores, fetching hits best first |
+| [`nw_example.cpp`](nw_example.cpp) | Global alignment from C++ with no gaps or mismatches allowed, so it needs sequences that match exactly |
+| [`sw_example.cpp`](sw_example.cpp) | Local alignment from C++ with no gaps or mismatches allowed: the exact common substrings |
 
 Build them after building the library (`make` at the top level builds them
 too):

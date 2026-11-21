@@ -1,5 +1,7 @@
 # Choosing scores
 
+[Documentation index](README.md)
+
 A gap of n letters scores `gap_open + n * gap_extend` (both 0 or negative).
 The tools' defaults are:
 
@@ -53,9 +55,11 @@ query length:
 
 From <http://www.ncbi.nlm.nih.gov/blast/html/sub_matrix.html>. In this
 project's sign convention, (10, 1) is `--gapopen -10 --gapextend -1`. The
-four matrices are built in (`--scoring BLOSUM62`), and many more are in
-[`scoring/`](../scoring) for `--substitution_matrix`, from NCBI
-(<ftp://ftp.ncbi.nih.gov/blast/matrices/>).
+four matrices are built in, with those gap penalties already set
+(`--scoring BLOSUM62` gives -10, -1; `--gapopen` and `--gapextend` override
+them), and many more are in
+[`scoring/`](../scoring) for `--substitution_matrix`, from the
+[NCBI BLAST matrix archive](https://ftp.ncbi.nlm.nih.gov/blast/matrices/).
 
 The EBI's notes on choosing a matrix: <http://www.ebi.ac.uk/help/matrix.html>.
 

@@ -1,16 +1,19 @@
 # Command line tools
 
+[Documentation index](README.md)
+
 `make` builds three tools in `bin/`:
 
 | Tool | Does |
 |---|---|
 | `needleman_wunsch` | Optimal global alignment: whole sequences, end to end |
 | `smith_waterman` | Optimal local alignments: the best-scoring regions, best first |
-| `lcs` | Longest common substrings of a sequence with itself |
+| `lcs` | Longest common substrings of one sequence with itself |
 
-Each takes a pair of sequences on the command line, or reads pairs from
-FASTA, FASTQ, SAM, BAM, plain (one sequence per line) or gzipped files, or
-from standard input. Outputs below are from the current build.
+`needleman_wunsch` and `smith_waterman` each take a pair of sequences on the
+command line, or read pairs from FASTA, FASTQ, plain (one sequence per line)
+or gzipped files, or from standard input. `lcs` takes one sequence on the
+command line and no options. Outputs below are from the current build.
 
 - [Global alignment](#global-alignment)
 - [Local alignment](#local-alignment)
@@ -170,9 +173,7 @@ score: -12
 ```
 
 `--file -` reads standard input, and `--files <f1> <f2>` takes one sequence
-from each file. Pairs from a file are aligned several at a time, on
-`--threads <n>` threads (default: half the CPUs), and printed in input
-order, so the output is the same as one at a time:
+from each file:
 
 ```console
 $ gzip -d -c dna.fa.gz | ./bin/needleman_wunsch --file -
@@ -183,9 +184,26 @@ ACGTGAC-AGAT
 GTG-GACGAGTA
 ```
 
-`--stdin` also reads standard input, but one pair at a time as it arrives;
-`smith_waterman --stdin` then waits for `h` (next hit) or `a` (next
-alignment) after each hit, as the [Perl module](../README.md#perl) uses it.
+### Threads
+
+The tools use half the CPUs by default (`--threads <n>` to change it). Pairs
+read from a file are aligned several at a time, on separate threads, and
+printed in input order, so the output is the same as one at a time. Each
+pair is printed as soon as those before it are. A pair of more than 4
+million cells runs on its own with all the threads. An error in a pair (a
+character pair the scoring does not define, or scores big enough to
+overflow) is reported after the output of the pairs before it, and stops
+the program.
+
+### Interactive input (`--stdin`)
+
+`--stdin` reads standard input differently from `--file -`: one pair at a
+time as it arrives, plain sequences only (no gzip; `smith_waterman` refuses
+FASTA and FASTQ headers), with no batching on threads. `smith_waterman
+--stdin` waits for `h` (next hit) or `a` (next alignment) after each hit,
+and its `--minscore` defaults to 0 (every hit). The
+[Perl modules](../README.md#perl) drive the tools this way; for batches use
+`--file -`.
 
 ## Scoring
 
@@ -208,19 +226,54 @@ MKTAHIAKQR-ISFVKSHFSRQ
 score: 88
 ```
 
-- `--scoring` picks a built-in system: `PAM30`, `PAM70`, `BLOSUM80`,
-  `BLOSUM62` or `DNA_HYBRIDIZATION`
-- `--substitution_matrix <file>` loads a matrix and `--substitution_pairs
-  <file>` a list of pairs; see [`scoring/`](../scoring) for examples
+- `--scoring` picks a built-in system, which also sets its gap penalties:
+
+  | System | Gap open, extend |
+  |---|---|
+  | `PAM30` | -9, -1 |
+  | `PAM70`, `BLOSUM80`, `BLOSUM62` | -10, -1 |
+  | `DNA_HYBRIDIZATION` | -10, -10 |
+
+  `--gapopen` and `--gapextend` override them, in either order
+- `--substitution_matrix <file>` loads a matrix; [`scoring/`](../scoring)
+  has many (BLOSUM, PAM, Gonnet, NUC.4.4 and others)
+- `--substitution_pairs <file>` loads a list of pairs, one per line as
+  `a b score` (letters, then the score; `#` starts a comment). Pairs not
+  listed fall back to `--match`/`--mismatch` if those are given, and are
+  otherwise an error:
+
+  ```text
+  A A 1
+  A C -1
+  C A -1
+  C C 1
+  ```
+
 - `--wildcard <w> <s>`: letter w matches every letter with score s (e.g.
   `--wildcard N 0`)
 - `--case_sensitive` compares letters case sensitively (default: off)
 - `--freestartgap`, `--freeendgap` (global only) make gaps at the ends free
-- `--nogaps`, `--nogapsin1`, `--nogapsin2`, `--nogapsinlongest` forbid gaps
-  within a sequence, and `--nomismatches` forbids mismatches. Used together
-  for local alignment, they list the common substrings in order of length
+- `--nogaps`, `--nogapsin1`, `--nogapsin2` forbid gaps within both, the
+  first or the second sequence (gaps at the ends are still allowed);
+  `--nogapsinlongest` forbids them within the longer one (the first if they
+  are the same length), and `--nomismatches` forbids mismatches. Used
+  together for local alignment, they list the common substrings in order of
+  length
 
 [Choosing scores](scoring.md) has guidance on matrices and penalties.
+
+## Output options
+
+| Option | Prints |
+|---|---|
+| `--printscores` | The score after each global alignment (local hits always show theirs) |
+| `--pretty` | A line marking matches (`\|`), mismatches (`*`) and gaps |
+| `--colour` | Mismatches and gaps in colour, for a terminal |
+| `--printfasta` | The FASTA/FASTQ names of each pair |
+| `--printseq` | The two sequences before their local hits (`smith_waterman`) |
+| `--context <n>` | n letters either side of each local hit (`smith_waterman`) |
+| `--printmatrices` | The dynamic programming matrices |
+| `--zam` | seq-align's older format: `Br1:`/`Br2:` lines with `_` for gaps and counts of mismatches and indels (`needleman_wunsch`) |
 
 ## Longest common substrings
 
@@ -251,7 +304,8 @@ usage: ./bin/needleman_wunsch [OPTIONS] [seq1 seq2]
     --file <file>        Sequence file reading with gzip support - read two
                          sequences at a time and align them
     --files <f1> <f2>    Read one sequence from each file to align at one time
-    --stdin              Read from STDIN (same as '--file -')
+    --stdin              Read pairs from STDIN one at a time, interactively
+                         (for a batch, use '--file -')
 
     --case_sensitive     Use case sensitive character comparison [default: off]
 
@@ -293,7 +347,7 @@ usage: ./bin/needleman_wunsch [OPTIONS] [seq1 seq2]
     --nomismatches       No mismatches allowed (cannot be used with --nogaps..)
 
  DETAILS:
-  * For help choosing scoring, see the README file.
+  * For help choosing scoring, see docs/scoring.md.
   * Gap (of length N) penalty is: (open+N*extend)
   * To do alignment without affine gap penalty, set '--gapopen 0'.
   * Scoring files should be matrices, with entries separated by a single
@@ -317,7 +371,8 @@ usage: ./bin/smith_waterman [OPTIONS] [seq1 seq2]
     --file <file>        Sequence file reading with gzip support - read two
                          sequences at a time and align them
     --files <f1> <f2>    Read one sequence from each file to align at one time
-    --stdin              Read from STDIN (same as '--file -')
+    --stdin              Read pairs from STDIN one at a time, interactively
+                         (for a batch, use '--file -')
 
     --case_sensitive     Use case sensitive character comparison [default: off]
 
@@ -355,7 +410,7 @@ usage: ./bin/smith_waterman [OPTIONS] [seq1 seq2]
     --nomismatches       No mismatches allowed
 
  DETAILS:
-  * For help choosing scoring, see the README file.
+  * For help choosing scoring, see docs/scoring.md.
   * Gap (of length N) penalty is: (open+N*extend)
   * To do alignment without affine gap penalty, set '--gapopen 0'.
   * Scoring files should be matrices, with entries separated by a single
