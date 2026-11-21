@@ -1,0 +1,24 @@
+Nucleics Align
+https://github.com/DanielTillett/nucleics-align
+
+Nucleics Align is derived from seq-align by Isaac Turner
+(https://github.com/noporpoise/seq-align, last commit dc41988, 2017). Isaac
+Turner released seq-align into the public domain with the Unlicense
+(https://unlicense.org): "This is free and unencumbered software released
+into the public domain." Parts of the code here originate from seq-align;
+source files that do are marked "original author: Isaac Turner".
+
+The changes and additions made in Nucleics Align are copyright (c) 2026
+Daniel Tillett and are licensed under the BSD 3-Clause License in LICENSE.
+
+Bundled dependencies in libs/ (git submodules), by Isaac Turner, keep their
+own terms:
+  string_buffer  CC0 1.0 (libs/string_buffer/LICENSE)
+  seq_file       Public domain (libs/seq_file/README.md)
+  sort_r         Public domain (libs/sort_r/README.md)
+libs/seq_file/benchmarks/kseq.h is under the MIT License (copyright
+Attractive Chaos); it is not compiled into Nucleics Align.
+
+The substitution matrices in scoring/ were obtained from the NCBI BLAST
+matrix archive (https://ftp.ncbi.nlm.nih.gov/blast/matrices/); each file
+credits its authors.

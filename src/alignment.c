@@ -1298,6 +1298,7 @@ static fill_result_t alignment_fill_banded(aligner_t *aligner,
   score_t lb = have_exact ? exact : 0;
   score_t *top = NULL, *lcol = NULL;
   fill_result_t done = FILL_SKIPPED;
+  int widened = 0; // times this band was widened to get more threads
 
   while(done == FILL_SKIPPED)
   {
@@ -1331,7 +1332,22 @@ static fill_result_t alignment_fill_banded(aligner_t *aligner,
       (double)alignment_fill_threads(&aligner->opts,
                                      (size_t)cols + strip, strip, false);
     if((cols + strip) / MAX2(1.0, band_threads / 2) >=
-       pays * (double)len_i / MAX2(1.0, full_threads / 2)) break;
+       pays * (double)len_i / MAX2(1.0, full_threads / 2)) {
+      // A band too small for its strips to be split across all the threads
+      // can cost more than a wider one that is (50 kb at 3%: 1,677
+      // diagonals each side ran on one thread, and the whole matrix was
+      // filled instead). So, while it has fewer threads than the whole
+      // fill, try it a quarter wider, a few times: a wider band holds every
+      // path the narrower one would, so its proof, and the alignment, are
+      // unchanged
+      if(widened < 8 && band_threads < full_threads && bw < len_i) {
+        bw += MAX2(bw / 4, (size_t)1);
+        widened++;
+        continue;
+      }
+      break;
+    }
+    widened = 0;
 
     atomic_fetch_add(&alignment_band_tries, 1);
     const ptrdiff_t dlo = MIN2(0, D) - (ptrdiff_t)bw;

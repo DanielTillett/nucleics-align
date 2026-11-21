@@ -10,6 +10,7 @@ authors:
   - family-names: Tillett
     given-names: Daniel
 version: 1.0.0
+date-released: "2026-11-21"
 license: BSD-3-Clause
 repository-code: "https://github.com/DanielTillett/nucleics-align"
 url: "https://github.com/DanielTillett/nucleics-align"

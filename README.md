@@ -1,3 +1,8 @@
+<p align="center">
+  <img src=".github/social-preview.png" width="720"
+       alt="Nucleics Align: fast, exact Smith-Waterman and Needleman-Wunsch alignment in C, with Python and Perl. An example alignment of GATTACAGATTACA against GATCACAGTTACA shows matches, a mismatch and a gap.">
+</p>
+
 # Nucleics Align
 
 **Fast, exact pairwise sequence alignment in C:** optimal local
@@ -287,7 +292,8 @@ project's rule that speed-ups never change output, and
 
 ## Licence
 
-Nucleics Align is released under the [BSD 3-Clause License](LICENSE).
+Nucleics Align is released under the [BSD 3-Clause License](LICENSE);
+[NOTICE](NOTICE) sets out where its parts come from.
 
 It is derived from seq-align, written by Isaac Turner and released into the
 public domain (Unlicense). The bundled libraries in `libs/` keep their own
