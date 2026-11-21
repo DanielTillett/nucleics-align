@@ -48,6 +48,7 @@ typedef struct
   bool linear_space; // Hirschberg / Myers-Miller
   bool score_only; // print the score without the alignment
   bool linear_fallback; // linear space if too big for the matrices
+  unsigned int linear_above; // linear space from this length (0: never)
 
   // Turns off zlib for stdin
   bool interactive;

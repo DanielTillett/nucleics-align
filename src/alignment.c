@@ -139,6 +139,7 @@ static atomic_size_t alignment_byte_fills, alignment_byte_retries;
 // Difference-encoded Needleman-Wunsch fills (see alignment_diff_bits())
 bool alignment_diff_enabled = true;
 bool alignment_linear_fallback = false;
+size_t alignment_linear_above = 0;
 static atomic_size_t alignment_diff_fills;
 // Band fills (each width tried), and bands sized by alignment_wfa_score()
 static atomic_size_t alignment_band_tries, alignment_band_wfa_sized;
@@ -188,6 +189,7 @@ void alignment_options_default(alignment_options_t *opts)
   opts->byte = alignment_byte_enabled;
   opts->diff = alignment_diff_enabled;
   opts->linear_fallback = alignment_linear_fallback;
+  opts->linear_above = alignment_linear_above;
   opts->block_min_cells = alignment_block_min_cells;
   opts->block_min_cols = alignment_block_min_cols;
   opts->band_strip_rows = alignment_band_strip_rows;

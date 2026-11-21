@@ -154,7 +154,9 @@ static void print_usage(enum NucleicsAlignCmdType cmd_type, score_t defaults[4],
 "    --scoreonly          Print only the score (fast, linear memory)\n"
 "    --linearfallback     Align in linear memory where too big for the matrices\n"
 "                         (same score, but may pick another equal-scoring\n"
-"                         alignment)\n");
+"                         alignment)\n"
+"    --linearabove <n>    Align in linear memory where either sequence has at\n"
+"                         least <n> letters (as --linearfallback)\n");
   }
 
   fprintf(stderr,
@@ -426,6 +428,15 @@ cmdline_t* cmdline_new(int argc, char **argv, scoring_t *scoring,
 
         argi++;
       }
+      else if(strcasecmp(argv[argi], "--linearabove") == 0)
+      {
+        if(cmd_type != NUCLEICS_ALIGN_NW_CMD)
+          usage("--linearabove only valid with Needleman-Wunsch");
+        if(!parse_entire_uint(argv[argi+1], &cmd->linear_above) ||
+           cmd->linear_above == 0)
+          usage("Invalid --linearabove <n> argument (must be at least 1)");
+        argi++;
+      }
       else if(strcasecmp(argv[argi], "--threads") == 0)
       {
         if(!parse_entire_uint(argv[argi+1], &cmd->threads) ||
@@ -589,6 +600,9 @@ cmdline_t* cmdline_new(int argc, char **argv, scoring_t *scoring,
     usage("--scoreonly cannot be used with --zam, --pretty, --colour or "
           "--printmatrices");
   }
+
+  if(cmd->linear_above > 0 && cmd->print_matrices)
+    usage("--linearabove cannot be used with --printmatrices");
 
   if(cmd->linear_space &&
      (scoring->no_start_gap_penalty || scoring->no_end_gap_penalty ||

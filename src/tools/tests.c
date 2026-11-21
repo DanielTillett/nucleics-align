@@ -2615,6 +2615,56 @@ void test_linear_fallback()
   alignment_free(lin);
 }
 
+/* With linear_above, a pair whose longer sequence is at least that long is
+ * made in linear space (as hirschberg_align_opts() makes it), shorter pairs
+ * with the matrices; scoring linear space refuses uses the matrices */
+void test_linear_above()
+{
+  nw_aligner_t *nw = needleman_wunsch_new();
+  alignment_t *aln = alignment_create(16), *lin = alignment_create(16);
+  alignment_t *mat = alignment_create(16);
+  alignment_options_t opts;
+  scoring_t scoring;
+  // Several alignments share the best score here, so the two aligners may
+  // choose different ones: which made it shows in the strings
+  const char *a = "AAAACCCCAAAAGGGGTTTT", *b = "AAAACCAAAAGGTTTTTT";
+  const size_t la = strlen(a), lb = strlen(b);
+  alignment_options_default(&opts);
+  scoring_system_default(&scoring);
+  nw->options = &opts;
+  ASSERT(hirschberg_align_checked(a, b, la, lb, &scoring, &opts, lin,
+                                  NULL) == ALN_OK);
+  opts.linear_above = 0;
+  ASSERT(needleman_wunsch_align_checked(a, b, la, lb, &scoring, nw, mat,
+                                        NULL) == ALN_OK);
+  ASSERT(mat->score == lin->score);
+
+  opts.linear_above = la; // the longer one: linear space
+  needleman_wunsch_align(a, b, &scoring, nw, aln);
+  ASSERT(aln->score == lin->score && strcmp(aln->result_a, lin->result_a) == 0 &&
+         strcmp(aln->result_b, lin->result_b) == 0);
+  opts.linear_above = la + 1; // too short: the matrices
+  ASSERT(needleman_wunsch_align_checked(a, b, la, lb, &scoring, nw, aln,
+                                        NULL) == ALN_OK);
+  ASSERT(strcmp(aln->result_a, mat->result_a) == 0 &&
+         strcmp(aln->result_b, mat->result_b) == 0);
+
+  // Free end gaps: linear space refuses them, so the matrices align it
+  opts.linear_above = 1;
+  scoring.no_end_gap_penalty = true;
+  ASSERT(needleman_wunsch_align_checked(a, b, la, lb, &scoring, nw, aln,
+                                        NULL) == ALN_OK);
+  opts.linear_above = 0;
+  ASSERT(needleman_wunsch_align_checked(a, b, la, lb, &scoring, nw, mat,
+                                        NULL) == ALN_OK);
+  ASSERT(aln->score == mat->score && strcmp(aln->result_a, mat->result_a) == 0);
+
+  needleman_wunsch_free(nw);
+  alignment_free(aln);
+  alignment_free(lin);
+  alignment_free(mat);
+}
+
 /* The wavefront score is the full fill's best global score (Hirschberg's
  * here, which matches it), or it declines */
 static void wfa_check(const char *a, const char *b, const scoring_t *scoring,
@@ -2730,6 +2780,7 @@ void test_misc()
   test_checked();
   test_out_of_memory();
   test_linear_fallback();
+  test_linear_above();
   test_wfa_score();
 
   SUITE_END();
