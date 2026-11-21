@@ -22,6 +22,7 @@
 #include "smith_waterman.h"
 #include "hirschberg.h"
 #include "alignment_scoring_load.h"
+#include "alignment_cmdline.h"
 #include "alignment_simd.h" // ALN_STRIPED
 #include "alignment_testing.h" // counters and checks
 
@@ -1331,15 +1332,14 @@ void simd_test_compact()
 #endif
   ASSERT(hits > 1000);
 
-  // A gap penalty so large that the first column falls below the clamp:
-  // working out the bytes would overflow, so the matrices are used
+  // A gap penalty so large that the first row falls below the clamp:
+  // refused as overflow rather than silently clamping or overflowing traceback
   scoring_init(&scoring, 1, -1, 0, -1073741824, false, false, false, false,
                false, false);
-  needleman_wunsch_align("AA", "A", &scoring, nw_full, r_full);
-  needleman_wunsch_align("AA", "A", &scoring, nw_compact, r_compact);
-  ASSERT(!nw_compact->traced);
-  ASSERT(alignments_equal(r_full, r_compact));
-  ASSERT(r_compact->score == -1073741823);
+  ASSERT(needleman_wunsch_align_checked("AA", "A", 2, 1, &scoring, nw_full,
+                                        r_full, NULL) == ALN_ERR_OVERFLOW);
+  ASSERT(needleman_wunsch_align_checked("AA", "A", 2, 1, &scoring, nw_compact,
+                                        r_compact, NULL) == ALN_ERR_OVERFLOW);
 
   alignment_block_min_cells = min_cells;
   alignment_block_min_cols = min_cols;
@@ -2767,6 +2767,97 @@ void alignment_test_roundup()
   ASSERT(ROUNDUP2POW(SIZE_MAX) == SIZE_MAX);
 }
 
+/* Regression tests for overflow bounds, CLI int parsing, Myers flags, and
+   case-insensitive scoring_add_mutation() */
+void test_bug_regressions()
+{
+  nw_aligner_t *nw = needleman_wunsch_new();
+  alignment_t *aln = alignment_create(256);
+  scoring_t scoring;
+  aln_error_t err;
+  char seq_a[2149], seq_c[2149];
+  memset(seq_a, 'A', 2148); seq_a[2148] = '\0';
+  memset(seq_c, 'C', 2148); seq_c[2148] = '\0';
+
+  // Edge scores in [INT_MIN, min) must report ALN_ERR_OVERFLOW
+  scoring_init(&scoring, 1, -2, -1000000, -1000000,
+               false, false, false, false, false, true);
+  ASSERT(needleman_wunsch_align_checked(seq_a, "A", 2146, 1, &scoring,
+                                        nw, aln, &err) == ALN_ERR_OVERFLOW);
+  ASSERT(needleman_wunsch_align_checked("A", seq_c, 1, 2146, &scoring,
+                                        nw, aln, &err) == ALN_ERR_OVERFLOW);
+  ASSERT(needleman_wunsch_align_checked(seq_a, "C", 2146, 1, &scoring,
+                                        nw, aln, &err) == ALN_ERR_OVERFLOW);
+
+  // no_mismatches all-indel downward overflow must report ALN_ERR_OVERFLOW
+  scoring_init(&scoring, 1, -2, -1000000, -1000000,
+               false, false, false, false, true, true);
+  ASSERT(needleman_wunsch_align_checked(seq_a, seq_c, 1100, 1100, &scoring,
+                                        nw, aln, &err) == ALN_ERR_OVERFLOW);
+  ASSERT(needleman_wunsch_align_checked(seq_a, seq_c, 1072, 1072, &scoring,
+                                        nw, aln, &err) == ALN_ERR_OVERFLOW);
+
+  // Free start gaps on an empty-sequence alignment must not be rejected
+  scoring_init(&scoring, 1, -2, -1000000, -1000000,
+               true, false, false, false, false, true);
+  ASSERT(needleman_wunsch_align_checked(seq_a, "", 2148, 0, &scoring,
+                                        nw, aln, &err) == ALN_OK &&
+         aln->score == 0);
+
+  // parse_entire_uint / parse_entire_int sign and ERANGE checks
+  unsigned int uval = 0;
+  int ival = 0;
+  ASSERT(!parse_entire_uint("-1", &uval));
+  ASSERT(!parse_entire_uint("-0", &uval));
+  ASSERT(!parse_entire_uint("-18446744073709551615", &uval));
+  ASSERT(!parse_entire_uint("   ", &uval));
+  ASSERT(!parse_entire_uint("99999999999999999999999999", &uval));
+  ASSERT(parse_entire_uint("42", &uval) && uval == 42);
+  ASSERT(!parse_entire_int("99999999999999999999999999", &ival));
+  ASSERT(!parse_entire_int("-99999999999999999999999999", &ival));
+  ASSERT(parse_entire_int(" -42", &ival) && ival == -42);
+
+  // alignment_myers_score() declines unsupported constraint flags
+  sub_table_t table;
+  score_t s = 0;
+  scoring_init(&scoring, 0, -1, 0, -1, false, false, false, false, false, true);
+  ASSERT(sub_table_build(&table, &scoring, "AA", 2, "A", 1));
+  ASSERT(alignment_myers_score(&table, &scoring, "AA", 2, "A", 1, &s) && s == -1);
+  scoring.no_start_gap_penalty = true;
+  ASSERT(!alignment_myers_score(&table, &scoring, "AA", 2, "A", 1, &s));
+  scoring.no_start_gap_penalty = false;
+  scoring.no_end_gap_penalty = true;
+  ASSERT(!alignment_myers_score(&table, &scoring, "AA", 2, "A", 1, &s));
+  scoring.no_end_gap_penalty = false;
+  scoring.no_gaps_in_a = true;
+  ASSERT(!alignment_myers_score(&table, &scoring, "AA", 2, "A", 1, &s));
+  scoring.no_gaps_in_a = false;
+  scoring.no_gaps_in_b = true;
+  ASSERT(!alignment_myers_score(&table, &scoring, "AA", 2, "A", 1, &s));
+  scoring.no_gaps_in_b = false;
+  scoring.no_gaps_in_longest = true;
+  ASSERT(!alignment_myers_score(&table, &scoring, "AA", 2, "A", 1, &s));
+  scoring.no_gaps_in_longest = false;
+  scoring.no_mismatches = true;
+  ASSERT(!alignment_myers_score(&table, &scoring, "AA", 2, "A", 1, &s));
+  sub_table_free(&table);
+
+  // scoring_add_mutation() normalizes case when !case_sensitive
+  scoring_init(&scoring, 1, -2, -4, -1, false, false, false, false, false, false);
+  scoring_add_mutation(&scoring, 'A', 'G', 5);
+  int sc = 0;
+  bool is_match = false;
+  scoring_lookup(&scoring, 'a', 'g', &sc, &is_match);
+  ASSERT(sc == 5);
+  scoring_lookup(&scoring, 'A', 'G', &sc, &is_match);
+  ASSERT(sc == 5);
+  scoring_lookup(&scoring, 'A', 'g', &sc, &is_match);
+  ASSERT(sc == 5);
+
+  needleman_wunsch_free(nw);
+  alignment_free(aln);
+}
+
 void test_misc()
 {
   SUITE_START("Alignment buffers and scoring files");
@@ -2782,6 +2873,7 @@ void test_misc()
   test_linear_fallback();
   test_linear_above();
   test_wfa_score();
+  test_bug_regressions();
 
   SUITE_END();
 }

@@ -96,6 +96,10 @@ void scoring_make_case_sensitive(scoring_t* scoring)
 
 void scoring_add_mutation(scoring_t* scoring, char a, char b, int score)
 {
+  if(!scoring->case_sensitive) {
+    a = (char)tolower((unsigned char)a);
+    b = (char)tolower((unsigned char)b);
+  }
   scoring->swap_scores[(unsigned char)a][(unsigned char)b] = score;
   set_swap_bit(scoring,a,b);
   scoring->min_penalty = MIN2(scoring->min_penalty, score);

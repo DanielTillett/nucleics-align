@@ -27,7 +27,10 @@
 // 0, gap extension -1, and every pair the table holds scoring 0 or -1
 static bool myers_unit_cost(const sub_table_t *table, const scoring_t *scoring)
 {
-  if(scoring->gap_open != 0 || scoring->gap_extend != -1) return false;
+  if(scoring->gap_open != 0 || scoring->gap_extend != -1 ||
+     scoring->no_start_gap_penalty || scoring->no_end_gap_penalty ||
+     scoring->no_gaps_in_a || scoring->no_gaps_in_b ||
+     scoring->no_gaps_in_longest || scoring->no_mismatches) return false;
   size_t i;
   for(i = 0; i < table->n * table->n; i++)
     if(table->scores[i] != 0 && table->scores[i] != -1) return false;

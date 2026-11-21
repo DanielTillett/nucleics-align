@@ -19,6 +19,8 @@
 #include <stdio.h>
 #include <string.h>
 #include <strings.h> // strcasecmp
+#include <ctype.h> // isspace
+#include <errno.h> // errno, ERANGE
 #include <limits.h> // INT_MIN
 #include <stdarg.h> // for va_list
 #include <pthread.h>
@@ -36,10 +38,12 @@ char parse_entire_int(char *str, int *result)
   size_t len = strlen(str);
   if(len == 0) return 0; // strtol would read "" as 0
 
+  errno = 0;
   char *strtol_last_char_ptr = str;
   long tmp = strtol(str, &strtol_last_char_ptr, 10);
 
-  if(tmp > INT_MAX || tmp < INT_MIN || strtol_last_char_ptr != str+len)
+  if(errno == ERANGE || tmp > INT_MAX || tmp < INT_MIN ||
+     strtol_last_char_ptr != str+len)
   {
     return 0;
   }
@@ -55,10 +59,15 @@ char parse_entire_uint(char *str, unsigned int *result)
   size_t len = strlen(str);
   if(len == 0) return 0;
 
+  const char *p = str;
+  while(isspace((unsigned char)*p)) p++;
+  if(*p == '-' || *p == '\0') return 0;
+
+  errno = 0;
   char *strtol_last_char_ptr = str;
   unsigned long tmp = strtoul(str, &strtol_last_char_ptr, 10);
 
-  if(tmp > UINT_MAX || strtol_last_char_ptr != str+len)
+  if(errno == ERANGE || tmp > UINT_MAX || strtol_last_char_ptr != str+len)
   {
     return 0;
   }

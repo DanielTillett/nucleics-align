@@ -1638,18 +1638,44 @@ bool alignment_scores_may_overflow(const scoring_t *scoring,
 
   // Downwards: cells are clamped at the min score (see
   // alignment_min_score()). That leaves Needleman-Wunsch's first row and
-  // column, gaps of every length up to the longer sequence, which must be
-  // ints, and its score, at least that of a pair at each position of the
-  // shorter sequence and one gap
+  // column (unless free), gaps of every length up to the longer sequence,
+  // and its score, all of which must stay within [min, INT_MAX]
   if(!is_sw) {
+    const double floor = (double)alignment_min_score(scoring, false);
     const double open = scoring->gap_open, ext = scoring->gap_extend;
+    const bool free_row = scoring->no_start_gap_penalty ||
+                          (scoring->no_end_gap_penalty && len_b == 0);
+    const bool free_col = scoring->no_start_gap_penalty ||
+                          (scoring->no_end_gap_penalty && len_a == 0);
+    const double edge_len = MAX2(free_row ? 0.0 : (double)len_a,
+                                 free_col ? 0.0 : (double)len_b);
     const double longest = (double)MAX2(len_a, len_b);
     const double shortest = (double)MIN2(len_a, len_b);
     const double rest = longest - shortest;
-    const double edges[] = {longest * ext, open + ext, open + longest * ext,
-                            shortest * low + (rest > 0 ? open + rest * ext : 0)};
+    const bool free_tail = scoring->no_start_gap_penalty ||
+                           scoring->no_end_gap_penalty;
+    double score_lb;
+    if(scoring->no_mismatches) {
+      if(scoring->no_start_gap_penalty && scoring->no_end_gap_penalty)
+        score_lb = 0;
+      else if(free_tail)
+        score_lb = shortest > 0 ? open + shortest * ext : 0;
+      else
+        score_lb = (len_a > 0 ? open + (double)len_a * ext : 0) +
+                   (len_b > 0 ? open + (double)len_b * ext : 0);
+    }
+    else {
+      score_lb = shortest * low +
+                 (rest > 0 && !free_tail ? open + rest * ext : 0);
+    }
+    const double edges[] = {
+      edge_len > 0 ? edge_len * ext : 0,
+      edge_len > 0 ? open + ext : 0,
+      edge_len > 0 ? open + edge_len * ext : 0,
+      score_lb
+    };
     for(i = 0; i < sizeof(edges) / sizeof(edges[0]); i++)
-      if(edges[i] < (double)INT_MIN || edges[i] > (double)INT_MAX) return true;
+      if(edges[i] < floor || edges[i] > (double)INT_MAX) return true;
   }
   return false;
 }
@@ -1939,18 +1965,18 @@ void alignment_reverse_move(enum Matrix *curr_matrix, score_t *curr_score,
   }
 
   if((!no_gaps_in_a || *score_x == 0 || *score_x == len_i) &&
-     aligner->gap_a_scores[*arr_index] + prev_gap_a_penalty == *curr_score)
+     (long long)aligner->gap_a_scores[*arr_index] + prev_gap_a_penalty == *curr_score)
   {
     *curr_matrix = GAP_A;
     *curr_score = aligner->gap_a_scores[*arr_index];
   }
   else if((!no_gaps_in_b || *score_y == 0 || *score_y == len_j) &&
-          aligner->gap_b_scores[*arr_index] + prev_gap_b_penalty == *curr_score)
+          (long long)aligner->gap_b_scores[*arr_index] + prev_gap_b_penalty == *curr_score)
   {
     *curr_matrix = GAP_B;
     *curr_score = aligner->gap_b_scores[*arr_index];
   }
-  else if(aligner->match_scores[*arr_index] + prev_match_penalty == *curr_score)
+  else if((long long)aligner->match_scores[*arr_index] + prev_match_penalty == *curr_score)
   {
     *curr_matrix = MATCH;
     *curr_score = aligner->match_scores[*arr_index];
