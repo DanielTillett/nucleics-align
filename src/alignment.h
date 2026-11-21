@@ -217,6 +217,16 @@ bool alignment_wfa_score(const sub_table_t *table, const scoring_t *scoring,
                          const char *seq_b, size_t len_b,
                          size_t budget, score_t *score);
 
+// The best global alignment's score under unit costs (match 0, mismatch and
+// gap letter -1, gap open 0: minus the edit distance) by Myers' bit-vector
+// algorithm (see alignment_myers.c), for a table built for these
+// sequences. Returns false, setting nothing, unless the scoring is unit
+// cost for every pair in the table and seq_a is not empty; or if out of
+// memory
+bool alignment_myers_score(const sub_table_t *table, const scoring_t *scoring,
+                           const char *seq_a, size_t len_a,
+                           const char *seq_b, size_t len_b, score_t *score);
+
 // Use the striped SIMD fill where it applies (default true). It gives the
 // same matrices as the scalar fill; turning it off is for tests/benchmarks
 extern bool alignment_striped_enabled;

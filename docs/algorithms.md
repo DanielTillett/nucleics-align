@@ -21,6 +21,7 @@
 | Difference-encoded lanes | Needleman-Wunsch traceback bytes | Suzuki & Kasahara 2018, *BMC Bioinformatics* 19(Suppl 1):45 ([doi:10.1186/s12859-018-2014-8](https://doi.org/10.1186/s12859-018-2014-8)), as ksw2 uses them |
 | Wavefront alignment (WFA), score only, to size a band | Banded global alignment | Marco-Sola et al. 2021, *Bioinformatics* 37:456-463 ([doi:10.1093/bioinformatics/btaa777](https://doi.org/10.1093/bioinformatics/btaa777)); match scores converted to penalties as Eizenga & Paten describe (2022, bioRxiv, [doi:10.1101/2022.01.12.476087](https://doi.org/10.1101/2022.01.12.476087), a preprint) |
 | Computational volumes, adapted from edit distance to affine gaps | Narrowing each strip of a band | A\*PA2: Groot Koerkamp 2024, WABI, *LIPIcs* 312:17 ([doi:10.4230/LIPIcs.WABI.2024.17](https://doi.org/10.4230/LIPIcs.WABI.2024.17)) |
+| Bit-vector edit distance | Unit-cost `--scoreonly` on one thread | Myers 1999, *J ACM* 46:395-415 ([doi:10.1145/316542.316550](https://doi.org/10.1145/316542.316550)) |
 
 The code is this project's own, written from the papers.
 
@@ -29,9 +30,6 @@ first if they are the same length) is this project's addition.
 
 ## To investigate
 
-- Myers' bit-vector algorithm (1999, *J ACM* 46:395-415,
-  [doi:10.1145/316542.316550](https://doi.org/10.1145/316542.316550)). It only computes
-  unit-cost edit distance, so it would be a separate fast path rather than a
-  replacement for the scored aligners
 - Combining Myers' and Hirschberg's algorithms for linear-space
-  edit-distance alignment
+  edit-distance alignment (the alignment itself, not just its score, under
+  unit costs)

@@ -320,6 +320,13 @@ figures.
   wider band holds every path the narrower one would, so the alignment is
   the same. 50 kb at 2-5% divergence: 0.31-1.17 s -> 0.09-0.12 s, and 2.4
   GB -> 139-343 MB; other pairs are unchanged
+* Under unit costs (match 0, mismatch and gap letter -1, no gap open
+  penalty) the score is minus the edit distance, and Myers' bit-vector
+  algorithm computes it 64 cells to a word operation. `--scoreonly` uses it
+  on one thread (`--threads 1`, or each pair of a batch) where the band does
+  not pay: 100 kb unrelated 1.37 -> 0.56 s, 300 kb 12.5 -> 4.96 s. Similar
+  pairs stay banded, and on several threads the striped passes stay
+  faster, so it is not used there. The score is the same
 * `--scoreonly` (`hirschberg_score()`): no alignment, no matrices. With a
   band, the forward and reverse passes run at the same time and meet in the
   middle row; otherwise one forward pass over every row

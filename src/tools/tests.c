@@ -1089,6 +1089,65 @@ void simd_test_hirschberg_narrow()
   alignment_free(aln);
 }
 
+/* Myers' bit-vector score (unit costs, one thread): the same score as the
+ * linear-space passes and the full matrices, across word boundaries (63,
+ * 64, 65 ... letters), with a wildcard, case-insensitive letters and
+ * one-way substitution pairs; and not used for other scorings */
+void simd_test_myers()
+{
+  int max_threads = hirschberg_max_threads;
+  bool myers = hirschberg_myers_enabled;
+  size_t uses = hirschberg_myers_scores;
+  nw_aligner_t *nw = needleman_wunsch_new();
+  alignment_t *aln = alignment_create(256);
+  static char seqa[700], seqb[1400];
+  const unsigned int lens[] = {1, 2, 63, 64, 65, 127, 128, 129, 300, 640};
+  scoring_t scoring;
+  score_t s_myers, s_passes;
+  size_t i;
+
+  hirschberg_max_threads = 1;
+  for(i = 0; i < 400; i++)
+  {
+    scoring_init(&scoring, 0, -1, 0, -1, false, false, false, false, false,
+                 false);
+    if(i % 3 == 1) scoring_add_wildcard(&scoring, 'n', i % 2 ? 0 : -1);
+    if(i % 5 == 2) {
+      // One way only: a against c scores 0, c against a stays -1
+      scoring_add_mutation(&scoring, 'a', 'c', 0);
+    }
+    unsigned int la = i % 4 ? lens[hb_rand(10)] : hb_rand(640);
+    unsigned int lb = i % 4 ? lens[hb_rand(10)] : hb_rand(640);
+    hb_rand_seq(seqa, la, i % 2 ? "acgtn" : "ACgtN");
+    if(i % 3 == 0) hb_mutate(seqb, seqa, 100, "acgt");
+    else hb_rand_seq(seqb, lb, "AcGtn");
+
+    hirschberg_myers_enabled = true;
+    ASSERT(hirschberg_score(seqa, seqb, &scoring, &s_myers));
+    hirschberg_myers_enabled = false;
+    ASSERT(hirschberg_score(seqa, seqb, &scoring, &s_passes));
+    needleman_wunsch_align(seqa, seqb, &scoring, nw, aln);
+    ASSERT(s_myers == s_passes && s_myers == aln->score);
+  }
+  ASSERT(hirschberg_myers_scores > uses + 200);
+
+  // Not unit cost: the passes, not Myers
+  hirschberg_myers_enabled = true;
+  uses = hirschberg_myers_scores;
+  scoring_init(&scoring, 1, -1, 0, -1, false, false, false, false, false,
+               false);
+  ASSERT(hirschberg_score("acgtacgt", "acgaacgt", &scoring, &s_myers));
+  scoring_init(&scoring, 0, -1, -2, -1, false, false, false, false, false,
+               false);
+  ASSERT(hirschberg_score("acgtacgt", "acgaacgt", &scoring, &s_myers));
+  ASSERT(hirschberg_myers_scores == uses);
+
+  hirschberg_max_threads = max_threads;
+  hirschberg_myers_enabled = myers;
+  alignment_free(aln);
+  needleman_wunsch_free(nw);
+}
+
 /* Column-block threading of the full-matrix fill: force small blocks so
  * short sequences are split across several threads */
 void simd_test_fill_blocks()
@@ -1942,6 +2001,7 @@ void test_simd()
   simd_test_hirschberg_band();
   simd_test_hirschberg_reuse();
   simd_test_hirschberg_narrow();
+  simd_test_myers();
   simd_test_hirschberg_blocks();
   simd_test_hirschberg();
   simd_test_matches_scalar();

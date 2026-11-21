@@ -921,6 +921,20 @@ static void hb_passes_scalar(hb_state_t *st, const char *a, const char *b,
 bool hirschberg_check_striped = false;
 size_t hirschberg_striped_mismatches = 0;
 size_t hirschberg_part16_max_cols = 0, hirschberg_parts16 = 0;
+bool hirschberg_myers_enabled = true;
+size_t hirschberg_myers_scores = 0;
+
+// The score by Myers' bit-vector algorithm (alignment_myers_score()) where
+// the scoring is unit cost and tests have not turned it off
+static bool hb_myers(const hb_state_t *st, const char *a, size_t len_a,
+                     const char *b, size_t len_b, score_t *score)
+{
+  if(!hirschberg_myers_enabled ||
+     !alignment_myers_score(&st->table, st->scoring, a, len_a, b, len_b,
+                            score)) return false;
+  __atomic_add_fetch(&hirschberg_myers_scores, 1, __ATOMIC_RELAXED);
+  return true;
+}
 
 bool hirschberg_simd_available(void)
 {
@@ -1581,6 +1595,11 @@ static aln_status_t hb_score(const char *a, const char *b,
   {
     if(!st.nomem) *score = hb_midpoint(&st, len_b, &midj, &type);
   }
+  // Unit costs on one thread: Myers' bit-vector algorithm, faster there
+  // than the striped pass (see alignment_myers.c)
+  else if(st.pass_threads <= 1 && hb_myers(&st, a, len_a, b, len_b, score))
+  {
+  }
   // Otherwise one forward pass over every row of a: cc[len_b] is the best
   // score, ending in any state
   else if(hb_simd_ok(&st, len_a, len_b))
@@ -1591,6 +1610,7 @@ static aln_status_t hb_score(const char *a, const char *b,
   }
   else
   #endif
+  if(!hb_myers(&st, a, len_a, b, len_b, score))
   {
     // with imid = len_a the reverse pass has no rows
     hb_passes_scalar(&st, a, b, len_a, len_b, len_a, g, g, true, false,
