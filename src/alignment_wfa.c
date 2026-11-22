@@ -28,6 +28,7 @@
 
 #include "alignment.h"
 #include "alignment_alloc.h"
+#include "alignment_simd.h"
 
 // Diagonal k = h - v of text b (h) and pattern a (v); offsets are h
 #define WFA_NONE (INT32_MIN / 2)
@@ -404,6 +405,444 @@ static size_t wfa_trace(const wfa_pair_t *pair, const wf_slot_t *slots,
   }
 }
 
+// Bounded 8-byte match extension for subproblems without trailing sentinels
+static inline int32_t wf_extend_lim(const uint8_t *a, const uint8_t *b,
+                                    int32_t v, int32_t h,
+                                    int32_t m, int32_t nb)
+{
+  int32_t start = h;
+  while(v + 8 <= m && h + 8 <= nb) {
+    uint64_t x, y;
+    memcpy(&x, a + v, 8);
+    memcpy(&y, b + h, 8);
+    uint64_t d = x ^ y;
+    if(d != 0) {
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+      int32_t same = __builtin_ctzll(d) >> 3;
+#else
+      int32_t same = 0;
+      while(a[v + same] == b[h + same]) same++;
+#endif
+      return h + same - start;
+    }
+    v += 8;
+    h += 8;
+  }
+  while(v < m && h < nb && a[v] == b[h]) { v++; h++; }
+  return h - start;
+}
+
+typedef enum { WFA_M = 0, WFA_I = 1, WFA_D = 2 } wfa_state_t;
+
+// Vectorisable hot interior compute loop (multi-versioned for AVX2/SSE4.1/SSE2)
+ALN_TARGET_CLONES
+static void wf_compute_interior(int32_t in_lo, int32_t in_hi, int32_t m, int32_t nb,
+                                const int32_t *mxp, const int32_t *mop,
+                                const int32_t *iep, const int32_t *dep,
+                                int32_t *moff, int32_t *ioff, int32_t *doff)
+{
+  int32_t k;
+  for(k = in_lo; k <= in_hi; k++) {
+    int32_t vi = mop[k - 1], ei = iep[k - 1];
+    int32_t ins = (vi > ei ? vi : ei) + 1;
+    int32_t vd = mop[k + 1], ed = dep[k + 1];
+    int32_t del = vd > ed ? vd : ed;
+    int32_t sub = mxp[k] + 1;
+    int32_t best = sub > ins ? sub : ins;
+    best = best > del ? best : del;
+    ioff[k] = (ins <= nb && ins - k <= m && ins >= 0) ? ins : WFA_NONE;
+    doff[k] = (del - k <= m && del >= 0) ? del : WFA_NONE;
+    moff[k] = (best <= nb && best - k <= m && best >= 0 && best - k >= 0) ? best : WFA_NONE;
+  }
+}
+
+// Advance one wavefront score s in ring or kept storage. Returns diagonal
+// updates performed, or SIZE_MAX on OOM. Writes max offset reached in *max_h
+static size_t wf_step(const uint8_t *a, int32_t m, const uint8_t *b, int32_t nb,
+                      long long px, long long po, long long pe,
+                      wfa_state_t s0, wf_slot_t *slots, size_t ring,
+                      bool keep, long long s, int32_t *max_h)
+{
+  const wavefront_t none = {1, 0, 0, NULL};
+  #define SLOT(t) (keep ? &slots[(t)] : &slots[(size_t)(t) % ring])
+  wf_slot_t *cur = SLOT(s);
+  if(s == 0) {
+    if(!wf_reserve(&cur->m, 0, 0)) return SIZE_MAX;
+    int32_t h0 = wf_extend_lim(a, b, 0, 0, m, nb);
+    cur->m.off[0] = h0;
+    if(max_h && h0 > *max_h) *max_h = h0;
+    if(s0 == WFA_I) {
+      if(!wf_reserve(&cur->i, 0, 0)) return SIZE_MAX;
+      cur->i.off[0] = 0;
+      cur->d.lo = 1; cur->d.hi = 0;
+    }
+    else if(s0 == WFA_D) {
+      if(!wf_reserve(&cur->d, 0, 0)) return SIZE_MAX;
+      cur->d.off[0] = 0;
+      cur->i.lo = 1; cur->i.hi = 0;
+    }
+    else {
+      cur->i.lo = cur->d.lo = 1;
+      cur->i.hi = cur->d.hi = 0;
+    }
+    return 1;
+  }
+  const wavefront_t *mx = s >= px ? &SLOT(s - px)->m : &none;
+  const wavefront_t *mo = s >= po + pe ? &SLOT(s - po - pe)->m : &none;
+  const wavefront_t *ie = s >= pe ? &SLOT(s - pe)->i : &none;
+  const wavefront_t *de = s >= pe ? &SLOT(s - pe)->d : &none;
+  int32_t lo = INT32_MAX, hi = INT32_MIN, k;
+  if(mx->lo <= mx->hi) { lo = mx->lo; hi = mx->hi; }
+  if(mo->lo <= mo->hi) {
+    lo = mo->lo - 1 < lo ? mo->lo - 1 : lo;
+    hi = mo->hi + 1 > hi ? mo->hi + 1 : hi;
+  }
+  if(ie->lo <= ie->hi) {
+    lo = ie->lo + 1 < lo ? ie->lo + 1 : lo;
+    hi = ie->hi + 1 > hi ? ie->hi + 1 : hi;
+  }
+  if(de->lo <= de->hi) {
+    lo = de->lo - 1 < lo ? de->lo - 1 : lo;
+    hi = de->hi - 1 > hi ? de->hi - 1 : hi;
+  }
+  if(lo > hi) {
+    cur->m.lo = cur->i.lo = cur->d.lo = 1;
+    cur->m.hi = cur->i.hi = cur->d.hi = 0;
+    return 0;
+  }
+  if(lo < -m) lo = -m;
+  if(hi > nb) hi = nb;
+  if(!wf_reserve(&cur->m, lo, hi) || !wf_reserve(&cur->i, lo, hi) ||
+     !wf_reserve(&cur->d, lo, hi)) return SIZE_MAX;
+  int32_t *moff = cur->m.off - lo;
+  int32_t *ioff = cur->i.off - lo;
+  int32_t *doff = cur->d.off - lo;
+  // Interior range where all 4 source wavefronts are in-bounds (branch-free,
+  // auto-vectorisable by GCC/Clang into AVX2/NEON)
+  int32_t in_lo = lo, in_hi = hi;
+  if(mx->lo <= mx->hi) {
+    if(mx->lo > in_lo) in_lo = mx->lo;
+    if(mx->hi < in_hi) in_hi = mx->hi;
+  } else { in_lo = hi + 1; }
+  if(mo->lo <= mo->hi) {
+    if(mo->lo + 1 > in_lo) in_lo = mo->lo + 1;
+    if(mo->hi - 1 < in_hi) in_hi = mo->hi - 1;
+  } else { in_lo = hi + 1; }
+  if(ie->lo <= ie->hi) {
+    if(ie->lo + 1 > in_lo) in_lo = ie->lo + 1;
+    if(ie->hi + 1 < in_hi) in_hi = ie->hi + 1;
+  } else { in_lo = hi + 1; }
+  if(de->lo <= de->hi) {
+    if(de->lo - 1 > in_lo) in_lo = de->lo - 1;
+    if(de->hi - 1 < in_hi) in_hi = de->hi - 1;
+  } else { in_lo = hi + 1; }
+
+  // Loop 1a: boundary diagonals before in_lo
+  const int32_t b_end = in_lo <= in_hi ? in_lo - 1 : hi;
+  for(k = lo; k <= b_end; k++) {
+    int32_t vi = wf_get(mo, k - 1), ei = wf_get(ie, k - 1);
+    int32_t ins = (vi > ei ? vi : ei) + 1;
+    if(ins > nb || ins - k > m || ins < 0) ins = WFA_NONE;
+    int32_t vd = wf_get(mo, k + 1), ed = wf_get(de, k + 1);
+    int32_t del = vd > ed ? vd : ed;
+    if(del - k > m || del < 0) del = WFA_NONE;
+    int32_t sub = wf_get(mx, k) + 1;
+    if(sub > nb || sub - k > m || sub < 0) sub = WFA_NONE;
+    int32_t best = sub > ins ? sub : ins;
+    best = best > del ? best : del;
+    ioff[k] = ins;
+    doff[k] = del;
+    moff[k] = (best >= 0 && best - k >= 0) ? best : WFA_NONE;
+  }
+  // Loop 1b: hot interior (zero bounds checks, AVX2/SSE4.1/SSE2 multi-versioned)
+  if(in_lo <= in_hi) {
+    wf_compute_interior(in_lo, in_hi, m, nb,
+                        mx->off - mx->lo, mo->off - mo->lo,
+                        ie->off - ie->lo, de->off - de->lo,
+                        moff, ioff, doff);
+    // Loop 1c: boundary diagonals after in_hi
+    for(k = in_hi + 1; k <= hi; k++) {
+      int32_t vi = wf_get(mo, k - 1), ei = wf_get(ie, k - 1);
+      int32_t ins = (vi > ei ? vi : ei) + 1;
+      if(ins > nb || ins - k > m || ins < 0) ins = WFA_NONE;
+      int32_t vd = wf_get(mo, k + 1), ed = wf_get(de, k + 1);
+      int32_t del = vd > ed ? vd : ed;
+      if(del - k > m || del < 0) del = WFA_NONE;
+      int32_t sub = wf_get(mx, k) + 1;
+      if(sub > nb || sub - k > m || sub < 0) sub = WFA_NONE;
+      int32_t best = sub > ins ? sub : ins;
+      best = best > del ? best : del;
+      ioff[k] = ins;
+      doff[k] = del;
+      moff[k] = (best >= 0 && best - k >= 0) ? best : WFA_NONE;
+    }
+  }
+  // Loop 2: 8-byte match extension (decoupled from compute)
+  int32_t mh = max_h ? *max_h : 0;
+  for(k = lo; k <= hi; k++) {
+    int32_t best = moff[k];
+    if(best >= 0) {
+      best += wf_extend_lim(a, b, best - k, best, m, nb);
+      moff[k] = best;
+      if(best > mh) mh = best;
+    }
+  }
+  if(max_h) *max_h = mh;
+  #undef SLOT
+  return (size_t)(hi - lo + 1);
+}
+
+// Base-case kept-wavefront fill & traceback with general start/end states.
+// Writes forward-order alignment into out_a/out_b and returns length (0 on fail)
+static size_t biwfa_base(const uint8_t *a, const char *sa, int32_t m,
+                         const uint8_t *b, const char *sb, int32_t nb,
+                         long long px, long long po, long long pe,
+                         wfa_state_t s0, wfa_state_t s1,
+                         size_t *budget_left, char *out_a, char *out_b)
+{
+  const int32_t kend = nb - m;
+  size_t nslots = 0, i;
+  wf_slot_t *slots = NULL;
+  const wavefront_t none = {1, 0, 0, NULL};
+  long long s, penalty = -1;
+
+  for(s = 0; ; s++) {
+    if((size_t)s >= nslots) {
+      size_t grow = nslots ? 2 * nslots : 64;
+      wf_slot_t *g = aln_realloc(slots, grow * sizeof(wf_slot_t));
+      if(g == NULL) break;
+      slots = g;
+      for(i = nslots; i < grow; i++)
+        slots[i].m = slots[i].i = slots[i].d = none;
+      nslots = grow;
+    }
+    size_t w = wf_step(a, m, b, nb, px, po, pe, s0, slots, 0, true, s, NULL);
+    if(w == SIZE_MAX || w > *budget_left) break;
+    *budget_left -= w;
+    const wf_slot_t *cur = &slots[s];
+    int32_t end_h = s1 == WFA_M ? wf_get(&cur->m, kend) :
+                    s1 == WFA_I ? wf_get(&cur->i, kend) :
+                                  wf_get(&cur->d, kend);
+    if(end_h >= nb) { penalty = s; break; }
+    if(s > (long long)INT32_MAX / 2) break;
+  }
+  if(penalty < 0) { wfa_free(slots, nslots); return 0; }
+
+  wfa_state_t state = s1;
+  int32_t k = kend, h = nb;
+  size_t n = 0;
+  s = penalty;
+  for(;;) {
+    const wf_slot_t *cur = &slots[s];
+    if(state == WFA_M) {
+      int32_t src = 0, ins = WFA_NONE, del = WFA_NONE, sub = WFA_NONE;
+      if(s > 0) {
+        ins = wf_get(&cur->i, k);
+        del = wf_get(&cur->d, k);
+        if(s >= px) {
+          sub = wf_get(&slots[s - px].m, k) + 1;
+          if(sub > nb || sub - k > m || sub < 0) sub = WFA_NONE;
+        }
+        src = sub > ins ? sub : ins;
+        src = src > del ? src : del;
+        if(src < 0) { n = 0; break; }
+      }
+      for(; h > src; h--, n++) {
+        out_a[n] = sa[h - k - 1];
+        out_b[n] = sb[h - 1];
+      }
+      if(s == 0) { if(h != 0 || k != 0) n = 0; break; }
+      if(src == ins) state = WFA_I;
+      else if(src == del) state = WFA_D;
+      else {
+        out_a[n] = sa[h - k - 1];
+        out_b[n] = sb[h - 1];
+        n++; h--; s -= px;
+      }
+    }
+    else if(state == WFA_I) {
+      if(s == 0 && s0 == WFA_I && h == 0 && k == 0) break;
+      out_a[n] = '-';
+      out_b[n] = sb[h - 1];
+      n++; h--; k--;
+      if(s >= pe && wf_get(&slots[s - pe].i, k) == h) s -= pe;
+      else if(s >= po + pe && wf_get(&slots[s - po - pe].m, k) == h) {
+        s -= po + pe; state = WFA_M;
+      }
+      else { n = 0; break; }
+    }
+    else {
+      if(s == 0 && s0 == WFA_D && h == 0 && k == 0) break;
+      out_a[n] = sa[h - k - 1];
+      out_b[n] = '-';
+      n++; k++;
+      if(s >= pe && wf_get(&slots[s - pe].d, k) == h) s -= pe;
+      else if(s >= po + pe && wf_get(&slots[s - po - pe].m, k) == h) {
+        s -= po + pe; state = WFA_M;
+      }
+      else { n = 0; break; }
+    }
+  }
+  wfa_free(slots, nslots);
+  for(i = 0; i < n / 2; i++) {
+    char t = out_a[i]; out_a[i] = out_a[n - 1 - i]; out_a[n - 1 - i] = t;
+    t = out_b[i]; out_b[i] = out_b[n - 1 - i]; out_b[n - 1 - i] = t;
+  }
+  return n;
+}
+
+// Check overlap between forward slot at sf and reverse slot at sr
+static void biwfa_check(const wf_slot_t *fs, long long sf,
+                        const wf_slot_t *rs, long long sr,
+                        int32_t m, int32_t nb, long long po,
+                        long long *best_s, int32_t *bp_v, int32_t *bp_h,
+                        wfa_state_t *bp_state)
+{
+  const int32_t kend = nb - m;
+  int32_t lo, hi, k;
+  if(sf + sr < *best_s && fs->m.lo <= fs->m.hi && rs->m.lo <= rs->m.hi) {
+    lo = fs->m.lo > kend - rs->m.hi ? fs->m.lo : kend - rs->m.hi;
+    hi = fs->m.hi < kend - rs->m.lo ? fs->m.hi : kend - rs->m.lo;
+    for(k = lo; k <= hi; k++) {
+      int32_t hf = fs->m.off[k - fs->m.lo];
+      int32_t hr = rs->m.off[(kend - k) - rs->m.lo];
+      if(hf >= 0 && hr >= 0 && hf + hr >= nb) {
+        *best_s = sf + sr;
+        *bp_h = hf;
+        *bp_v = hf - k;
+        *bp_state = WFA_M;
+        break;
+      }
+    }
+  }
+  if(sf + sr - po < *best_s && fs->i.lo <= fs->i.hi && rs->i.lo <= rs->i.hi) {
+    lo = fs->i.lo > kend - rs->i.hi ? fs->i.lo : kend - rs->i.hi;
+    hi = fs->i.hi < kend - rs->i.lo ? fs->i.hi : kend - rs->i.lo;
+    for(k = lo; k <= hi; k++) {
+      int32_t hf = fs->i.off[k - fs->i.lo];
+      int32_t hr = rs->i.off[(kend - k) - rs->i.lo];
+      if(hf >= 1 && hr >= 1 && hf + hr >= nb) {
+        *best_s = sf + sr - po;
+        *bp_h = hf;
+        *bp_v = hf - k;
+        *bp_state = WFA_I;
+        break;
+      }
+    }
+  }
+  if(sf + sr - po < *best_s && fs->d.lo <= fs->d.hi && rs->d.lo <= rs->d.hi) {
+    lo = fs->d.lo > kend - rs->d.hi ? fs->d.lo : kend - rs->d.hi;
+    hi = fs->d.hi < kend - rs->d.lo ? fs->d.hi : kend - rs->d.lo;
+    for(k = lo; k <= hi; k++) {
+      int32_t hf = fs->d.off[k - fs->d.lo];
+      int32_t hr = rs->d.off[(kend - k) - rs->d.lo];
+      if(hf >= 0 && hr >= 0 && hf + hr >= nb && (hf - k) >= 1 && (hr - (kend - k)) >= 1) {
+        *best_s = sf + sr - po;
+        *bp_h = hf;
+        *bp_v = hf - k;
+        *bp_state = WFA_D;
+        break;
+      }
+    }
+  }
+}
+
+// O(s)-space Bidirectional WFA (Marco-Sola et al., 2023)
+static size_t biwfa_rec(const uint8_t *a, const uint8_t *ra, const char *sa, int32_t m,
+                        const uint8_t *b, const uint8_t *rb, const char *sb, int32_t nb,
+                        long long px, long long po, long long pe,
+                        wfa_state_t s0, wfa_state_t s1,
+                        size_t *budget_left, char *out_a, char *out_b,
+                        long long *penalty_out)
+{
+  if(m == 0 && nb == 0) { if(penalty_out) *penalty_out = 0; return 0; }
+  if(m == 0) {
+    int32_t j;
+    for(j = 0; j < nb; j++) { out_a[j] = '-'; out_b[j] = sb[j]; }
+    if(penalty_out) *penalty_out = (s0 == WFA_I ? 0 : po) + (long long)nb * pe;
+    return (size_t)nb;
+  }
+  if(nb == 0) {
+    int32_t i;
+    for(i = 0; i < m; i++) { out_a[i] = sa[i]; out_b[i] = '-'; }
+    if(penalty_out) *penalty_out = (s0 == WFA_D ? 0 : po) + (long long)m * pe;
+    return (size_t)m;
+  }
+  if((size_t)m + (size_t)nb <= 2048) {
+    return biwfa_base(a, sa, m, b, sb, nb, px, po, pe, s0, s1,
+                      budget_left, out_a, out_b);
+  }
+
+  const size_t ring = (size_t)(px > po + pe ? px : po + pe) + 1;
+  wf_slot_t *fwd = aln_calloc(ring, sizeof(wf_slot_t));
+  wf_slot_t *rev = aln_calloc(ring, sizeof(wf_slot_t));
+  if(fwd == NULL || rev == NULL) { free(fwd); free(rev); return 0; }
+  const wavefront_t none = {1, 0, 0, NULL};
+  size_t i;
+  for(i = 0; i < ring; i++) {
+    fwd[i].m = fwd[i].i = fwd[i].d = none;
+    rev[i].m = rev[i].i = rev[i].d = none;
+  }
+
+  long long best_s = LLONG_MAX;
+  int32_t bp_v = 0, bp_h = 0;
+  wfa_state_t bp_state = WFA_M;
+  long long sf = -1, sr = -1;
+  int32_t max_hf = 0, max_hr = 0;
+  bool ok = true;
+
+  for(;;) {
+    sf++;
+    size_t w = wf_step(a, m, b, nb, px, po, pe, s0, fwd, ring, false, sf, &max_hf);
+    if(w == SIZE_MAX || w > *budget_left) { ok = false; break; }
+    *budget_left -= w;
+    if(sr >= 0 && w > 0 && max_hf + max_hr >= nb) {
+      long long t0 = sr - (long long)ring + 1;
+      if(t0 < 0) t0 = 0;
+      for(long long t = t0; t <= sr; t++)
+        biwfa_check(&fwd[(size_t)sf % ring], sf, &rev[(size_t)t % ring], t,
+                    m, nb, po, &best_s, &bp_v, &bp_h, &bp_state);
+    }
+    if(best_s < LLONG_MAX && sf + sr >= best_s + po + (long long)ring) break;
+
+    sr++;
+    w = wf_step(ra, m, rb, nb, px, po, pe, s1, rev, ring, false, sr, &max_hr);
+    if(w == SIZE_MAX || w > *budget_left) { ok = false; break; }
+    *budget_left -= w;
+    if(w > 0 && max_hf + max_hr >= nb) {
+      long long t0 = sf - (long long)ring + 1;
+      if(t0 < 0) t0 = 0;
+      for(long long t = t0; t <= sf; t++)
+        biwfa_check(&fwd[(size_t)t % ring], t, &rev[(size_t)sr % ring], sr,
+                    m, nb, po, &best_s, &bp_v, &bp_h, &bp_state);
+    }
+    if(best_s < LLONG_MAX && sf + sr >= best_s + po + (long long)ring) break;
+    if(sf > (long long)INT32_MAX / 2) { ok = false; break; }
+  }
+
+  wfa_free(fwd, ring);
+  wfa_free(rev, ring);
+  if(!ok || best_s == LLONG_MAX) return 0;
+  if(penalty_out) *penalty_out = best_s;
+
+  if((bp_v <= 0 && bp_h <= 0) || (bp_v >= m && bp_h >= nb)) {
+    return biwfa_base(a, sa, m, b, sb, nb, px, po, pe, s0, s1,
+                      budget_left, out_a, out_b);
+  }
+
+  size_t nl = biwfa_rec(a, ra + (m - bp_v), sa, bp_v,
+                        b, rb + (nb - bp_h), sb, bp_h,
+                        px, po, pe, s0, bp_state, budget_left,
+                        out_a, out_b, NULL);
+  if(nl == 0 && (bp_v > 0 || bp_h > 0)) return 0;
+  size_t nr = biwfa_rec(a + bp_v, ra, sa + bp_v, m - bp_v,
+                        b + bp_h, rb, sb + bp_h, nb - bp_h,
+                        px, po, pe, bp_state, s1, budget_left,
+                        out_a + nl, out_b + nl, NULL);
+  if(nr == 0 && (m - bp_v > 0 || nb - bp_h > 0)) return 0;
+  return nl + nr;
+}
+
 aln_status_t alignment_wfa_align(const sub_table_t *table,
                                  const scoring_t *scoring,
                                  const char *seq_a, size_t len_a,
@@ -413,38 +852,73 @@ aln_status_t alignment_wfa_align(const sub_table_t *table,
   wfa_pair_t pair;
   if(!wfa_setup(table, scoring, seq_a, len_a, seq_b, len_b, &pair))
     return ALN_ERR_UNSUPPORTED;
-  wf_slot_t *slots;
-  size_t nslots;
-  aln_status_t status = ALN_ERR_UNSUPPORTED;
-  score_t score;
-  const long long penalty = wfa_fill(&pair, budget, true, &slots, &nslots);
-  if(penalty >= 0 && wfa_best(&pair, penalty, &score)) {
-    if(!alignment_reserve(result, len_a + len_b)) status = ALN_ERR_NOMEM;
-    else {
-      size_t n = wfa_trace(&pair, slots, penalty, seq_a, seq_b,
-                           result->result_a, result->result_b);
-      if(n > 0) {
-        // Reversed: put it the right way round
-        size_t i;
-        for(i = 0; i < n / 2; i++) {
-          char t = result->result_a[i];
-          result->result_a[i] = result->result_a[n - 1 - i];
-          result->result_a[n - 1 - i] = t;
-          t = result->result_b[i];
-          result->result_b[i] = result->result_b[n - 1 - i];
-          result->result_b[n - 1 - i] = t;
+
+  if(len_a + len_b <= 2048) {
+    wf_slot_t *slots;
+    size_t nslots;
+    aln_status_t status = ALN_ERR_UNSUPPORTED;
+    score_t score;
+    const long long penalty = wfa_fill(&pair, budget, true, &slots, &nslots);
+    if(penalty >= 0 && wfa_best(&pair, penalty, &score)) {
+      if(!alignment_reserve(result, len_a + len_b)) status = ALN_ERR_NOMEM;
+      else {
+        size_t n = wfa_trace(&pair, slots, penalty, seq_a, seq_b,
+                             result->result_a, result->result_b);
+        if(n > 0) {
+          size_t i;
+          for(i = 0; i < n / 2; i++) {
+            char t = result->result_a[i];
+            result->result_a[i] = result->result_a[n - 1 - i];
+            result->result_a[n - 1 - i] = t;
+            t = result->result_b[i];
+            result->result_b[i] = result->result_b[n - 1 - i];
+            result->result_b[n - 1 - i] = t;
+          }
+          result->result_a[n] = result->result_b[n] = '\0';
+          result->length = n;
+          result->score = score;
+          result->pos_a = result->pos_b = 0;
+          result->len_a = len_a;
+          result->len_b = len_b;
+          status = ALN_OK;
         }
-        result->result_a[n] = result->result_b[n] = '\0';
-        result->length = n;
-        result->score = score;
-        result->pos_a = result->pos_b = 0;
-        result->len_a = len_a;
-        result->len_b = len_b;
-        status = ALN_OK;
       }
     }
+    wfa_free(slots, nslots);
+    free(pair.a);
+    return status;
   }
-  wfa_free(slots, nslots);
+
+  if(!alignment_reserve(result, len_a + len_b)) {
+    free(pair.a);
+    return ALN_ERR_NOMEM;
+  }
+  uint8_t *ra = aln_malloc(len_a + len_b);
+  if(ra == NULL) { free(pair.a); return ALN_ERR_NOMEM; }
+  uint8_t *rb = ra + len_a;
+  size_t i;
+  for(i = 0; i < len_a; i++) ra[i] = pair.a[len_a - 1 - i];
+  for(i = 0; i < len_b; i++) rb[i] = pair.b[len_b - 1 - i];
+
+  size_t budget_left = budget;
+  long long penalty = -1;
+  size_t n = biwfa_rec(pair.a, ra, seq_a, pair.m,
+                       pair.b, rb, seq_b, pair.nb,
+                       pair.px, pair.po, pair.pe, WFA_M, WFA_M,
+                       &budget_left, result->result_a, result->result_b,
+                       &penalty);
+  free(ra);
+  aln_status_t status = ALN_ERR_UNSUPPORTED;
+  score_t score;
+  if(n > 0 && penalty >= 0 && wfa_best(&pair, penalty, &score)) {
+    result->result_a[n] = result->result_b[n] = '\0';
+    result->length = n;
+    result->score = score;
+    result->pos_a = result->pos_b = 0;
+    result->len_a = len_a;
+    result->len_b = len_b;
+    status = ALN_OK;
+  }
   free(pair.a);
   return status;
 }

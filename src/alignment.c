@@ -228,17 +228,32 @@ size_t alignment_band_width(score_t smax, score_t gap_extend,
 
 #ifdef ALN_STRIPED
 
-// Wait until the block on the left has finished row y. Returns false if a
-// block stopped meanwhile (see alignment_block_t.stop; stop may be NULL)
+typedef struct {
+  _Alignas(64) atomic_size_t v;
+} aln_done_t;
+
+// Publish progress every ALN_PUB_ROWS rows (plus the final row) to cut
+// cross-core atomic traffic while keeping the pipeline full
+#define ALN_PUB_ROWS 16
+
+// Wait until the block on the left has finished row y. Caches the last
+// observed row in *seen so the common case needs no atomic load. Returns
+// false if a block stopped meanwhile (see alignment_block_t.stop)
 static inline bool alignment_wait_row(atomic_size_t *left_done, size_t y,
-                                      atomic_bool *stop)
+                                      atomic_bool *stop, size_t *seen)
 {
+  if(*seen >= y) return true;
   unsigned spins = 0;
-  while(atomic_load_explicit(left_done, memory_order_acquire) < y) {
+  size_t cur;
+  while((cur = atomic_load_explicit(left_done, memory_order_acquire)) < y) {
     if(stop != NULL &&
        atomic_load_explicit(stop, memory_order_relaxed)) return false;
-    if(++spins > 256) { spins = 0; sched_yield(); }
+#if defined(__x86_64__) || defined(__i386__)
+    __builtin_ia32_pause();
+#endif
+    if(++spins > 64) { spins = 0; sched_yield(); }
   }
+  *seen = cur;
   return true;
 }
 
@@ -467,7 +482,7 @@ static bool alignment_fill_blocks(alignment_block_t *tmpl)
   // Blocks of equal width (a multiple of ALN_VL); the last takes the rest
   size_t width = (len_i / nblocks) / ALN_VL * ALN_VL;
   alignment_block_t args[nblocks];
-  atomic_size_t done[nblocks];
+  aln_done_t done[nblocks];
   pthread_t thread_ids[nblocks];
   bool started[nblocks];
 
@@ -488,13 +503,13 @@ static bool alignment_fill_blocks(alignment_block_t *tmpl)
   }
 
   for(i = 0; i < nblocks; i++) {
-    atomic_init(&done[i], 0);
+    atomic_init(&done[i].v, 0);
     alignment_block_t *b = &args[i];
     *b = *tmpl;
     b->c0 = tmpl->c0 + i * width;
     b->width = i + 1 < nblocks ? width : len_i - i * width;
-    b->left_done = i > 0 ? &done[i-1] : NULL;
-    b->done = i + 1 < nblocks ? &done[i] : NULL;
+    b->left_done = i > 0 ? &done[i-1].v : NULL;
+    b->done = i + 1 < nblocks ? &done[i].v : NULL;
     b->best_score = 0;
     b->best_x = b->best_y = 0;
     b->stop = &stop;
@@ -689,7 +704,9 @@ bool alignment_sw_rows(const char *a, size_t len_a,
 bool alignment_sw_trace_rows(const char *a, size_t len_a,
                              const char *b, size_t len_b,
                              const scoring_t *scoring,
+                             const sub_table_t *table,
                              const alignment_options_t *opts,
+                             score_t max_score,
                              const score_t *row, size_t y0, size_t y1,
                              size_t xmax, uint8_t *trace)
 {
@@ -711,23 +728,39 @@ bool alignment_sw_trace_rows(const char *a, size_t len_a,
   const size_t w = len_a + 1;
   score_t zero = 0;
   ptrdiff_t *trace_rows = aln_malloc((y1 + 1) * sizeof(ptrdiff_t));
-  sub_table_t table;
-  if(trace_rows == NULL ||
-     !sub_table_build(&table, scoring, a, len_a, b, len_b)) {
-    free(trace_rows);
-    return false;
+  if(trace_rows == NULL) return false;
+  sub_table_t local_table;
+  const sub_table_t *use_table = table;
+  if(use_table == NULL) {
+    if(!sub_table_build(&local_table, scoring, a, len_a, b, len_b)) {
+      free(trace_rows);
+      return false;
+    }
+    use_table = &local_table;
   }
   size_t r;
   for(r = y0; r <= y1; r++)
     trace_rows[r] = (ptrdiff_t)((r - y0) * xmax) - 1;
-  // 32-bit lanes: row y0-1 may hold any score
   alignment_block_t tmpl = {
-    .aligner = &tmp, .table = &table, .min = 0,
+    .aligner = &tmp, .table = use_table, .min = 0,
     .r0 = {row, row + w, row + 2*w}, .lc = {&zero, &zero, &zero},
     .lstride = 0, .width = xmax, .y0 = y0, .y1 = y1,
     .trace = trace, .trace_rows = trace_rows};
+  // Use 8- or 16-bit lanes when the known global max_score fits safely
+  score_t lim = 0;
+  if(tmp.opts.narrow && max_score > 0) {
+    if(alignment_narrow_limit(use_table, scoring, 0, xmax, 8, &lim) &&
+       max_score <= lim) {
+      tmpl.bits = 8;
+      tmpl.narrow_limit = lim;
+    } else if(alignment_narrow_limit(use_table, scoring, 0, xmax, 16, &lim) &&
+              max_score <= lim) {
+      tmpl.bits = 16;
+      tmpl.narrow_limit = lim;
+    }
+  }
   bool filled = alignment_fill_blocks(&tmpl);
-  sub_table_free(&table);
+  if(table == NULL) sub_table_free(&local_table);
   free(trace_rows);
   return filled;
 }
@@ -769,11 +802,14 @@ bool alignment_sw_rows(const char *a, size_t len_a,
 bool alignment_sw_trace_rows(const char *a, size_t len_a,
                              const char *b, size_t len_b,
                              const scoring_t *scoring,
+                             const sub_table_t *table,
                              const alignment_options_t *opts,
+                             score_t max_score,
                              const score_t *row, size_t y0, size_t y1,
                              size_t xmax, uint8_t *trace)
 {
-  (void)a; (void)len_a; (void)b; (void)len_b; (void)scoring; (void)opts;
+  (void)a; (void)len_a; (void)b; (void)len_b; (void)scoring; (void)table;
+  (void)opts; (void)max_score;
   (void)row; (void)y0; (void)y1; (void)xmax; (void)trace;
   return false;
 }
@@ -1001,7 +1037,10 @@ static bool alignment_trace_capacity(aligner_t *aligner, size_t cells)
 {
   if(aligner->trace_capacity < cells) {
     free(aligner->trace);
-    aligner->trace_capacity = ROUNDUP2POW(cells);
+    // Avoid doubling multi-gigabyte traceback buffers (e.g. 2.5 GiB -> 4 GiB)
+    size_t cap = cells <= ((size_t)1 << 20) ? ROUNDUP2POW(cells)
+                 : (cells <= SIZE_MAX - cells / 4 ? cells + cells / 4 : cells);
+    aligner->trace_capacity = cap;
     aligner->trace = alignment_alloc_matrix(aligner->trace_capacity);
     if(aligner->trace == NULL) {
       aligner->trace_capacity = 0;

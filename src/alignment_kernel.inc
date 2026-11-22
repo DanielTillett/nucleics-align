@@ -169,6 +169,8 @@ static void KN(alignment_fill_striped)(alignment_block_t *p)
     vlim[l] = (KS)(l*seg >= len_i ? 0 : MIN2(seg, len_i - l*seg));
 #endif
 
+  size_t left_seen = 0;
+
   for(y = p->y0; y <= p->y1; y++)
   {
     const size_t row = y*w;
@@ -176,7 +178,8 @@ static void KN(alignment_fill_striped)(alignment_block_t *p)
       (size_t)table->code[(unsigned char)aligner->seq_b[y-1]] * seg;
 
     // Column c0 (initialised, or the left block's) feeds lane 0 at k = 0
-    if(p->left_done != NULL && !alignment_wait_row(p->left_done, y, p->stop))
+    if(p->left_done != NULL &&
+       !alignment_wait_row(p->left_done, y, p->stop, &left_seen))
       break;
     const size_t lp = (y-1-ly0)*ls, lc = (y-ly0)*ls;
     const score_t lm_prev = lcM[lp], la_prev = lcA[lp], lb_prev = lcB[lp];
@@ -376,7 +379,8 @@ static void KN(alignment_fill_striped)(alignment_block_t *p)
         }
       }
     }
-    if(p->done != NULL) atomic_store_explicit(p->done, y, memory_order_release);
+    if(p->done != NULL && (((y - p->y0) & (ALN_PUB_ROWS - 1)) == (ALN_PUB_ROWS - 1) || y == p->y1))
+      atomic_store_explicit(p->done, y, memory_order_release);
 
     tmp = pM; pM = cM; cM = tmp;
     tmp = pA; pA = cA; cA = tmp;

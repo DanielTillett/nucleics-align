@@ -120,6 +120,7 @@ static void DN(alignment_fill_diff)(alignment_block_t *p)
   for(c = 0; c < 3; c++) p->rc[c][p->y0-1] = p->r0[c][c0+len_i];
 
   const size_t kl = (len_i - 1) % seg, ll = (len_i - 1) / seg; // last cell
+  size_t left_seen = 0;
 
   for(y = p->y0; y <= p->y1; y++)
   {
@@ -127,7 +128,8 @@ static void DN(alignment_fill_diff)(alignment_block_t *p)
       (size_t)table->code[(unsigned char)aligner->seq_b[y-1]] * seg;
 
     // Column c0 (initialised, or the left block's) feeds lane 0 at k = 0
-    if(p->left_done != NULL && !alignment_wait_row(p->left_done, y, p->stop))
+    if(p->left_done != NULL &&
+       !alignment_wait_row(p->left_done, y, p->stop, &left_seen))
       break;
     const size_t lp = (y-1-ly0)*ls, lc = (y-ly0)*ls;
     const score_t lm_prev = lcM[lp], la_prev = lcA[lp], lb_prev = lcB[lp];
@@ -232,7 +234,8 @@ static void DN(alignment_fill_diff)(alignment_block_t *p)
     hfirst += MAX3((score_t)cm[0][0], (score_t)ca[0][0], (score_t)cb[0][0]);
     for(l = 0; l < ALN_D_VL; l++) hlane[l] += hend[l];
 
-    if(p->done != NULL) atomic_store_explicit(p->done, y, memory_order_release);
+    if(p->done != NULL && (((y - p->y0) & (ALN_PUB_ROWS - 1)) == (ALN_PUB_ROWS - 1) || y == p->y1))
+      atomic_store_explicit(p->done, y, memory_order_release);
 
     tmp = pOM; pOM = cOM; cOM = tmp;
     tmp = pOA; pOA = cOA; cOA = tmp;

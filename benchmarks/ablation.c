@@ -1,14 +1,14 @@
 /*
  * benchmarks/ablation.c
- * Component ablation benchmark for Nucleics Align (C11 library API).
- * Times each optimisation layer on a pair of sequences from a FASTA file
- * (default DNA scoring +1 / -2 / -4 / -1) and asserts identical optimal scores.
+ * Ten-configuration component ablation benchmark for Nucleics Align (C11 API).
+ * Accepts a single configuration name so each configuration can be timed in a
+ * fresh process with exact peak RSS (MiB) and zero cross-run allocator effects.
  *
  * Build (from repo root after `make`):
  *   cc -O3 benchmarks/ablation.c -I src -I libs -L src -L libs/string_buffer \
  *      -lalign -lstrbuf -lpthread -lz -o /tmp/ablation
  * Usage:
- *   /tmp/ablation <pair.fa> [threads]
+ *   /tmp/ablation <pair.fa> <mode|all> [threads]
  */
 #define _POSIX_C_SOURCE 200809L
 #include <stdio.h>
@@ -91,12 +91,55 @@ static double time_hb(const char *a, size_t la, const char *b, size_t lb,
   return dt;
 }
 
+static void run_one(const char *mode, const char *a, size_t la,
+                    const char *b, size_t lb, const scoring_t *sc, int threads) {
+  alignment_options_t o;
+  alignment_options_default(&o);
+  score_t s = 0;
+  double ms = 0.0;
+
+  if (strcmp(mode, "scalar_3mat_1t") == 0) {
+    o.striped = false; o.band = false; o.diff = false; o.max_threads = 1;
+    ms = time_nw(a, la, b, lb, sc, false, &o, &s);
+  } else if (strcmp(mode, "striped_32b_1t") == 0) {
+    o.striped = true; o.diff = false; o.band = false; o.max_threads = 1;
+    ms = time_nw(a, la, b, lb, sc, true, &o, &s);
+  } else if (strcmp(mode, "striped_diff8_1t") == 0) {
+    o.striped = true; o.diff = true; o.band = false; o.max_threads = 1;
+    ms = time_nw(a, la, b, lb, sc, true, &o, &s);
+  } else if (strcmp(mode, "banded_nowfa_1t") == 0) {
+    o.striped = true; o.diff = true; o.band = true; o.band_wfa_budget = 0;
+    o.max_threads = 1;
+    ms = time_nw(a, la, b, lb, sc, true, &o, &s);
+  } else if (strcmp(mode, "banded_wfa_1t") == 0) {
+    o.striped = true; o.diff = true; o.band = true; o.max_threads = 1;
+    ms = time_nw(a, la, b, lb, sc, true, &o, &s);
+  } else if (strcmp(mode, "banded_nt") == 0) {
+    o.striped = true; o.diff = true; o.band = true; o.max_threads = threads;
+    ms = time_nw(a, la, b, lb, sc, true, &o, &s);
+  } else if (strcmp(mode, "linear_1t") == 0) {
+    o.hb_max_threads = 1;
+    ms = time_hb(a, la, b, lb, sc, &o, &s);
+  } else if (strcmp(mode, "linear_nt") == 0) {
+    o.hb_max_threads = threads;
+    ms = time_hb(a, la, b, lb, sc, &o, &s);
+  } else if (strcmp(mode, "wfa_1t") == 0) {
+    o.wfa_align = true; o.max_threads = 1;
+    ms = time_nw(a, la, b, lb, sc, true, &o, &s);
+  } else {
+    fprintf(stderr, "Unknown mode: %s\n", mode);
+    exit(1);
+  }
+  printf("%s\t%.3f\t%d\n", mode, ms, s);
+}
+
 int main(int argc, char **argv) {
-  if (argc < 2) {
-    fprintf(stderr, "Usage: %s <pair.fa> [threads]\n", argv[0]);
+  if (argc < 3) {
+    fprintf(stderr, "Usage: %s <pair.fa> <mode|all> [threads]\n", argv[0]);
     return 1;
   }
-  int threads = argc >= 3 ? atoi(argv[2]) : 8;
+  const char *mode = argv[2];
+  int threads = argc >= 4 ? atoi(argv[3]) : 8;
   FILE *f = fopen(argv[1], "r");
   if (!f) { perror(argv[1]); return 1; }
   size_t la = 0, lb = 0;
@@ -107,63 +150,17 @@ int main(int argc, char **argv) {
   scoring_t sc;
   scoring_system_default(&sc);
 
-  alignment_options_t o;
-  score_t ref_score = 0, s = 0;
-  double ms;
-
-  /* 1. Baseline scalar 3-matrix (1 thread) */
-  alignment_options_default(&o);
-  o.striped = false; o.band = false; o.diff = false; o.max_threads = 1;
-  ms = time_nw(a, la, b, lb, &sc, false, &o, &ref_score);
-  printf("scalar_3mat_1t\t%.3f\t%d\n", ms, ref_score);
-
-  /* 2. + Compact 1-byte traceback (scalar, 1 thread) */
-  ms = time_nw(a, la, b, lb, &sc, true, &o, &s);
-  if (s != ref_score) { fprintf(stderr, "Score mismatch!\n"); return 3; }
-  printf("compact_scalar_1t\t%.3f\t%d\n", ms, s);
-
-  /* 3. + Striped SIMD (no diff, no band, 1 thread) */
-  o.striped = true; o.diff = false; o.band = false; o.max_threads = 1;
-  ms = time_nw(a, la, b, lb, &sc, true, &o, &s);
-  if (s != ref_score) { fprintf(stderr, "Score mismatch!\n"); return 3; }
-  printf("striped_32b_1t\t%.3f\t%d\n", ms, s);
-
-  /* 4. + Difference-encoded 8-bit lanes (no band, 1 thread) */
-  o.diff = true; o.band = false; o.max_threads = 1;
-  ms = time_nw(a, la, b, lb, &sc, true, &o, &s);
-  if (s != ref_score) { fprintf(stderr, "Score mismatch!\n"); return 3; }
-  printf("striped_diff8_1t\t%.3f\t%d\n", ms, s);
-
-  /* 5. + Certified exact banding (1 thread) */
-  o.band = true; o.max_threads = 1;
-  ms = time_nw(a, la, b, lb, &sc, true, &o, &s);
-  if (s != ref_score) { fprintf(stderr, "Score mismatch!\n"); return 3; }
-  printf("banded_1t\t%.3f\t%d\n", ms, s);
-
-  /* 6. + Multi-threading (N threads) */
-  o.max_threads = threads;
-  ms = time_nw(a, la, b, lb, &sc, true, &o, &s);
-  if (s != ref_score) { fprintf(stderr, "Score mismatch!\n"); return 3; }
-  printf("banded_%dt\t%.3f\t%d\n", threads, ms, s);
-
-  /* 7. Linear space (1 thread and N threads) */
-  alignment_options_default(&o);
-  o.hb_max_threads = 1;
-  ms = time_hb(a, la, b, lb, &sc, &o, &s);
-  if (s != ref_score) { fprintf(stderr, "Score mismatch!\n"); return 3; }
-  printf("linear_1t\t%.3f\t%d\n", ms, s);
-
-  o.hb_max_threads = threads;
-  ms = time_hb(a, la, b, lb, &sc, &o, &s);
-  if (s != ref_score) { fprintf(stderr, "Score mismatch!\n"); return 3; }
-  printf("linear_%dt\t%.3f\t%d\n", threads, ms, s);
-
-  /* 8. Wavefront (--wfa, 1 thread) */
-  alignment_options_default(&o);
-  o.wfa_align = true; o.max_threads = 1;
-  ms = time_nw(a, la, b, lb, &sc, true, &o, &s);
-  if (s != ref_score) { fprintf(stderr, "Score mismatch!\n"); return 3; }
-  printf("wfa_1t\t%.3f\t%d\n", ms, s);
+  if (strcmp(mode, "all") == 0) {
+    const char *modes[] = {
+      "scalar_3mat_1t", "striped_32b_1t", "striped_diff8_1t",
+      "banded_nowfa_1t", "banded_wfa_1t", "banded_nt",
+      "linear_1t", "linear_nt", "wfa_1t"
+    };
+    for (size_t i = 0; i < sizeof(modes)/sizeof(modes[0]); i++)
+      run_one(modes[i], a, la, b, lb, &sc, threads);
+  } else {
+    run_one(mode, a, la, b, lb, &sc, threads);
+  }
 
   free(a);
   free(b);

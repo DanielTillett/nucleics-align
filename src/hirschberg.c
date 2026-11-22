@@ -220,18 +220,28 @@ static void hb_chain_take(hb_chain_t *c, size_t n, bool reverse,
 
 // What a block passes to the block on its right, for each row r = 0..rows:
 // H[r] best score in its last column, F[r] the insertion gap score entering
-// the next column. done counts the rows published so far
+// the next column. done counts the rows published so far (64-byte aligned
+// to avoid false sharing between adjacent blocks)
 typedef struct {
-  score_t *H, *F;
+  _Alignas(64) score_t *H, *F;
   atomic_size_t done;
 } hb_boundary_t;
 
+#define HB_PUB_ROWS 16
+
 // Wait until the block on the left has published row r
-static inline void hb_wait_row(hb_boundary_t *left, size_t r)
+static inline void hb_wait_row(hb_boundary_t *left, size_t r, size_t *seen)
 {
+  if(*seen > r) return;
   unsigned spins = 0;
-  while(atomic_load_explicit(&left->done, memory_order_acquire) <= r)
-    if(++spins > 256) { spins = 0; sched_yield(); }
+  size_t cur;
+  while((cur = atomic_load_explicit(&left->done, memory_order_acquire)) <= r) {
+#if defined(__x86_64__) || defined(__i386__)
+    __builtin_ia32_pause();
+#endif
+    if(++spins > 64) { spins = 0; sched_yield(); }
+  }
+  *seen = cur;
 }
 
 // Where a strip of a banded pass starts (see hb_pass_banded()): its top row
@@ -404,7 +414,8 @@ static void hb_block_pass16(hb_state_t *st, const char *a, ptrdiff_t astep,
     }
 
     if(s == 0 && left != NULL) {
-      hb_wait_row(left, 0);
+      size_t seen0 = 0;
+      hb_wait_row(left, 0, &seen0);
       q->ref = left->H[0];
     }
     else if(top != NULL) q->ref = top->H[q->c0];
@@ -428,6 +439,7 @@ static void hb_block_pass16(hb_state_t *st, const char *a, ptrdiff_t astep,
     atomic_store_explicit(&right->done, 1, memory_order_release);
   }
 
+  size_t left_seen = 0;
   for(r = 0; r < rows; r++)
   {
     const size_t code = t->code[(unsigned char)a[(ptrdiff_t)r * astep]];
@@ -436,7 +448,7 @@ static void hb_block_pass16(hb_state_t *st, const char *a, ptrdiff_t astep,
       col0 += h;
       fstart = col0 + g + h;
     } else {
-      hb_wait_row(left, r+1);
+      hb_wait_row(left, r+1, &left_seen);
       col0 = left->H[r+1];
       fstart = left->F[r+1];
     }
@@ -447,7 +459,8 @@ static void hb_block_pass16(hb_state_t *st, const char *a, ptrdiff_t astep,
     if(right != NULL) {
       right->H[r+1] = hl;
       right->F[r+1] = fo;
-      atomic_store_explicit(&right->done, r+2, memory_order_release);
+      if(((r + 1) & (HB_PUB_ROWS - 1)) == 0 || r + 1 == rows)
+        atomic_store_explicit(&right->done, r+2, memory_order_release);
     }
   }
 
@@ -543,6 +556,7 @@ static void hb_block_pass(hb_state_t *st, const char *a, ptrdiff_t astep,
   // the left block may be writing top->H[c0] as the strip's output)
   if(top != NULL && left == NULL) { col0 = top->col0; col0_prev = top->H[c0]; }
 
+  size_t left_seen = 0;
   for(r = 0; r < rows; r++)
   {
     const vscore_t *pr = prof +
@@ -554,7 +568,7 @@ static void hb_block_pass(hb_state_t *st, const char *a, ptrdiff_t astep,
       col0 += h;
       fstart = col0 + g + h;
     } else {
-      hb_wait_row(left, r+1);
+      hb_wait_row(left, r+1, &left_seen);
       col0_prev = left->H[r];
       col0 = left->H[r+1];
       fstart = left->F[r+1];
@@ -599,7 +613,8 @@ static void hb_block_pass(hb_state_t *st, const char *a, ptrdiff_t astep,
     if(right != NULL) {
       right->H[r+1] = Hn[seg-1][ALN_VL-1];
       right->F[r+1] = fout;
-      atomic_store_explicit(&right->done, r+2, memory_order_release);
+      if(((r + 1) & (HB_PUB_ROWS - 1)) == 0 || r + 1 == rows)
+        atomic_store_explicit(&right->done, r+2, memory_order_release);
     }
 
     tmp = H; H = Hn; Hn = tmp;

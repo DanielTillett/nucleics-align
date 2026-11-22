@@ -360,7 +360,9 @@ bool alignment_sw_rows(const char *a, size_t len_a,
 bool alignment_sw_trace_rows(const char *a, size_t len_a,
                              const char *b, size_t len_b,
                              const scoring_t *scoring,
+                             const sub_table_t *table,
                              const alignment_options_t *opts,
+                             score_t max_score,
                              const score_t *row, size_t y0, size_t y1,
                              size_t xmax, uint8_t *trace);
 

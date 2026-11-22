@@ -80,7 +80,7 @@ aln_status_t needleman_wunsch_align_checked(const char *a, const char *b,
                                             aln_error_t *err);
 ```
 
-Set `nw->compact = true` whenever you do not need to inspect the raw score matrices afterwards. It uses 12x less memory (one traceback byte per cell) and enables exact banding and difference-encoded SIMD lanes.
+Set `nw->compact = true` whenever you do not need to inspect the raw score matrices afterwards. Whenever `opts.striped` is enabled (the default) and the scoring options are supported by the striped kernels, it uses 12x less memory (one traceback byte per cell) and enables exact banding and difference-encoded SIMD lanes; otherwise (for example if `opts.striped = false`) it falls back to the three-matrix scalar fill.
 
 ### Local alignment (`smith_waterman.h`)
 

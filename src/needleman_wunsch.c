@@ -64,10 +64,10 @@ static bool _nw_linear(const char *a, const char *b, size_t len_a,
                                   NULL) == ALN_OK;
 }
 
-// Most cells the kept wavefronts of a --wfa alignment may take, per letter
-// and in all (2^25 cells: about 400 MB)
-#define NW_WFA_PER_LETTER 64
-#define NW_WFA_MAX_CELLS ((size_t)1 << 25)
+// Work budget for --wfa alignment (BiWFA uses O(s) space, so this caps
+// diagonal updates to fall back quickly on divergent pairs)
+#define NW_WFA_PER_LETTER 256
+#define NW_WFA_MAX_CELLS ((size_t)1 << 28)
 
 // By the wavefront algorithm, if the options ask (alignment_wfa_alignment)
 // and it applies: the scoring suits it and the pair is similar enough.

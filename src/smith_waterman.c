@@ -409,7 +409,8 @@ static int _follow_strips(sw_aligner_t *sw, alignment_t *result)
       s0 = kept * k + 1;
       xs = x;
       if(!alignment_sw_trace_rows(a, w - 1, b, aligner->score_height - 1,
-                                  scoring, &aligner->opts,
+                                  scoring, t, &aligner->opts,
+                                  aligner->best_score,
                                   sw->ckpt + kept * 3 * w, s0, y, xs, trace)) {
         free(ops);
         free(trace);

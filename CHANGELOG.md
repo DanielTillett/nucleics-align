@@ -5,6 +5,28 @@ Nucleics Align is derived from Isaac Turner's
 2017). Output is the same as seq-align's, byte for byte, except for the
 fixes listed under [Changes to output](#changes-to-output).
 
+## 1.2.0 - 22 Nov 2026
+
+### Added
+
+- $O(s)$-space Bidirectional Wavefront Alignment (BiWFA) with decoupled
+  AVX2/SSE4.1/SSE2 multi-versioned compute and extend loops for `--wfa`
+  (`alignment_wfa_align()`), lifting the retained-wavefront memory ceiling so
+  long similar pairs (50 kb--1 Mb at ~1% divergence) align in a few megabytes
+  of RAM while returning the exact optimal score
+
+### Improved
+
+- Eliminated cache-line false sharing on multi-threaded block progress counters
+  (`_Alignas(64)` in `alignment.c` and `hirschberg.c`), cached observed row
+  progress, batched publication to every 16 rows, and added x86 `pause` hints
+  to cut spin-wait CPU overhead on multi-threaded full-matrix fills
+- `smith_waterman --maxhits 1` strip refills now reuse the precomputed
+  substitution table and select 8- or 16-bit SIMD lanes whenever the known
+  optimal score fits safely, preserving byte-identical traceback
+- Capped traceback buffer growth above 1 MiB at 1.25x instead of power-of-two
+  doubling to avoid over-allocating multi-gigabyte buffers
+
 ## 1.1.0 - 22 Nov 2026
 
 ### Added
