@@ -458,8 +458,8 @@ if SECTION in ("all", "local"):
         print(f"-- Local 20 kb {div} --")
         sw_scores = {}
         for tname, fn in [
-            ("sw_1t", lambda fa: [SW, "--threads", "1", "--maxhits", "1", "--file", fa]),
-            (f"sw_{THREADS}t", lambda fa: [SW, "--threads", THREADS, "--maxhits", "1", "--file", fa]),
+            ("sw_1t", lambda fa: [SW, "--threads", "1", "--maxhits", "1", "--minscore", "1", "--file", fa]),
+            (f"sw_{THREADS}t", lambda fa: [SW, "--threads", THREADS, "--maxhits", "1", "--minscore", "1", "--file", fa]),
             ("ssw", lambda fa: [SSW, fa]),
         ]:
             walls, cpus, rsss, scores, flags = [], [], [], [], []

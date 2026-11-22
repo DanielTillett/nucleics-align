@@ -1,0 +1,276 @@
+# host: Linux pop-os 7.2.15-76070215-generic #202611011338~1794956660~24.04~3bf1542 SMP PREEMPT_DYNAMIC Tue N x86_64 x86_64 x86_64 GNU/Linux
+# git:  aaf0754
+# threads: 8
+Pair                                  LenA    LenB Mode          Wall_ms    CPU_ms  RSS_MiB      Score
+# Human vs Neanderthal mtDNA: human_mt.fa(fc392cde8e63) vs neanderthal_mt.fa(ba000220b2a1)
+Human vs Neanderthal mtDNA           16569   16565 full            17.58      10.0     11.5      15928
+Human vs Neanderthal mtDNA           16569   16565 wfa              5.89       0.0      2.9      15928
+Human vs Neanderthal mtDNA           16569   16565 linear          23.02      30.0      3.1      15928
+Human vs Neanderthal mtDNA           16569   16565 scoreonly        6.94       0.0      3.1      15928
+Human vs Neanderthal mtDNA           16569   16565 local1          89.28     330.0     19.2      32292
+  IDENTITY: 98.72% (matches=16358, mismatches=206, gap_cols=6)
+# Human vs Chimp mtDNA: human_mt.fa(fc392cde8e63) vs chimp_mt.fa(e52fe9f13500)
+Human vs Chimp mtDNA                 16569   16554 full            49.98     340.0    266.4      10632
+Human vs Chimp mtDNA                 16569   16554 wfa             81.69     370.0    266.8      10632
+Human vs Chimp mtDNA                 16569   16554 linear          55.86     170.0      4.1      10632
+Human vs Chimp mtDNA                 16569   16554 scoreonly       20.23      90.0      3.7      10632
+Human vs Chimp mtDNA                 16569   16554 local1          85.63     320.0     19.0      26450
+  IDENTITY: 85.19% (matches=14605, mismatches=1374, gap_cols=1165)
+# SARS-CoV-2 Wuhan vs Omicron: sars2_wuhan.fa(0891c00cc2d5) vs sars2_omicron.fa(cd25be7f2a97)
+SARS-CoV-2 Wuhan vs Omicron          29903   29684 full            22.20      10.0     16.2      29240
+SARS-CoV-2 Wuhan vs Omicron          29903   29684 wfa              5.69       0.0      3.0      29240
+SARS-CoV-2 Wuhan vs Omicron          29903   29684 linear          46.56      60.0      3.6      29240
+SARS-CoV-2 Wuhan vs Omicron          29903   29684 scoreonly       12.82      20.0      3.4      29240
+SARS-CoV-2 Wuhan vs Omicron          29903   29684 local1         246.48    1430.0     41.9      59072
+  IDENTITY: 99.03% (matches=29621, mismatches=54, gap_cols=237)
+# SARS-CoV-2 vs SARS-CoV-1: sars2_wuhan.fa(0891c00cc2d5) vs sars1.fa(af5dd09ebdea)
+SARS-CoV-2 vs SARS-CoV-1             29903   29751 full           160.88    1080.0    856.9      11467
+SARS-CoV-2 vs SARS-CoV-1             29903   29751 wfa            220.39    1140.0    856.9      11467
+SARS-CoV-2 vs SARS-CoV-1             29903   29751 linear         127.02     390.0      4.5      11467
+SARS-CoV-2 vs SARS-CoV-1             29903   29751 scoreonly       31.89     160.0      4.0      11467
+SARS-CoV-2 vs SARS-CoV-1             29903   29751 local1         226.71    1350.0     42.0      36403
+  IDENTITY: 79.54% (matches=23923, mismatches=5655, gap_cols=498)
+# Mpox Ref vs 2022 isolate: mpox_ref.fa(5112b46ee666) vs mpox_2022.fa(d13a83cb380a)
+Mpox Ref vs 2022 isolate            197209  197205 full            91.00      80.0     63.6     196823
+Mpox Ref vs 2022 isolate            197209  197205 wfa              8.07       0.0      4.3     196823
+Mpox Ref vs 2022 isolate            197209  197205 linear         287.11     420.0     10.9     196823
+Mpox Ref vs 2022 isolate            197209  197205 scoreonly       49.87      80.0     10.4     196823
+Mpox Ref vs 2022 isolate            197209  197205 local1        9376.70   67850.0    625.8     393976
+  IDENTITY: 99.92% (matches=197091, mismatches=67, gap_cols=98)
+# M. genitalium G37 vs M2288: mgen_g37.fa(cc21ace789ae) vs mgen_m2288.fa(6903d0414448)
+M. genitalium G37 vs M2288          580076  579558 full          2123.27    8840.0   4430.9     564775
+M. genitalium G37 vs M2288          580076  579558 wfa           3061.57    9800.0   4431.4     564775
+M. genitalium G37 vs M2288          580076  579558 linear        2276.21    6860.0     29.2     564775
+M. genitalium G37 vs M2288          580076  579558 scoreonly      574.02    3010.0     27.3     564775
+  IDENTITY: 99.09% (matches=575139, mismatches=4101, gap_cols=1154)
+# Human vs Mouse BRCA1 (BLOSUM62): human_brca1.fa(e537b173aa00) vs mouse_brca1.fa(7f5e53a72dfd)
+Human vs Mouse BRCA1 (BLOSUM62)       1863    1812 full             7.29       0.0      6.4       4827
+Human vs Mouse BRCA1 (BLOSUM62)       1863    1812 wfa              6.93       0.0      6.4       4827
+Human vs Mouse BRCA1 (BLOSUM62)       1863    1812 linear           6.47       0.0      2.6       4827
+Human vs Mouse BRCA1 (BLOSUM62)       1863    1812 scoreonly        4.08       0.0      2.5       4827
+Human vs Mouse BRCA1 (BLOSUM62)       1863    1812 local1           6.85       0.0      6.9       4844
+  IDENTITY: 55.76% (matches=1046, mismatches=753, gap_cols=77)
+# host: Linux pop-os 7.2.15-76070215-generic #202611011338~1794956660~24.04~3bf1542 SMP PREEMPT_DYNAMIC Tue N x86_64 x86_64 x86_64 GNU/Linux
+# cpu:  AMD Ryzen 7 5700G with Radeon Graphics
+# governor: powersave
+# smt:  1
+# gcc:  gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0
+# python: Python 3.12.3
+# nucleics-align: aaf0754
+# nw_sha256: da7ccd41651122ae77c6fff6fb4f41d31436b3a07a126f2018bffdc05a301b0c
+# sw_sha256: 33607565e570cb079fb92a6a7411b716b9f679faa43306270b7ad7cfc44c1322
+# seq-align: dc41988
+# ksw2: 289609b
+# WFA2-lib: cf3eb92 (v2.3.5)
+# SSW: a66636b
+# edlib: ec2310e (v1.2.7)
+
+=== FRESH-PROCESS 9-CONFIGURATION ABLATION (20 kb, 5 seeds, lib wall ms + peak RSS MiB) ===
+-- 20 kb 1% --
+# sha256 20000_1_s1.fa = 14bb20dec319d3a477bcaf2bff9a73ed57390dce1017d543848e43f405dc04ff
+# sha256 20000_1_s2.fa = 591acac5d1725ff07ac233876c2583e013bc3c39db491cce3e6786d63960979e
+# sha256 20000_1_s3.fa = 61b9246127c50bdb240cea0d17de71b32d5c9dec0a8ed36d4088501345e3937f
+# sha256 20000_1_s4.fa = f341c2ae46e1ff33e1f707ef749bc98a99c75ccff7407d067ef6b59232d8f157
+# sha256 20000_1_s5.fa = 3e447897b220375ab60fa6b4059f2757d8fe12393c9ce4047a200434dc21119c
+  scalar_3mat_1t        med= 2730.27 ms [2724.59-2734.87]  rss= 4580.2 MiB  seeds=[2734.87,2730.27,2724.59,2734.25,2725.52]
+  striped_32b_1t        med=  442.96 ms [ 441.05- 459.08]  rss=  385.7 MiB  seeds=[442.96,442.20,441.05,456.14,459.08]
+  striped_diff8_1t      med=  237.07 ms [ 236.19- 243.10]  rss=  385.4 MiB  seeds=[238.39,236.72,236.19,237.07,243.10]
+  banded_nowfa_1t       med=   22.80 ms [  20.42-  23.97]  rss=   17.3 MiB  seeds=[22.80,22.92,23.97,22.66,20.42]
+  banded_wfa_1t         med=   24.15 ms [  22.89-  24.94]  rss=   17.6 MiB  seeds=[23.79,24.94,24.32,24.15,22.89]
+  banded_nt             med=   24.24 ms [  22.46-  24.56]  rss=   17.6 MiB  seeds=[23.67,24.56,24.24,24.56,22.46]
+  linear_1t             med=   39.83 ms [  39.18-  40.11]  rss=    2.8 MiB  seeds=[39.27,39.95,40.11,39.83,39.18]
+  linear_nt             med=   28.66 ms [  28.16-  28.91]  rss=    3.2 MiB  seeds=[28.91,28.36,28.66,28.87,28.16]
+  wfa_1t                med=    8.59 ms [   7.96-   9.95]  rss=    2.9 MiB  seeds=[8.59,9.95,8.38,9.32,7.96]
+-- 20 kb 10% --
+# sha256 20000_10_s1.fa = 2f0a06aa459b7d3638b71b920952021fc5e0421c808e44c771d44ef67da84e81
+# sha256 20000_10_s2.fa = d09fbf7a1d4960b06fa06983d266ba468d50ce40f4358bd2c2e3171ebd2a04d1
+# sha256 20000_10_s3.fa = 32b1c63053da7ad90c78e186a7c43a381e23d8b86c0437fc5cf1b708cd246580
+# sha256 20000_10_s4.fa = 6bea6562e2014834cd400269b6fc5eaeff0a946789d1d9e4b26aa9bebf2f7e79
+# sha256 20000_10_s5.fa = 580923aff155db020962f770a6e48426e99b7dd05a603a995c8608532cafac7a
+  scalar_3mat_1t        med= 2838.42 ms [2826.76-2865.26]  rss= 4580.2 MiB  seeds=[2865.26,2838.42,2828.88,2845.11,2826.76]
+  striped_32b_1t        med=  430.95 ms [ 425.25- 443.47]  rss=  385.8 MiB  seeds=[425.25,430.95,430.37,437.03,443.47]
+  striped_diff8_1t      med=  237.73 ms [ 233.91- 242.21]  rss=  385.4 MiB  seeds=[237.73,233.91,242.21,234.60,240.44]
+  banded_nowfa_1t       med=  242.91 ms [ 239.75- 247.36]  rss=  385.5 MiB  seeds=[242.91,247.36,239.75,243.46,241.23]
+  banded_wfa_1t         med=  243.29 ms [ 241.54- 248.24]  rss=  385.8 MiB  seeds=[248.24,243.20,241.54,243.29,244.58]
+  banded_nt             med=   69.63 ms [  65.87-  75.09]  rss=  387.4 MiB  seeds=[75.09,70.48,69.63,67.03,65.87]
+  linear_1t             med=  177.11 ms [ 151.93- 183.78]  rss=    3.2 MiB  seeds=[178.58,183.78,177.11,172.12,151.93]
+  linear_nt             med=   64.06 ms [  63.03-  69.62]  rss=    3.6 MiB  seeds=[63.16,63.03,64.06,69.62,64.80]
+  wfa_1t                med=  278.47 ms [ 275.55- 279.96]  rss=  386.0 MiB  seeds=[278.47,279.88,275.55,277.52,279.96]
+
+=== GLOBAL AFFINE-GAP COMPARATORS (+1/-2/-4/-1, 5 seeds) ===
+-- Global 20 kb 1 --
+# sha256 20000_1_s1.fa = 14bb20dec319d3a477bcaf2bff9a73ed57390dce1017d543848e43f405dc04ff
+# sha256 20000_1_s2.fa = 591acac5d1725ff07ac233876c2583e013bc3c39db491cce3e6786d63960979e
+# sha256 20000_1_s3.fa = 61b9246127c50bdb240cea0d17de71b32d5c9dec0a8ed36d4088501345e3937f
+# sha256 20000_1_s4.fa = f341c2ae46e1ff33e1f707ef749bc98a99c75ccff7407d067ef6b59232d8f157
+# sha256 20000_1_s5.fa = 3e447897b220375ab60fa6b4059f2757d8fe12393c9ce4047a200434dc21119c
+  orig_1t       wall=10975.58 ms [10975.58-10975.58]  cpu= 10960.0 ms  rss= 4576.6 MiB  seeds=[10975.58]
+  nw_1t         wall=   25.90 ms [  24.60-  27.02]  cpu=    20.0 ms  rss=   17.6 MiB  seeds=[25.90,26.57,25.87,27.02,24.60]
+  nw_8t         wall=   26.48 ms [  24.84-  27.17]  cpu=    20.0 ms  rss=   17.6 MiB  seeds=[25.61,26.48,26.95,27.17,24.84]
+  nw_lin_1t     wall=   41.99 ms [  41.04-  42.40]  cpu=    30.0 ms  rss=    2.8 MiB  seeds=[41.54,41.99,42.40,42.08,41.04]
+  nw_lin_8t     wall=   30.58 ms [  29.87-  31.42]  cpu=    40.0 ms  rss=    3.2 MiB  seeds=[31.42,30.58,30.08,31.03,29.87]
+  nw_wfa_1t     wall=   11.34 ms [  10.85-  12.08]  cpu=     0.0 ms  rss=    2.8 MiB  seeds=[11.34,12.08,11.23,12.05,10.85]
+  nw_score_1t   wall=   15.47 ms [  14.73-  15.74]  cpu=    10.0 ms  rss=    2.7 MiB  seeds=[15.13,15.47,15.56,15.74,14.73]
+  ksw2_1t       wall=  415.65 ms [ 413.01- 421.97]  cpu=   410.0 ms  rss=  523.2 MiB  seeds=[421.97,417.50,413.01,415.13,415.65]
+  wfa2_high     wall=   18.43 ms [  17.69-  19.68]  cpu=    10.0 ms  rss=   28.9 MiB  seeds=[19.68,19.59,18.37,18.43,17.69]
+  biwfa         wall=    6.32 ms [   6.11-   7.90]  cpu=     0.0 ms  rss=    4.0 MiB  seeds=[7.90,6.69,6.11,6.32,6.28]
+-- Global 20 kb 10 --
+# sha256 20000_10_s1.fa = 2f0a06aa459b7d3638b71b920952021fc5e0421c808e44c771d44ef67da84e81
+# sha256 20000_10_s2.fa = d09fbf7a1d4960b06fa06983d266ba468d50ce40f4358bd2c2e3171ebd2a04d1
+# sha256 20000_10_s3.fa = 32b1c63053da7ad90c78e186a7c43a381e23d8b86c0437fc5cf1b708cd246580
+# sha256 20000_10_s4.fa = 6bea6562e2014834cd400269b6fc5eaeff0a946789d1d9e4b26aa9bebf2f7e79
+# sha256 20000_10_s5.fa = 580923aff155db020962f770a6e48426e99b7dd05a603a995c8608532cafac7a
+  orig_1t       wall=11254.38 ms [11254.38-11254.38]  cpu= 11240.0 ms  rss= 4586.0 MiB  seeds=[11254.38]
+  nw_1t         wall=  248.15 ms [ 246.29- 249.10]  cpu=   240.0 ms  rss=  385.8 MiB  seeds=[248.15,249.10,248.93,246.29,247.14]
+  nw_8t         wall=   73.74 ms [  72.57-  79.49]  cpu=   520.0 ms  rss=  387.4 MiB  seeds=[73.74,72.57,72.95,79.49,73.83]
+  nw_lin_1t     wall=  172.71 ms [ 149.33- 177.99]  cpu=   160.0 ms  rss=    3.2 MiB  seeds=[173.72,177.99,172.71,164.81,149.33]
+  nw_lin_8t     wall=   67.28 ms [  65.27-  68.02]  cpu=   140.0 ms  rss=    3.7 MiB  seeds=[68.02,67.28,65.27,67.55,66.24]
+  nw_wfa_1t     wall=  283.03 ms [ 280.96- 285.66]  cpu=   270.0 ms  rss=  385.8 MiB  seeds=[282.33,284.10,285.66,280.96,283.03]
+  nw_score_1t   wall=   70.86 ms [  68.32-  72.79]  cpu=    60.0 ms  rss=    3.1 MiB  seeds=[70.86,68.32,70.22,72.79,72.20]
+  ksw2_1t       wall=  422.91 ms [ 415.32- 425.45]  cpu=   410.0 ms  rss=  523.2 MiB  seeds=[415.32,422.91,419.76,423.36,425.45]
+  wfa2_high     wall=  865.63 ms [ 830.52- 957.86]  cpu=   850.0 ms  rss= 1491.4 MiB  seeds=[865.63,830.52,888.10,957.86,852.50]
+  biwfa         wall=  156.53 ms [ 152.08- 170.14]  cpu=   140.0 ms  rss=    9.7 MiB  seeds=[156.53,152.08,163.01,170.14,152.17]
+-- Global 20 kb rand --
+# sha256 20000_rand_s1.fa = 31b4f66cf1edccbdb5441a061daa517980741352a24855a1b2232962ecc880ca
+# sha256 20000_rand_s2.fa = 7b1aaa9f7bc39a83755ee8f7423d9a076ff4854194e5e038c9a019d28c9f6ded
+# sha256 20000_rand_s3.fa = 910821e7b87afed735adc246e33fbf4b2bbbbdffad26d1d8b64ec5a4108166c2
+# sha256 20000_rand_s4.fa = 9bc43f5a932c4743a1360940a035c359afae7826fc8f32cfd298eaa4005f9495
+# sha256 20000_rand_s5.fa = db09f0c3688571f3fe4e81c4f86d86c06dae8ed8f95a23f8debc37fe6e3e9417
+  orig_1t       wall=12100.76 ms [12100.76-12100.76]  cpu= 12080.0 ms  rss= 4579.6 MiB  seeds=[12100.76]
+  nw_1t         wall=  220.22 ms [ 219.41- 223.87]  cpu=   210.0 ms  rss=  385.7 MiB  seeds=[223.87,219.89,223.46,219.41,220.22]
+  nw_8t         wall=   73.60 ms [  69.63-  78.63]  cpu=   520.0 ms  rss=  387.3 MiB  seeds=[72.07,73.93,73.60,69.63,78.63]
+  nw_lin_1t     wall=  191.43 ms [ 171.83- 202.36]  cpu=   180.0 ms  rss=    3.8 MiB  seeds=[200.71,202.36,191.43,178.75,171.83]
+  nw_lin_8t     wall=   71.77 ms [  70.42-  74.70]  cpu=   200.0 ms  rss=    4.4 MiB  seeds=[74.70,71.88,70.42,71.77,70.62]
+  nw_wfa_1t     wall=  257.74 ms [ 256.19- 260.34]  cpu=   240.0 ms  rss=  385.8 MiB  seeds=[260.34,257.40,260.07,257.74,256.19]
+  nw_score_1t   wall=   78.69 ms [  78.44-  79.80]  cpu=    70.0 ms  rss=    3.1 MiB  seeds=[79.56,78.58,78.44,78.69,79.80]
+  ksw2_1t       wall=  432.21 ms [ 427.10- 432.67]  cpu=   420.0 ms  rss=  523.4 MiB  seeds=[428.38,427.10,432.21,432.67,432.57]
+  wfa2_high     wall= 9555.21 ms [9555.21-9555.21]  cpu=  9540.0 ms  rss=17028.9 MiB  seeds=[9555.21]
+  biwfa         wall= 1655.93 ms [1633.72-1672.50]  cpu=  1640.0 ms  rss=   24.1 MiB  seeds=[1664.35,1641.19,1655.93,1633.72,1672.50]
+-- Global 50 kb 1 --
+# sha256 50000_1_s1.fa = 4cea73d647913694c862778f80de5cf26a035e7c0e79d48a5ae83f480032902c
+# sha256 50000_1_s2.fa = d319bbc0c661f972b14bbd32a0bc29c629278a5497b3e3832156f8bf3d137a46
+# sha256 50000_1_s3.fa = d4b88e5d226c13d4e01215c121f29184ade40ace5d5f1a25c9908f0403c58759
+# sha256 50000_1_s4.fa = ae22e1084666188f5e77c337410b19c982c0098944da00b70641040a10352086
+# sha256 50000_1_s5.fa = 2eae0ebc38612630a7435fbb600308a33843a754968c7c83d8254b454e2d3784
+  nw_1t         wall=  117.33 ms [ 110.43- 121.62]  cpu=   100.0 ms  rss=   83.4 MiB  seeds=[110.43,117.33,121.62,119.04,115.09]
+  nw_8t         wall=  117.02 ms [ 111.87- 123.85]  cpu=   100.0 ms  rss=   83.5 MiB  seeds=[111.87,117.02,123.85,118.53,115.02]
+  nw_lin_1t     wall=  158.92 ms [ 154.49- 163.51]  cpu=   150.0 ms  rss=    4.0 MiB  seeds=[154.49,159.11,163.51,158.34,158.92]
+  nw_lin_8t     wall=  105.27 ms [ 102.46- 107.10]  cpu=   160.0 ms  rss=    4.5 MiB  seeds=[102.46,106.06,107.10,105.27,104.00]
+  nw_wfa_1t     wall=   47.58 ms [  43.33-  53.34]  cpu=    40.0 ms  rss=    3.3 MiB  seeds=[43.33,47.58,53.34,47.86,44.99]
+  nw_score_1t   wall=   61.21 ms [  57.45-  63.67]  cpu=    50.0 ms  rss=    3.8 MiB  seeds=[57.45,61.21,63.67,62.07,59.72]
+  ksw2_1t       wall= 2357.31 ms [2349.23-2362.81]  cpu=  2340.0 ms  rss= 2762.0 MiB  seeds=[2362.81,2353.61,2357.31,2357.91,2349.23]
+  wfa2_high     wall=   74.21 ms [  65.90-  80.74]  cpu=    60.0 ms  rss=  121.0 MiB  seeds=[65.90,80.74,79.28,74.21,69.64]
+  biwfa         wall=   18.59 ms [  17.37-  19.33]  cpu=    10.0 ms  rss=    5.4 MiB  seeds=[17.37,18.74,19.33,18.59,17.58]
+-- Global 50 kb 10 --
+# sha256 50000_10_s1.fa = 51c0e802aac1f5907838a18444e3002a11465c5a99b3c2ee45ba1256684e5193
+# sha256 50000_10_s2.fa = 06b91dcf2a75a48c7f03c7230cf95f72433e654537a5829e25369fbecddd9767
+# sha256 50000_10_s3.fa = 34411af992946d0e6833c3bc1fa3639c9dbb8b014d33dce548d5c590700ce61e
+# sha256 50000_10_s4.fa = 4316b402afb666d708af1fc0f55c6b4a814c267ab1eed1b70a73aaa950c2e3b4
+# sha256 50000_10_s5.fa = 5257cd96c47719a0808e01111b36946957a31e31bced71b30e21bb624e694287
+  nw_1t         wall= 1486.42 ms [1479.05-1517.17]  cpu=  1480.0 ms  rss= 2389.6 MiB  seeds=[1486.42,1498.03,1485.34,1517.17,1479.05]
+  nw_8t         wall=  423.80 ms [ 411.31- 436.03]  cpu=  3120.0 ms  rss= 2393.5 MiB  seeds=[436.03,411.31,423.80,413.36,426.88]
+  nw_lin_1t     wall=  833.60 ms [ 825.83- 910.67]  cpu=   820.0 ms  rss=    5.0 MiB  seeds=[910.67,833.51,850.66,825.83,833.60]
+  nw_lin_8t     wall=  218.67 ms [ 214.23- 221.43]  cpu=   790.0 ms  rss=    6.2 MiB  seeds=[219.89,216.92,221.43,218.67,214.23]
+  nw_score_1t   wall=  408.07 ms [ 403.48- 414.90]  cpu=   400.0 ms  rss=    4.7 MiB  seeds=[408.67,408.07,414.90,403.48,404.79]
+  ksw2_1t       wall= 2342.88 ms [2340.01-2360.04]  cpu=  2330.0 ms  rss= 2759.5 MiB  seeds=[2342.88,2340.67,2340.01,2360.04,2343.23]
+  wfa2_high     wall= 5102.56 ms [5017.87-5333.66]  cpu=  5090.0 ms  rss= 9225.5 MiB  seeds=[5111.73,5102.56,5333.66,5017.87,5085.98]
+  biwfa         wall=  857.88 ms [ 851.94- 895.87]  cpu=   850.0 ms  rss=   18.5 MiB  seeds=[857.45,864.06,895.87,851.94,857.88]
+-- Global 50 kb rand --
+# sha256 50000_rand_s1.fa = d3f332dbbf060ff6c821a044320a5831fef6a0141f12cacc7b9c0b993c26401a
+# sha256 50000_rand_s2.fa = cc67bfca0a7436d6f15612785e294e73d73f321bfc83dd8bc5e4b6ad68a64488
+# sha256 50000_rand_s3.fa = b50d8b1fdaa7ad3d3f6af2ec08771fd4c338fe3a1528852c038194bf8720c333
+# sha256 50000_rand_s4.fa = c9fd34197cdcf1d3a3868af9ae84e67bc1c259bfc4c9df36af625a655274e390
+# sha256 50000_rand_s5.fa = 0392f966414d7315bbf904917f7b4352aafdf95d624c5f8d431cbda4fc76685a
+  nw_1t         wall= 1336.93 ms [1329.40-1345.71]  cpu=  1330.0 ms  rss= 2391.5 MiB  seeds=[1329.61,1345.71,1329.40,1340.73,1336.93]
+  nw_8t         wall=  413.54 ms [ 394.48- 415.40]  cpu=  3140.0 ms  rss= 2395.2 MiB  seeds=[413.54,413.82,415.40,394.48,404.40]
+  nw_lin_1t     wall=  947.98 ms [ 939.05-1061.75]  cpu=   940.0 ms  rss=    6.5 MiB  seeds=[1061.75,947.98,945.55,1014.61,939.05]
+  nw_lin_8t     wall=  277.90 ms [ 276.80- 292.67]  cpu=  1170.0 ms  rss=    7.4 MiB  seeds=[277.88,276.80,277.90,292.67,277.93]
+  nw_score_1t   wall=  461.04 ms [ 457.68- 482.77]  cpu=   450.0 ms  rss=    4.4 MiB  seeds=[482.77,457.68,461.04,461.81,460.00]
+  ksw2_1t       wall= 2355.34 ms [2349.61-2365.23]  cpu=  2340.0 ms  rss= 2761.4 MiB  seeds=[2351.12,2349.61,2355.34,2365.23,2356.15]
+
+=== UNIT-COST EDIT DISTANCE (--scoreonly vs edlib v1.2.7, 1 thread, 5 seeds) ===
+-- Unit-cost 20 kb 1 --
+  nw_score_1t   wall=   8.28 ms [  7.99-  8.34]  rss=  2.7 MiB  seeds=[7.99,8.34,8.30,8.28,8.02]
+  edlib_1t      wall=   3.22 ms [  3.19-  3.46]  rss=  3.9 MiB  seeds=[3.46,3.22,3.30,3.22,3.19]
+-- Unit-cost 20 kb 10 --
+  nw_score_1t   wall=  20.76 ms [ 20.40- 20.83]  rss=  2.8 MiB  seeds=[20.83,20.40,20.76,20.83,20.62]
+  edlib_1t      wall=   6.69 ms [  6.16-  8.07]  rss=  3.9 MiB  seeds=[6.79,8.07,6.69,6.16,6.22]
+-- Unit-cost 20 kb rand --
+  nw_score_1t   wall=  28.09 ms [ 28.02- 29.30]  rss=  2.8 MiB  seeds=[29.30,28.06,28.09,28.02,28.35]
+  edlib_1t      wall=  17.79 ms [ 17.45- 17.89]  rss=  4.0 MiB  seeds=[17.86,17.89,17.79,17.55,17.45]
+-- Unit-cost 50 kb 1 --
+  nw_score_1t   wall=  22.41 ms [ 21.51- 22.51]  rss=  3.8 MiB  seeds=[22.51,22.42,22.41,22.35,21.51]
+  edlib_1t      wall=   6.05 ms [  5.77-  6.88]  rss=  4.1 MiB  seeds=[6.01,5.77,6.05,6.88,6.84]
+-- Unit-cost 50 kb 10 --
+  nw_score_1t   wall= 101.06 ms [100.39-104.39]  rss=  4.1 MiB  seeds=[101.06,100.39,104.39,101.04,102.19]
+  edlib_1t      wall=  18.22 ms [ 17.71- 18.68]  rss=  4.1 MiB  seeds=[18.68,18.10,17.71,18.34,18.22]
+-- Unit-cost 50 kb rand --
+  nw_score_1t   wall= 152.68 ms [151.92-154.76]  rss=  3.8 MiB  seeds=[152.27,153.54,152.68,154.76,151.92]
+  edlib_1t      wall=  72.48 ms [ 72.36- 74.23]  rss=  4.1 MiB  seeds=[72.84,72.36,72.42,72.48,74.23]
+
+=== LOCAL 20 kb (--maxhits 1 vs SSW, +2/-2/-2/-1, 5 seeds, per-seed scores & SSW flags) ===
+-- Local 20 kb 1 --
+  sw_1t         wall=  487.08 ms [ 481.71- 489.27]  cpu=   480.0 ms  rss=   22.1 MiB  scores=[38845, 38804, 38872, 38776, 38940]  seeds=[487.88,487.08,481.71,489.27,483.70]
+  sw_8t         wall=  138.75 ms [ 137.46- 145.35]  cpu=   650.0 ms  rss=   24.6 MiB  scores=[38845, 38804, 38872, 38776, 38940]  seeds=[145.35,138.33,145.08,138.75,137.46]
+  ssw           wall= 2182.29 ms [ 195.54-2251.41]  cpu=  2170.0 ms  rss=  884.5 MiB  scores=[32767, 32767, 32767, 32767, 32767]  flags=[1, 1, 0, 1, 0]  seeds=[2251.41,2182.29,199.50,2184.53,195.54]
+-- Local 20 kb 10 --
+  sw_1t         wall=  321.76 ms [ 319.15- 325.83]  cpu=   310.0 ms  rss=   21.6 MiB  scores=[29304, 29521, 29069, 28686, 29293]  seeds=[321.76,325.39,319.15,319.73,325.83]
+  sw_8t         wall=  105.86 ms [ 103.58- 108.87]  cpu=   480.0 ms  rss=   23.9 MiB  scores=[29304, 29521, 29069, 28686, 29293]  seeds=[105.86,108.47,103.58,105.23,108.87]
+  ssw           wall=  126.20 ms [ 124.30- 141.53]  cpu=   120.0 ms  rss=    7.8 MiB  scores=[29304, 29521, 29069, 28686, 29293]  flags=[0, 0, 0, 0, 0]  seeds=[141.53,125.29,124.30,137.83,126.20]
+-- Local 20 kb rand --
+  sw_1t         wall=  575.20 ms [ 572.41- 585.43]  cpu=   570.0 ms  rss=   21.2 MiB  scores=[3241, 3332, 3321, 3307, 3300]  seeds=[575.20,585.43,573.71,572.41,583.13]
+  sw_8t         wall=  131.71 ms [ 131.10- 142.91]  cpu=   740.0 ms  rss=   24.2 MiB  scores=[3241, 3332, 3321, 3307, 3300]  seeds=[131.10,131.71,142.91,131.48,134.35]
+  ssw           wall=  523.19 ms [ 271.66- 800.55]  cpu=   510.0 ms  rss=   95.6 MiB  scores=[3241, 3332, 3321, 3307, 3300]  flags=[0, 0, 0, 0, 0]  seeds=[548.89,271.66,523.19,800.55,367.35]
+
+=== PROTEIN BENCHMARK (BLOSUM62 -10/-1, median [min-max] of 3 runs) ===
+
+-- Human/Mouse TP53 (393 / 390 aa, id=76.77%) --
+# sha256: h_tp53.fa=45b3ed1eb22b714c5e505d953757b0dc92116acecdd3ae13ebc202027ba5ab35 m_tp53.fa=27769f2780cf12e804dde14f0a927aba7e4b36bb2048950527ec559d957cdf7b
+  seqalign_1t   wall=    5.77 ms [   5.69-   6.04]  rss=   3.5 MiB  score=1540
+  full_1t       wall=    1.96 ms [   1.93-   2.25]  rss=   2.3 MiB  score=1540
+  full_8t       wall=    2.18 ms [   2.06-   2.63]  rss=   2.4 MiB  score=1540
+  lin_1t        wall=    1.95 ms [   1.90-   2.06]  rss=   2.3 MiB  score=1540
+  lin_8t        wall=    2.06 ms [   1.96-   2.22]  rss=   2.3 MiB  score=1540
+  scoreonly     wall=    1.94 ms [   1.86-   1.97]  rss=   2.4 MiB  score=1540
+  local1        wall=    2.31 ms [   2.21-   2.44]  rss=   2.6 MiB  score=1553
+
+-- Human/Yeast POLR2A (1970 / 1733 aa, id=49.09%) --
+# sha256: h_polr2a.fa=689eb9e647a493e3aca1766c0ec247b53f6b4f3256c55b476a864bdf3851902c y_rpo21.fa=2e641523096f061b6788962137db990904244434158bc914b2a7820c84e3f762
+  seqalign_1t   wall=   85.63 ms [  85.46-  86.98]  rss=  40.6 MiB  score=4630
+  full_1t       wall=    6.73 ms [   6.45-   7.21]  rss=   6.3 MiB  score=4630
+  full_8t       wall=    6.79 ms [   6.65-   7.43]  rss=   6.5 MiB  score=4630
+  lin_1t        wall=    5.66 ms [   5.61-   5.68]  rss=   2.5 MiB  score=4630
+  lin_8t        wall=    6.06 ms [   5.81-   6.35]  rss=   2.6 MiB  score=4630
+  scoreonly     wall=    4.06 ms [   3.96-   4.17]  rss=   2.5 MiB  score=4630
+  local1        wall=    6.99 ms [   6.88-   7.02]  rss=   6.9 MiB  score=4799
+
+-- Human/Mouse BRCA1 (1863 / 1812 aa, id=55.76%) --
+# sha256: h_brca1.fa=e537b173aa00bc220b55808090a3cfe0e1091d26473e43c2902b7a8c9f809ce3 m_brca1.fa=7f5e53a72dfdbaf35ae2237b38b80e486556dff2628809e65404fbce8d8b69ba
+  seqalign_1t   wall=   84.22 ms [  83.40-  84.32]  rss=  40.3 MiB  score=4827
+  full_1t       wall=    6.70 ms [   6.35-   7.01]  rss=   6.3 MiB  score=4827
+  full_8t       wall=    6.85 ms [   6.73-   6.97]  rss=   6.4 MiB  score=4827
+  lin_1t        wall=    5.76 ms [   5.69-   6.05]  rss=   2.4 MiB  score=4827
+  lin_8t        wall=    5.98 ms [   5.83-   6.68]  rss=   2.5 MiB  score=4827
+  scoreonly     wall=    3.93 ms [   3.88-   4.35]  rss=   2.5 MiB  score=4827
+  local1        wall=    7.07 ms [   6.71-   7.21]  rss=   7.0 MiB  score=4844
+
+-- Human/Mouse MTOR (2549 / 2549 aa, id=98.94%) --
+# sha256: h_mtor.fa=edac0b5ca3e29b28d227f2942a0decdd3e917a98833527b3bc6a2075cd7d0525 m_mtor.fa=77eed9b0254ca950074b6630380960d1590b073e8dffea2143856d6d82fb052c
+  seqalign_1t   wall=  153.63 ms [ 152.92- 153.90]  rss=  76.0 MiB  score=13042
+  full_1t       wall=   10.33 ms [  10.17-  10.92]  rss=  10.4 MiB  score=13042
+  full_8t       wall=   10.10 ms [   9.95-  10.13]  rss=  10.5 MiB  score=13042
+  lin_1t        wall=    7.76 ms [   7.73-   8.10]  rss=   2.5 MiB  score=13042
+  lin_8t        wall=    6.54 ms [   6.33-   6.82]  rss=   2.5 MiB  score=13042
+  scoreonly     wall=    3.95 ms [   3.78-   4.03]  rss=   2.6 MiB  score=13042
+  local1        wall=   11.40 ms [  10.85-  11.54]  rss=  11.5 MiB  score=13042
+
+-- Human/Mouse ATM (3056 / 3066 aa, id=83.84%) --
+# sha256: h_atm.fa=010251c336c45cefde6fb0af15429b811147a9cc610d9a0dc29efe1962cf4caf m_atm.fa=83d6e384ee2f7628f43dfc9b370ea5c184151fc880d13b7984992273afab1b12
+  seqalign_1t   wall=  230.06 ms [ 224.16- 230.75]  rss= 108.9 MiB  score=13333
+  full_1t       wall=   14.29 ms [  13.40-  14.45]  rss=  12.5 MiB  score=13333
+  full_8t       wall=   13.95 ms [  13.34-  13.99]  rss=  12.5 MiB  score=13333
+  lin_1t        wall=   10.35 ms [  10.18-  10.44]  rss=   2.5 MiB  score=13333
+  lin_8t        wall=    8.10 ms [   8.00-   8.21]  rss=   2.7 MiB  score=13333
+  scoreonly     wall=    4.65 ms [   4.49-   4.74]  rss=   2.5 MiB  score=13333
+  local1        wall=   15.23 ms [  15.14-  15.52]  rss=  14.6 MiB  score=13333
+
