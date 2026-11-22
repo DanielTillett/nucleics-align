@@ -17,7 +17,7 @@
   </defs>
 
   <rect x="0.5" y="0.5" width="779" height="287" rx="8" class="bg"/>
-  <text x="20" y="25" class="title">Global alignment wall time on Linux (pop-os, AMD Ryzen 7 5700G, 16 threads)</text>
+  <text x="20" y="25" class="title">Global alignment wall time on Linux (pop-os, AMD Ryzen 7 5700G, 8 default threads)</text>
   <text x="20" y="42" class="sub">Log scale from 1 ms baseline (lower is faster): simulated divergent DNA pairs (+1 / -2 / -4 / -1), default make build</text>
 
   <!-- Legend -->

@@ -1,26 +1,9 @@
 # Benchmarks
 
-Scripts to reproduce the timings in [docs/performance.md](../docs/performance.md)
-for Nucleics Align itself. Comparisons with other aligners (parasail, ksw2,
-WFA2, SSW) need those tools built separately and are not included.
+Scripts for reproducing the timings in [docs/performance.md](../docs/performance.md) and the manuscript ([paper/manuscript.md](../paper/manuscript.md)). Build the tools first with `make` in the repository root; GNU `time` (`/usr/bin/time`) is used for CPU time and peak RSS.
 
-| Script | Does |
-|---|---|
-| [`make_pairs.sh`](make_pairs.sh) `<length> <divergence> <seed>` | A pair of random DNA sequences, the same for the same arguments. Divergence `1` has 1% substitutions and 0.2% insertions and deletions, `10` has 10% and 2%, and `rand` gives two unrelated sequences |
-| [`run.sh`](run.sh) `[lengths]` | Times `needleman_wunsch` (full matrix, `--linear`, `--scoreonly`) and `smith_waterman --maxhits 1` on those pairs (seed 11), best of three, and prints a tab-separated table of wall time, CPU time, peak memory and score. Needs GNU time (`/usr/bin/time -f`) |
-| [`percore.c`](percore.c) | Library speed on one thread and on the default threads for one pair, as cells per CPU second. Build instructions are at the top of the file |
-
-From the repository root after `make`:
-
-```console
-$ sh benchmarks/run.sh "5000 20000"
-$ sh benchmarks/make_pairs.sh 20000 rand 11 > pair.txt
-$ cc -O2 -I src -I libs benchmarks/percore.c -L src -lalign -lpthread -o percore
-$ ./percore pair.txt
-```
-
-> [!NOTE]
-> Timings depend on the CPU, the number of cores and the build (`make
-> NATIVE=1` tunes for this CPU, e.g. 16-lane AVX-512 vectors). The published
-> numbers come from an AMD Ryzen AI Max+ 395 (16 cores, 32 threads) under
-> WSL, and an AMD Ryzen 7 5700G (8 cores) under Linux for the megabase pairs.
+- **`benchmarks/run.sh [lengths]`** — runs `needleman_wunsch` (`full`, `--linear`, `--scoreonly`) and `smith_waterman --maxhits 1` on simulated DNA pairs from `benchmarks/make_pairs.sh` (best of 3 runs).
+- **`benchmarks/real_sequences.sh [output_dir] [threads]`** — downloads the seven public NCBI RefSeq/GenBank pairs in Table 1, logs SHA-256 digests, times all modes with pinned threads (default 8), verifies identical global scores across modes, and computes full-alignment identity.
+- **`benchmarks/gen_pairs.py <length> <div|rand> <seed> [out.fa]`** — deterministic, platform-independent Python 3 DNA pair generator (MT19937 PRNG).
+- **`benchmarks/ablation.c`** — C11 library-level ablation driver timing each optimisation layer (scalar 3-matrix, compact 1-byte, striped 32-bit, difference-encoded 8-bit, certified banding, multi-threading, linear space, and WFA) and asserting identical optimal scores.
+- **`benchmarks/compare_harness.sh [work_dir] [threads]`** — builds pinned revisions of original `seq-align` (`dc41988`), `ksw2` (`289609b`), `WFA2-lib` (`v2.3.5` / `cf3eb92`), and `SSW` (`a66636b`), then runs the 5-seed ablation and comparator suite (20 kb and 50 kb global, 20 kb local) with median and min–max wall time, CPU time, peak RSS, and global score verification.

@@ -56,7 +56,7 @@ flowchart TD
 
 ## Benchmarks on Linux (`pop-os`, AMD Ryzen 7 5700G)
 
-Measured on an 8-core / 16-thread desktop (AMD Ryzen 7 5700G, 62 GB RAM, Pop!_OS Linux, default `make` build at `-O3`, default DNA scoring `+1 / -2 / -4 / -1`). Standard pairs (`5 kb – 50 kb`) are best of 3 runs; large pairs (`100 kb – 1 Mb`) are 1 run each, timed with millisecond precision (`time.perf_counter()` + GNU `time` for CPU and peak RSS). **Bold** marks the fastest global mode returning a full alignment (excluding `--scoreonly` and `local --maxhits 1`).
+Measured on an 8-core / 16-thread desktop (AMD Ryzen 7 5700G, 62 GB RAM, Pop!_OS Linux, default `make` build at `-O3`, default 8 threads, default DNA scoring `+1 / -2 / -4 / -1`). Standard pairs (`5 kb – 50 kb`) are best of 3 runs; large pairs (`100 kb – 1 Mb`) are 1 run each, timed with millisecond precision (`time.perf_counter()` + GNU `time` for CPU and peak RSS). **Bold** marks the fastest global mode returning a full alignment (excluding `--scoreonly` and `local --maxhits 1`).
 
 <p align="center">
   <img src="figures/perf-pop-os.svg" width="760" alt="Global alignment wall time on pop-os (Ryzen 7 5700G) from 5 kb to 1 Mb">

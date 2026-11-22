@@ -97,7 +97,7 @@ Bundled dependencies in `libs/` (git submodules, all by Isaac Turner): [string_b
 
 ## Performance at a glance
 
-Global alignment wall time on a desktop 8-core Linux machine (AMD Ryzen 7 5700G, 16 threads, default `make` build):
+Global alignment wall time on a desktop 8-core Linux machine (AMD Ryzen 7 5700G, 8 default threads, default `make` build):
 
 <p align="center">
   <img src="docs/figures/perf-pop-os.svg" width="760" alt="Global alignment wall time on pop-os (Ryzen 7 5700G) across 5 kb to 1 Mb">
