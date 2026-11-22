@@ -3,7 +3,7 @@
 # Builds exact pinned commits of seq-align (dc41988), ksw2 (289609b),
 # WFA2-lib (v2.3.5 / cf3eb92), SSW (a66636b), and edlib (v1.2.7 / 4215d82),
 # then benchmarks:
-#   1. 10-configuration fresh-process ablation (20 kb, 5 seeds, wall ms + peak RSS MiB)
+#   1. 9-configuration fresh-process ablation (20 kb, 5 seeds, wall ms + peak RSS MiB)
 #   2. Global affine-gap comparators (20 kb & 50 kb, 5 seeds)
 #   3. Unit-cost edit distance (--scoreonly vs edlib, 20 kb & 50 kb, 5 seeds)
 #   4. Local alignment (--maxhits 1 vs SSW, 20 kb, 5 seeds)
