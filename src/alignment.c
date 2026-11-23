@@ -683,6 +683,7 @@ static bool alignment_fill_blocks(alignment_block_t *tmpl)
 static bool alignment_sw_scan_any(const char *a, size_t len_a,
                                   const char *b, size_t len_b,
                                   const scoring_t *scoring, score_t target,
+                                  score_t min_expected,
                                   const alignment_options_t *opts,
                                   bool short_hit, score_t *ckpt, size_t every,
                                   score_t *best, size_t *x, size_t *y)
@@ -722,6 +723,15 @@ static bool alignment_sw_scan_any(const char *a, size_t len_a,
     .score_only = true, .track_best = target == 0, .target = target,
     .ckpt = ckpt, .ckpt_every = every};
   alignment_lanes(&tmpl, &tmp.opts, scoring, len_a);
+  if(min_expected > 0 && tmpl.bits != 0 && min_expected > tmpl.narrow_limit) {
+    if(tmpl.bits == 8 && tmp.opts.narrow &&
+       alignment_narrow_limit(&table, scoring, tmpl.min, len_a, 16,
+                              &tmpl.narrow_limit) &&
+       MAX2(tmpl.target, min_expected) <= tmpl.narrow_limit)
+      tmpl.bits = 16;
+    else
+      tmpl.bits = 0;
+  }
   // Row 0 is all 0 in Smith-Waterman (the fill writes the others; column 0
   // is never read back, see alignment_sw_trace_rows())
   if(ckpt != NULL) memset(ckpt, 0, 3 * (len_a + 1) * sizeof(score_t));
@@ -756,8 +766,19 @@ bool alignment_sw_scan(const char *a, size_t len_a, const char *b, size_t len_b,
                        const alignment_options_t *opts,
                        score_t *best, size_t *x, size_t *y)
 {
-  return alignment_sw_scan_any(a, len_a, b, len_b, scoring, target, opts,
+  return alignment_sw_scan_any(a, len_a, b, len_b, scoring, target, 0, opts,
                                false, NULL, 0, best, x, y);
+}
+
+bool alignment_sw_scan_hint(const char *a, size_t len_a,
+                            const char *b, size_t len_b,
+                            const scoring_t *scoring, score_t target,
+                            score_t min_expected,
+                            const alignment_options_t *opts,
+                            score_t *best, size_t *x, size_t *y)
+{
+  return alignment_sw_scan_any(a, len_a, b, len_b, scoring, target,
+                               min_expected, opts, false, NULL, 0, best, x, y);
 }
 
 bool alignment_sw_scan_short(const char *a, size_t len_a,
@@ -766,7 +787,7 @@ bool alignment_sw_scan_short(const char *a, size_t len_a,
                              const alignment_options_t *opts,
                              score_t *best, size_t *x, size_t *y)
 {
-  return alignment_sw_scan_any(a, len_a, b, len_b, scoring, 0, opts, true,
+  return alignment_sw_scan_any(a, len_a, b, len_b, scoring, 0, 0, opts, true,
                                NULL, 0, best, x, y);
 }
 
@@ -778,7 +799,7 @@ bool alignment_sw_rows(const char *a, size_t len_a,
                        score_t *best, size_t *x, size_t *y)
 {
   if(every == 0) return false;
-  return alignment_sw_scan_any(a, len_a, b, len_b, scoring, 0, opts, false,
+  return alignment_sw_scan_any(a, len_a, b, len_b, scoring, 0, 0, opts, false,
                                ckpt, every, best, x, y);
 }
 

@@ -1684,9 +1684,20 @@ static aln_status_t hb_score(const char *a, const char *b,
   size_t midj;
   int type;
 
-  // Unit-cost scoring: banded Myers bit-vector beats speculative striped
-  // bands and avoids allocating striped SIMD scratch
-  if(hb_myers(&st, a, len_a, b, len_b, score))
+  // Unit-cost scoring: banded Myers beats speculative striped bands at any
+  // thread count; on divergent pairs with multiple threads, let multi-threaded
+  // striped SIMD handle the full pass instead of single-threaded full Myers
+  if((
+#ifdef HB_STRIPED
+      st.pass_threads <= 1
+        ? hb_myers(&st, a, len_a, b, len_b, score)
+        : (hirschberg_myers_enabled &&
+           alignment_myers_score_banded(&st.table, scoring, a, len_a, b, len_b,
+                                        score))
+#else
+      hb_myers(&st, a, len_a, b, len_b, score)
+#endif
+     ))
   {
   }
   #ifdef HB_STRIPED

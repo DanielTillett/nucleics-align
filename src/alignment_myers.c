@@ -126,9 +126,10 @@ static bool myers_banded_pass(const sub_table_t *table,
   return false;
 }
 
-bool alignment_myers_score(const sub_table_t *table, const scoring_t *scoring,
-                           const char *seq_a, size_t len_a,
-                           const char *seq_b, size_t len_b, score_t *score)
+static bool myers_score_impl(const sub_table_t *table, const scoring_t *scoring,
+                             const char *seq_a, size_t len_a,
+                             const char *seq_b, size_t len_b,
+                             bool banded_only, score_t *score)
 {
   if(!myers_unit_cost(table, scoring) || len_a == 0 ||
      len_a + len_b > (size_t)SCORE_ABS_MAX) return false;
@@ -166,6 +167,10 @@ bool alignment_myers_score(const sub_table_t *table, const scoring_t *scoring,
       }
       free(bscore);
     }
+    if(banded_only) {
+      free(eq);
+      return false;
+    }
   }
 
   // Full-width Myers pass
@@ -200,6 +205,24 @@ bool alignment_myers_score(const sub_table_t *table, const scoring_t *scoring,
   free(eq);
   *score = (score_t)-dist;
   return true;
+}
+
+bool alignment_myers_score(const sub_table_t *table, const scoring_t *scoring,
+                           const char *seq_a, size_t len_a,
+                           const char *seq_b, size_t len_b, score_t *score)
+{
+  return myers_score_impl(table, scoring, seq_a, len_a, seq_b, len_b,
+                          false, score);
+}
+
+bool alignment_myers_score_banded(const sub_table_t *table,
+                                  const scoring_t *scoring,
+                                  const char *seq_a, size_t len_a,
+                                  const char *seq_b, size_t len_b,
+                                  score_t *score)
+{
+  return myers_score_impl(table, scoring, seq_a, len_a, seq_b, len_b,
+                          true, score);
 }
 
 bool alignment_myers_row(const sub_table_t *table, const scoring_t *scoring,

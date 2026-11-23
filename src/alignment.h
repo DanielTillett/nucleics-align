@@ -244,6 +244,13 @@ aln_status_t alignment_wfa_align(const sub_table_t *table,
 bool alignment_myers_score(const sub_table_t *table, const scoring_t *scoring,
                            const char *seq_a, size_t len_a,
                            const char *seq_b, size_t len_b, score_t *score);
+// Banded-only unit-cost Myers score (returns false instead of falling back
+// to single-threaded full-width Myers on divergent pairs)
+bool alignment_myers_score_banded(const sub_table_t *table,
+                                  const scoring_t *scoring,
+                                  const char *seq_a, size_t len_a,
+                                  const char *seq_b, size_t len_b,
+                                  score_t *score);
 
 // Full bottom-row global scores under unit costs for Hirschberg --linear:
 // rev=false fills cc[0..len_b] for prefixes of seq_b; rev=true fills
@@ -342,6 +349,14 @@ bool alignment_sw_scan(const char *a, size_t len_a, const char *b, size_t len_b,
                        const scoring_t *scoring, score_t target,
                        const alignment_options_t *opts,
                        score_t *best, size_t *x, size_t *y);
+// As alignment_sw_scan(), with a lower-bound hint on the expected score so
+// narrow 8/16-bit lanes that are known to overflow can be skipped up front
+bool alignment_sw_scan_hint(const char *a, size_t len_a,
+                            const char *b, size_t len_b,
+                            const scoring_t *scoring, score_t target,
+                            score_t min_expected,
+                            const alignment_options_t *opts,
+                            score_t *best, size_t *x, size_t *y);
 // The scan for the best cell (target 0), but giving up (returning false)
 // once the best so far reaches half the best substitution score per row
 // filled, from a sixteenth of the rows on: a hit that rises that fast from

@@ -534,8 +534,8 @@ static bool _sw_align_fast_rect(sw_aligner_t *sw, const char *a, const char *b,
      scoring->no_gaps_in_longest || scoring->no_mismatches)
     return false;
 
-  if(!alignment_sw_scan(a, len_a, b, len_b, scoring, 0, &aligner->opts,
-                        &best, &bx, &by))
+  if(!alignment_sw_scan_hint(a, len_a, b, len_b, scoring, 0, sw->min_score,
+                             &aligner->opts, &best, &bx, &by))
     return false;
 
   if(best < sw->min_score) {
@@ -557,8 +557,8 @@ static bool _sw_align_fast_rect(sw_aligner_t *sw, const char *a, const char *b,
   char *rb = ra + bx;
   for(i = 0; i < bx; i++) ra[i] = a[bx - 1 - i];
   for(i = 0; i < by; i++) rb[i] = b[by - 1 - i];
-  bool ok = alignment_sw_scan(ra, bx, rb, by, scoring, 0, &aligner->opts,
-                              &best2, &rx, &ry);
+  bool ok = alignment_sw_scan_hint(ra, bx, rb, by, scoring, 0, best,
+                                   &aligner->opts, &best2, &rx, &ry);
   free(ra);
   if(!ok || best2 != best || rx == 0 || ry == 0) return false;
 

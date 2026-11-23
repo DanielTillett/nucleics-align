@@ -30,6 +30,12 @@
 #include "alignment_alloc.h"
 #include "alignment_simd.h"
 
+#if defined(__x86_64__) && (defined(__GNUC__) || defined(__clang__)) && \
+    !defined(ALN_TSAN)
+#  include <immintrin.h>
+#  define WFA_HAS_X86_AVX2 1
+#endif
+
 // Diagonal k = h - v of text b (h) and pattern a (v); offsets are h
 #define WFA_NONE (INT32_MIN / 2)
 
@@ -213,18 +219,19 @@ static bool wfa_setup(const sub_table_t *table, const scoring_t *scoring,
   pair->po /= pair->scale;
   pair->pe /= pair->scale;
 
-  // Class numbers of the letters, then 8 padding bytes each, different
+  // Class numbers of the letters, then 32 padding bytes each (different),
+  // so both 8-byte scalar and 32-byte AVX2 extensions need no bounds checks
   pair->m = (int32_t)len_a;
   pair->nb = (int32_t)len_b;
-  pair->a = aln_malloc(len_a + len_b + 16);
+  pair->a = aln_malloc(len_a + len_b + 64);
   if(pair->a == NULL) return false;
-  pair->b = pair->a + len_a + 8;
+  pair->b = pair->a + len_a + 32;
   for(i = 0; i < len_a; i++)
     pair->a[i] = cls[table->code[(unsigned char)seq_a[i]]];
   for(i = 0; i < len_b; i++)
     pair->b[i] = cls[table->code[(unsigned char)seq_b[i]]];
-  memset(pair->a + len_a, 0xFE, 8);
-  memset(pair->b + len_b, 0xFF, 8);
+  memset(pair->a + len_a, 0xFE, 32);
+  memset(pair->b + len_b, 0xFF, 32);
   return true;
 }
 
@@ -244,7 +251,7 @@ static long long wfa_fill(const wfa_pair_t *pair, size_t budget, bool keep,
   wf_slot_t *slots = keep ? NULL : aln_calloc(ring, sizeof(wf_slot_t));
   const wavefront_t none = {1, 0, 0, NULL, NULL};
   long long s, result = -1;
-  size_t work = 0;
+  size_t work = 0, empty_streak = 0;
   if(!keep && slots == NULL) {
     *slots_out = NULL;
     *nslots_out = 0;
@@ -304,15 +311,19 @@ static long long wfa_fill(const wfa_pair_t *pair, size_t budget, bool keep,
       if(lo > hi) {
         cur->m.lo = cur->i.lo = cur->d.lo = 1;
         cur->m.hi = cur->i.hi = cur->d.hi = 0;
+        if(++empty_streak >= ring) break;
         continue;
       }
+      empty_streak = 0;
       if(lo < -m) lo = -m;
       if(hi > nb) hi = nb;
       if(lo > hi) {
         cur->m.lo = cur->i.lo = cur->d.lo = 1;
         cur->m.hi = cur->i.hi = cur->d.hi = 0;
+        if(++empty_streak >= ring) break;
         continue;
       }
+      empty_streak = 0;
       work += (size_t)(hi - lo + 1);
       if(work > budget) break;
       if(!wf_reserve(&cur->m, lo, hi) || !wf_reserve(&cur->i, lo, hi) ||
@@ -498,6 +509,72 @@ static inline int32_t wf_extend_lim(const uint8_t *a, const uint8_t *b,
   return h - start;
 }
 
+#ifdef WFA_HAS_X86_AVX2
+static inline bool wfa_cpu_avx2(void)
+{
+  static int cached = -1;
+  if(cached < 0) cached = __builtin_cpu_supports("avx2") ? 1 : 0;
+  return cached != 0;
+}
+
+__attribute__((target("avx2")))
+static int32_t wf_extend_loop_avx2(const uint8_t *a, const uint8_t *b,
+                                   int32_t lo, int32_t hi, int32_t *moff,
+                                   int32_t mh)
+{
+  for(int32_t k = lo; k <= hi; k++) {
+    int32_t best = moff[k - lo];
+    if(best >= 0) {
+      int32_t v = best - k, h = best;
+      for(;;) {
+        __m256i va = _mm256_loadu_si256((const __m256i *)(a + v));
+        __m256i vb = _mm256_loadu_si256((const __m256i *)(b + h));
+        uint32_t mask = (uint32_t)_mm256_movemask_epi8(_mm256_cmpeq_epi8(va, vb));
+        if(mask != 0xFFFFFFFFu) {
+          h += __builtin_ctz(~mask);
+          break;
+        }
+        v += 32;
+        h += 32;
+      }
+      moff[k - lo] = h;
+      if(h > mh) mh = h;
+    }
+  }
+  return mh;
+}
+
+__attribute__((target("avx2")))
+static int32_t wf_extend_lim_loop_avx2(const uint8_t *a, const uint8_t *b,
+                                       int32_t m, int32_t nb,
+                                       int32_t lo, int32_t hi, int32_t *moff,
+                                       int32_t mh)
+{
+  for(int32_t k = lo; k <= hi; k++) {
+    int32_t best = moff[k - lo];
+    if(best >= 0) {
+      int32_t v = best - k, h = best;
+      while(v + 32 <= m && h + 32 <= nb) {
+        __m256i va = _mm256_loadu_si256((const __m256i *)(a + v));
+        __m256i vb = _mm256_loadu_si256((const __m256i *)(b + h));
+        uint32_t mask = (uint32_t)_mm256_movemask_epi8(_mm256_cmpeq_epi8(va, vb));
+        if(mask != 0xFFFFFFFFu) {
+          h += __builtin_ctz(~mask);
+          goto done_k;
+        }
+        v += 32;
+        h += 32;
+      }
+      h += wf_extend_lim(a, b, v, h, m, nb);
+    done_k:
+      moff[k - lo] = h;
+      if(h > mh) mh = h;
+    }
+  }
+  return mh;
+}
+#endif
+
 typedef enum { WFA_M = 0, WFA_I = 1, WFA_D = 2 } wfa_state_t;
 
 // Vectorisable hot interior compute loop (multi-versioned for AVX2/SSE4.1/SSE2).
@@ -670,8 +747,14 @@ static size_t wf_step(const uint8_t *a, int32_t m, const uint8_t *b, int32_t nb,
       moff[k - lo] = (best >= 0 && best - k >= 0) ? best : WFA_NONE;
     }
   }
-  // Loop 2: 8-byte match extension (decoupled from compute)
+  // Loop 2: match extension (32-byte AVX2 where supported, else 8-byte scalar)
   int32_t mh = max_h ? *max_h : 0;
+#ifdef WFA_HAS_X86_AVX2
+  if(wfa_cpu_avx2()) {
+    mh = padded ? wf_extend_loop_avx2(a, b, lo, hi, moff, mh)
+                : wf_extend_lim_loop_avx2(a, b, m, nb, lo, hi, moff, mh);
+  } else
+#endif
   if(padded) {
     for(k = lo; k <= hi; k++) {
       int32_t best = moff[k - lo];
@@ -900,6 +983,7 @@ static size_t biwfa_rec(const uint8_t *a, const uint8_t *ra, const char *sa, int
   wfa_state_t bp_state = WFA_M;
   long long sf = -1, sr = -1;
   int32_t max_hf = 0, max_hr = 0;
+  size_t empty_f = 0, empty_r = 0;
   bool ok = true;
 
   for(;;) {
@@ -908,6 +992,8 @@ static size_t biwfa_rec(const uint8_t *a, const uint8_t *ra, const char *sa, int
                        fwd_pad, null_wf, sf, &max_hf);
     if(w == SIZE_MAX || w > *budget_left) { ok = false; break; }
     *budget_left -= w;
+    if(w == 0) { if(++empty_f >= ring) { ok = false; break; } }
+    else empty_f = 0;
     if(sr >= 0 && w > 0 && max_hf + max_hr >= nb) {
       long long t0 = sr - (long long)ring + 1;
       if(t0 < 0) t0 = 0;
@@ -922,6 +1008,8 @@ static size_t biwfa_rec(const uint8_t *a, const uint8_t *ra, const char *sa, int
                 rev_pad, null_wf, sr, &max_hr);
     if(w == SIZE_MAX || w > *budget_left) { ok = false; break; }
     *budget_left -= w;
+    if(w == 0) { if(++empty_r >= ring) { ok = false; break; } }
+    else empty_r = 0;
     if(w > 0 && max_hf + max_hr >= nb) {
       long long t0 = sf - (long long)ring + 1;
       if(t0 < 0) t0 = 0;
@@ -1006,14 +1094,14 @@ aln_status_t alignment_wfa_align(const sub_table_t *table,
     free(pair.a);
     return ALN_ERR_NOMEM;
   }
-  uint8_t *ra = aln_malloc(len_a + len_b + 16);
+  uint8_t *ra = aln_malloc(len_a + len_b + 64);
   if(ra == NULL) { free(pair.a); return ALN_ERR_NOMEM; }
-  uint8_t *rb = ra + len_a + 8;
+  uint8_t *rb = ra + len_a + 32;
   size_t i;
   for(i = 0; i < len_a; i++) ra[i] = pair.a[len_a - 1 - i];
   for(i = 0; i < len_b; i++) rb[i] = pair.b[len_b - 1 - i];
-  memset(ra + len_a, 0xFE, 8);
-  memset(rb + len_b, 0xFF, 8);
+  memset(ra + len_a, 0xFE, 32);
+  memset(rb + len_b, 0xFF, 32);
 
   wf_null_t null_wf = {NULL, 0};
   size_t budget_left = budget;
