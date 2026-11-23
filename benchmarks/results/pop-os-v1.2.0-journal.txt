@@ -56,3 +56,14 @@
   1 Mb   1    | full= 9232.1/  342 | wfa= 9993.4/  342 | linear= 7193.2/   50 | scoreonly= 2638.4/   47 | wfa2_biwfa= 4199.2/  44 | score=947810
 # sha256 1000000_5_s11.fa = 57b14bb131664ab5191cdf3d9bc6b516b4228ea17796bfc0d3a16b9098f8b416
   1 Mb   5    | full=--- | wfa=--- | linear=94052.5/  110 | scoreonly=59388.0/   94 | score=746477
+
+=== PARASAIL v2.6.2 SCAN (nw_trace_scan_avx2_256_16, 1t) ===
+  TP53            scan_1t=   1.78 ms [  1.72-  1.88]  rss=  2.0 MiB  score=1540
+  POLR2A/Rpo21    scan_1t=   6.06 ms [  5.88-  6.22]  rss=  8.3 MiB  score=4630
+  BRCA1           scan_1t=   5.70 ms [  5.69-  5.93]  rss=  8.2 MiB  score=4827
+  MTOR            scan_1t=   9.43 ms [  9.05-  9.65]  rss= 14.2 MiB  score=13042
+  ATM             scan_1t=  12.89 ms [ 12.63- 13.59]  rss= 19.7 MiB  score=13333
+
+=== DEEP BiWFA INDEPENDENT CIGAR/ALIGNMENT RE-SCORING (100 kb 1% & 1 Mb 0.1%) ===
+  100 kb 1%   BiWFA & WFA2_BiWFA RE-SCORED & SPAN-VERIFIED: score=94810
+  1 Mb 0.1%   BiWFA & WFA2_BiWFA RE-SCORED & SPAN-VERIFIED: score=994784

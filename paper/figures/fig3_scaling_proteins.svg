@@ -1,0 +1,148 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 380" width="880" height="380">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1.5 L 10 5 L 0 8.5 z" fill="#64748b"/>
+    </marker>
+  </defs>
+  <rect width="880" height="380" fill="#ffffff"/>
+  <style>
+    text { font-family: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; fill: #0f172a; }
+    .title { font-size: 13px; font-weight: 700; }
+    .sub { font-size: 10.5px; fill: #64748b; }
+    .lbl { font-size: 10px; }
+    .lblb { font-size: 10px; font-weight: 600; }
+    .tick { font-size: 9.5px; fill: #334155; }
+    .small { font-size: 8.8px; fill: #475569; }
+  </style>
+
+  <text x="16" y="22" class="title">(a) Scaling from 5 kb to 1 Mb (v1.2.0, Table 3)</text>
+  <text x="16" y="36" class="sub">Wall time vs sequence length (log-log; 1% solid, 0.1% dashed)</text>
+  <line x1="75.8" y1="58" x2="75.8" y2="326" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="75.8" y="340" text-anchor="middle" class="tick">5k</text>
+  <line x1="161.6" y1="58" x2="161.6" y2="326" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="161.6" y="340" text-anchor="middle" class="tick">20k</text>
+  <line x1="218.3" y1="58" x2="218.3" y2="326" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="218.3" y="340" text-anchor="middle" class="tick">50k</text>
+  <line x1="261.2" y1="58" x2="261.2" y2="326" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="261.2" y="340" text-anchor="middle" class="tick">100k</text>
+  <line x1="329.2" y1="58" x2="329.2" y2="326" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="329.2" y="340" text-anchor="middle" class="tick">300k</text>
+  <line x1="403.8" y1="58" x2="403.8" y2="326" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="403.8" y="340" text-anchor="middle" class="tick">1M</text>
+  <line x1="62" y1="277.7" x2="420" y2="277.7" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="56" y="280.7" text-anchor="end" class="tick">10 ms</text>
+  <line x1="62" y1="208.5" x2="420" y2="208.5" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="56" y="211.5" text-anchor="end" class="tick">100 ms</text>
+  <line x1="62" y1="139.3" x2="420" y2="139.3" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="56" y="142.3" text-anchor="end" class="tick">1 s</text>
+  <line x1="62" y1="70.2" x2="420" y2="70.2" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="56" y="73.2" text-anchor="end" class="tick">10 s</text>
+  <rect x="62" y="58" width="358" height="268" fill="none" stroke="#94a3b8" stroke-width="1"/>
+  <text x="241.0" y="356" text-anchor="middle" class="lblb">Sequence length (bp, log scale)</text>
+  <text x="16" y="192.0" text-anchor="middle" class="lblb" transform="rotate(-90 16 192.0)">Wall time (log)</text>
+  <path d="M 75.8 292.0 L 161.6 248.6 L 218.3 201.7 L 261.2 160.4 L 329.2 142.3 L 403.8 72.6" fill="none" stroke="#1b365d" stroke-width="2"/>
+  <circle cx="75.8" cy="292.0" r="3.2" fill="#1b365d" stroke="#fff" stroke-width="0.8"/>
+  <circle cx="161.6" cy="248.6" r="3.2" fill="#1b365d" stroke="#fff" stroke-width="0.8"/>
+  <circle cx="218.3" cy="201.7" r="3.2" fill="#1b365d" stroke="#fff" stroke-width="0.8"/>
+  <circle cx="261.2" cy="160.4" r="3.2" fill="#1b365d" stroke="#fff" stroke-width="0.8"/>
+  <circle cx="329.2" cy="142.3" r="3.2" fill="#1b365d" stroke="#fff" stroke-width="0.8"/>
+  <circle cx="403.8" cy="72.6" r="3.2" fill="#1b365d" stroke="#fff" stroke-width="0.8"/>
+  <path d="M 75.8 287.9 L 161.6 244.5 L 218.3 206.8 L 261.2 175.2 L 329.2 135.0 L 403.8 80.1" fill="none" stroke="#2563eb" stroke-width="2"/>
+  <circle cx="75.8" cy="287.9" r="3.2" fill="#2563eb" stroke="#fff" stroke-width="0.8"/>
+  <circle cx="161.6" cy="244.5" r="3.2" fill="#2563eb" stroke="#fff" stroke-width="0.8"/>
+  <circle cx="218.3" cy="206.8" r="3.2" fill="#2563eb" stroke="#fff" stroke-width="0.8"/>
+  <circle cx="261.2" cy="175.2" r="3.2" fill="#2563eb" stroke="#fff" stroke-width="0.8"/>
+  <circle cx="329.2" cy="135.0" r="3.2" fill="#2563eb" stroke="#fff" stroke-width="0.8"/>
+  <circle cx="403.8" cy="80.1" r="3.2" fill="#2563eb" stroke="#fff" stroke-width="0.8"/>
+  <path d="M 75.8 314.8 L 161.6 274.3 L 218.3 230.9 L 261.2 193.8" fill="none" stroke="#0d9488" stroke-width="2"/>
+  <circle cx="75.8" cy="314.8" r="3.2" fill="#0d9488" stroke="#fff" stroke-width="0.8"/>
+  <circle cx="161.6" cy="274.3" r="3.2" fill="#0d9488" stroke="#fff" stroke-width="0.8"/>
+  <circle cx="218.3" cy="230.9" r="3.2" fill="#0d9488" stroke="#fff" stroke-width="0.8"/>
+  <circle cx="261.2" cy="193.8" r="3.2" fill="#0d9488" stroke="#fff" stroke-width="0.8"/>
+  <path d="M 261.2 275.6 L 329.2 247.5 L 403.8 189.8" fill="none" stroke="#0d9488" stroke-width="2" stroke-dasharray="5,3"/>
+  <circle cx="261.2" cy="275.6" r="3.2" fill="#0d9488" stroke="#fff" stroke-width="0.8"/>
+  <circle cx="329.2" cy="247.5" r="3.2" fill="#0d9488" stroke="#fff" stroke-width="0.8"/>
+  <circle cx="403.8" cy="189.8" r="3.2" fill="#0d9488" stroke="#fff" stroke-width="0.8"/>
+  <path d="M 261.2 225.9 L 329.2 168.0 L 403.8 96.2" fill="none" stroke="#d97706" stroke-width="2"/>
+  <circle cx="261.2" cy="225.9" r="3.2" fill="#d97706" stroke="#fff" stroke-width="0.8"/>
+  <circle cx="329.2" cy="168.0" r="3.2" fill="#d97706" stroke="#fff" stroke-width="0.8"/>
+  <circle cx="403.8" cy="96.2" r="3.2" fill="#d97706" stroke="#fff" stroke-width="0.8"/>
+  <path d="M 261.2 291.1 L 329.2 271.7 L 403.8 217.4" fill="none" stroke="#d97706" stroke-width="2" stroke-dasharray="5,3"/>
+  <circle cx="261.2" cy="291.1" r="3.2" fill="#d97706" stroke="#fff" stroke-width="0.8"/>
+  <circle cx="329.2" cy="271.7" r="3.2" fill="#d97706" stroke="#fff" stroke-width="0.8"/>
+  <circle cx="403.8" cy="217.4" r="3.2" fill="#d97706" stroke="#fff" stroke-width="0.8"/>
+  <rect x="66" y="64" width="142" height="90" rx="4" fill="#ffffff" fill-opacity="0.92" stroke="#e2e8f0"/>
+  <line x1="70" y1="76" x2="88" y2="76" stroke="#1b365d" stroke-width="2"/>
+  <text x="93" y="79" class="small">full 1% (8t)</text>
+  <line x1="70" y1="90" x2="88" y2="90" stroke="#2563eb" stroke-width="2"/>
+  <text x="93" y="93" class="small">--linear 1% (8t)</text>
+  <line x1="70" y1="104" x2="88" y2="104" stroke="#0d9488" stroke-width="2"/>
+  <text x="93" y="107" class="small">--wfa 1% (1t)</text>
+  <line x1="70" y1="118" x2="88" y2="118" stroke="#0d9488" stroke-width="2" stroke-dasharray="5,3"/>
+  <text x="93" y="121" class="small">--wfa 0.1% (1t)</text>
+  <line x1="70" y1="132" x2="88" y2="132" stroke="#d97706" stroke-width="2"/>
+  <text x="93" y="135" class="small">WFA2 BiWFA 1% (1t)</text>
+  <line x1="70" y1="146" x2="88" y2="146" stroke="#d97706" stroke-width="2" stroke-dasharray="5,3"/>
+  <text x="93" y="149" class="small">WFA2 BiWFA 0.1% (1t)</text>
+  <text x="465" y="22" class="title">(b) Real protein benchmark (BLOSUM62, Table 5)</text>
+  <text x="465" y="36" class="sub">Median wall time (ms, log scale); 5 NCBI RefSeq orthologues</text>
+  <line x1="505" y1="326.0" x2="860" y2="326.0" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="499" y="329.0" text-anchor="end" class="tick">1</text>
+  <line x1="505" y1="278.7" x2="860" y2="278.7" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="499" y="281.7" text-anchor="end" class="tick">3</text>
+  <line x1="505" y1="226.9" x2="860" y2="226.9" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="499" y="229.9" text-anchor="end" class="tick">10</text>
+  <line x1="505" y1="179.7" x2="860" y2="179.7" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="499" y="182.7" text-anchor="end" class="tick">30</text>
+  <line x1="505" y1="127.9" x2="860" y2="127.9" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="499" y="130.9" text-anchor="end" class="tick">100</text>
+  <line x1="505" y1="80.6" x2="860" y2="80.6" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="499" y="83.6" text-anchor="end" class="tick">300</text>
+  <line x1="505" y1="326" x2="860" y2="326" stroke="#94a3b8" stroke-width="1"/>
+  <text x="468" y="200.0" text-anchor="middle" class="lblb" transform="rotate(-90 468 200.0)">Wall time (ms, log)</text>
+  <rect x="513.0" y="250.4" width="10" height="75.6" rx="1.5" fill="#64748b"/>
+  <rect x="524.0" y="300.7" width="10" height="25.3" rx="1.5" fill="#d97706"/>
+  <rect x="535.0" y="296.2" width="10" height="29.8" rx="1.5" fill="#1b365d"/>
+  <rect x="546.0" y="296.2" width="10" height="29.8" rx="1.5" fill="#2563eb"/>
+  <rect x="557.0" y="294.1" width="10" height="31.9" rx="1.5" fill="#0d9488"/>
+  <text x="540.5" y="340" text-anchor="middle" class="small">TP53</text>
+  <text x="540.5" y="351" text-anchor="middle" class="small">(393 aa)</text>
+  <rect x="584.0" y="134.6" width="10" height="191.4" rx="1.5" fill="#64748b"/>
+  <rect x="595.0" y="248.2" width="10" height="77.8" rx="1.5" fill="#d97706"/>
+  <rect x="606.0" y="244.2" width="10" height="81.8" rx="1.5" fill="#1b365d"/>
+  <rect x="617.0" y="251.1" width="10" height="74.9" rx="1.5" fill="#2563eb"/>
+  <rect x="628.0" y="248.2" width="10" height="77.8" rx="1.5" fill="#0d9488"/>
+  <text x="611.5" y="340" text-anchor="middle" class="small">POLR2A</text>
+  <text x="611.5" y="351" text-anchor="middle" class="small">(1,970 aa)</text>
+  <rect x="655.0" y="135.3" width="10" height="190.7" rx="1.5" fill="#64748b"/>
+  <rect x="666.0" y="251.1" width="10" height="74.9" rx="1.5" fill="#d97706"/>
+  <rect x="677.0" y="244.2" width="10" height="81.8" rx="1.5" fill="#1b365d"/>
+  <rect x="688.0" y="250.4" width="10" height="75.6" rx="1.5" fill="#2563eb"/>
+  <rect x="699.0" y="248.9" width="10" height="77.1" rx="1.5" fill="#0d9488"/>
+  <text x="682.5" y="340" text-anchor="middle" class="small">BRCA1</text>
+  <text x="682.5" y="351" text-anchor="middle" class="small">(1,863 aa)</text>
+  <rect x="726.0" y="109.4" width="10" height="216.6" rx="1.5" fill="#64748b"/>
+  <rect x="737.0" y="229.6" width="10" height="96.4" rx="1.5" fill="#d97706"/>
+  <rect x="748.0" y="225.7" width="10" height="100.3" rx="1.5" fill="#1b365d"/>
+  <rect x="759.0" y="237.6" width="10" height="88.4" rx="1.5" fill="#2563eb"/>
+  <rect x="770.0" y="245.5" width="10" height="80.5" rx="1.5" fill="#0d9488"/>
+  <text x="753.5" y="340" text-anchor="middle" class="small">MTOR</text>
+  <text x="753.5" y="351" text-anchor="middle" class="small">(2,549 aa)</text>
+  <rect x="797.0" y="92.0" width="10" height="234.0" rx="1.5" fill="#64748b"/>
+  <rect x="808.0" y="216.0" width="10" height="110.0" rx="1.5" fill="#d97706"/>
+  <rect x="819.0" y="211.6" width="10" height="114.4" rx="1.5" fill="#1b365d"/>
+  <rect x="830.0" y="225.3" width="10" height="100.7" rx="1.5" fill="#2563eb"/>
+  <rect x="841.0" y="236.0" width="10" height="90.0" rx="1.5" fill="#0d9488"/>
+  <text x="824.5" y="340" text-anchor="middle" class="small">ATM</text>
+  <text x="824.5" y="351" text-anchor="middle" class="small">(3,056 aa)</text>
+  <rect x="505" y="45" width="9" height="7" rx="1.5" fill="#64748b"/>
+  <text x="517" y="52" class="small">seq-align (1t)</text>
+  <rect x="621" y="45" width="9" height="7" rx="1.5" fill="#d97706"/>
+  <text x="633" y="52" class="small">parasail scan (1t)</text>
+  <rect x="737" y="45" width="9" height="7" rx="1.5" fill="#1b365d"/>
+  <text x="749" y="52" class="small">NA full (1t)</text>
+  <rect x="505" y="57" width="9" height="7" rx="1.5" fill="#2563eb"/>
+  <text x="517" y="64" class="small">NA --lin (1t)</text>
+  <rect x="621" y="57" width="9" height="7" rx="1.5" fill="#0d9488"/>
+  <text x="633" y="64" class="small">NA --lin (8t)</text>
+</svg>
