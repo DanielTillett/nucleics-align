@@ -1,0 +1,58 @@
+# host: Linux pop-os 7.2.15-76070215-generic #202611011338~1794956660~24.04~3bf1542 SMP PREEMPT_DYNAMIC Tue N x86_64 x86_64 x86_64 GNU/Linux
+# cpu:  AMD Ryzen 7 5700G with Radeon Graphics
+# governor: powersave
+# smt:  1
+# nucleics-align: aaf0754
+# nw_sha256: da7ccd41651122ae77c6fff6fb4f41d31436b3a07a126f2018bffdc05a301b0c
+# sw_sha256: 33607565e570cb079fb92a6a7411b716b9f679faa43306270b7ad7cfc44c1322
+# parasail: 600fb26 (v2.6.2)
+
+=== PARASAIL v2.6.2 (AVX2 16-bit striped, 1t) ON 5 REAL PROTEINS + INDEPENDENT RE-SCORING ===
+  Human/Mouse TP53            parasail_1t=   2.53 ms [  2.37-  2.57]  rss=   2.0 MiB  score=1540 (parasail/full/linear CIGAR+span verified)
+  Human POLR2A/Yeast Rpo21    parasail_1t=  14.13 ms [ 13.37- 14.44]  rss=   8.2 MiB  score=4630 (parasail/full/linear CIGAR+span verified)
+  Human/Mouse BRCA1           parasail_1t=  12.73 ms [ 12.41- 12.86]  rss=   8.2 MiB  score=4827 (parasail/full/linear CIGAR+span verified)
+  Human/Mouse MTOR            parasail_1t=  25.17 ms [ 23.66- 25.73]  rss=  14.1 MiB  score=13042 (parasail/full/linear CIGAR+span verified)
+  Human/Mouse ATM             parasail_1t=  33.87 ms [ 33.53- 34.43]  rss=  19.7 MiB  score=13333 (parasail/full/linear CIGAR+span verified)
+
+=== INDEPENDENT CROSS-TOOL DNA CIGAR/ALIGNMENT RE-SCORING (20 kb seed 1, +1/-2/-4/-1) ===
+  20 kb 1     ALL 5 TOOLS RE-SCORED & SPAN-VERIFIED: score=18934 (['nw_full', 'nw_linear', 'nw_wfa', 'ksw2', 'biwfa'])
+  20 kb 10    ALL 5 TOOLS RE-SCORED & SPAN-VERIFIED: score=10215 (['nw_full', 'nw_linear', 'nw_wfa', 'ksw2', 'biwfa'])
+  20 kb rand  ALL 5 TOOLS RE-SCORED & SPAN-VERIFIED: score=-13508 (['nw_full', 'nw_linear', 'nw_wfa', 'ksw2', 'biwfa'])
+
+=== v1.2.0 SCALING TABLE 3 (5 kb - 1 Mb, 8 default threads, gen_pairs.py seed=11, score-asserted) ===
+# sha256 5000_1_s11.fa = c3b7baf393ea5783faeac42199756716c775466234bf16a69105ef11b4166091
+  5 kb   1    | full=    6.2/    4 | wfa=    2.9/    3 | linear=    7.1/    2 | scoreonly=    3.2/    2 | loc1=  21.5/ 31 | score=4743
+# sha256 5000_10_s11.fa = 2fec750360a03c2b872e484a0b1696adf32955b0391fcc96c297c67e3e79170d
+  5 kb   10   | full=   14.3/   27 | wfa=   25.0/   27 | linear=   10.8/    3 | scoreonly=    4.8/    2 | loc1=  20.0/ 31 | score=2554
+# sha256 5000_rand_s11.fa = a6c539bf4da8856ef8266a114d3775109ccc1b7bd4a7a2eb2c48d5b7e569f8be
+  5 kb   rand | full=   12.6/   27 | wfa=   23.0/   27 | linear=   12.9/    3 | scoreonly=    5.0/    2 | loc1=  29.3/ 30 | score=-3415
+# sha256 20000_1_s11.fa = b3f59b72406cfec82225dc74be13e7f398da677143ab88178d56dfb2316e8f4e
+  20 kb  1    | full=   26.3/   16 | wfa=   11.2/    3 | linear=   30.2/    3 | scoreonly=    8.6/    3 | loc1= 137.0/ 24 | score=18956
+# sha256 20000_10_s11.fa = 7cd7d29b128b878a8ec6980a56408900e96cf890d52853ee069b62f5379484be
+  20 kb  10   | full=   69.1/  387 | wfa=  109.6/  388 | linear=   69.1/    4 | scoreonly=   15.3/    4 | loc1= 103.6/ 24 | score=10057
+# sha256 20000_rand_s11.fa = 9f0eeaa2e4f24c45289b2afbd41f4d0df746750899a24ea2b8a656d84c793118
+  20 kb  rand | full=   68.7/  387 | wfa=  107.9/  387 | linear=   75.4/    4 | scoreonly=   20.2/    4 | loc1= 133.4/ 24 | score=-13480
+# sha256 50000_1_s11.fa = 96fb0dd041f22c85cc3a4f924cb186dd7882f3040431300f9f5eff81590ca1dc
+  50 kb  1    | full=  125.2/   83 | wfa=   47.5/    3 | linear=  105.7/    4 | scoreonly=   33.3/    4 | loc1= 576.7/ 87 | score=47331
+# sha256 50000_10_s11.fa = 823e5bb6222fd0615f5fe6b42a9eb5b396941304462eee5a43750d068b11d01e
+  50 kb  10   | full=  421.3/ 2397 | wfa=  523.5/ 2398 | linear=  218.2/    6 | scoreonly=   62.6/    6 | loc1= 543.8/ 87 | score=25664
+# sha256 50000_rand_s11.fa = 7a391a127e8786de0b84b4cd82acc80999d1d5e184d8c9a1185a2887f2e2c7d2
+  50 kb  rand | full=  405.3/ 2395 | wfa=  501.1/ 2395 | linear=  274.2/    8 | scoreonly=   97.3/    6 | loc1= 617.0/ 86 | score=-33409
+# sha256 100000_0.1_s11.fa = b2b35c137e785eee77d903cacdc31a99dfeca5792b5caaf83fa98b1cf0e1e45f
+  100 kb 0.1  | full=   71.2/   38 | wfa=   10.7/    3 | linear=  213.8/    6 | scoreonly=   40.5/    6 | wfa2_biwfa=    6.4/   5 | score=99491
+# sha256 100000_1_s11.fa = 650ed5fb8036b8c45be3e686c2140253d7190339a686d6f08282af816312860f
+  100 kb 1    | full=  496.8/  308 | wfa=  163.4/    4 | linear=  303.4/    7 | scoreonly=  108.5/    6 | wfa2_biwfa=   56.1/   8 | score=94810
+# sha256 100000_5_s11.fa = 0228d54af507e1a3aec8b68724f8252fd23c79fc0dd2dcfe2a996a10a1cb9a5d
+  100 kb 5    | full=  439.5/ 1474 | wfa=  692.5/ 1474 | linear=  491.6/    9 | scoreonly=  143.7/    8 | score=74792
+# sha256 300000_0.1_s11.fa = dd9b3d96f269cfffc7cdf3ea3313220378844bc7ecb6bce8829a18c2137ee051
+  300 kb 0.1  | full=  369.1/  282 | wfa=   27.3/    5 | linear=  545.9/   15 | scoreonly=  127.7/   15 | wfa2_biwfa=   12.2/   7 | score=298446
+# sha256 300000_1_s11.fa = e91ebc830c562eea24c7af5554829130a26791a219e0e74ae96b4b233d325d5d
+  300 kb 1    | full=  904.9/ 2693 | wfa= 1482.0/ 2693 | linear= 1157.2/   17 | scoreonly=  271.2/   16 | wfa2_biwfa=  384.8/  16 | score=284753
+# sha256 300000_5_s11.fa = a36d1e9dc8021cb48dd78813af83c7e282ed499c141c15340091107fc5a50446
+  300 kb 5    | full= 3470.7/  206 | wfa= 4036.2/  206 | linear= 2850.9/   22 | scoreonly= 1056.5/   20 | score=224816
+# sha256 1000000_0.1_s11.fa = b29efea55f6a30f88e870c19a06325773a42651a0b4bd3951b3d8b677410c262
+  1 Mb   0.1  | full= 4034.8/ 3125 | wfa=  186.5/   11 | linear= 3183.4/   46 | scoreonly= 1079.7/   43 | wfa2_biwfa=   74.4/  16 | score=994784
+# sha256 1000000_1_s11.fa = c9b599ffd2ce5517960563e5a0e3654b533e118d5b7ed3b285ab0df7d969db5b
+  1 Mb   1    | full= 9232.1/  342 | wfa= 9993.4/  342 | linear= 7193.2/   50 | scoreonly= 2638.4/   47 | wfa2_biwfa= 4199.2/  44 | score=947810
+# sha256 1000000_5_s11.fa = 57b14bb131664ab5191cdf3d9bc6b516b4228ea17796bfc0d3a16b9098f8b416
+  1 Mb   5    | full=--- | wfa=--- | linear=94052.5/  110 | scoreonly=59388.0/   94 | score=746477
