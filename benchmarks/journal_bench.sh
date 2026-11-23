@@ -22,18 +22,30 @@ ORIG_NW="$WORK/src/seq-align/bin/needleman_wunsch"
 WFA2="$WORK/bin/run_wfa2"
 KSW2="$WORK/bin/run_ksw2"
 
+for req in "$WORK/bin/run_wfa2" "$WORK/src/ksw2/ksw2.h" "$WORK/src/WFA2-lib/lib/libwfa.a" "$WORK/proteins/h_tp53.fa" "$WORK/pairs/20000_1_s1.fa"; do
+  if [ ! -e "$req" ]; then
+    echo "Missing prerequisite $req — run benchmarks/compare_harness.sh and benchmarks/protein_bench.sh first with the same work_dir ($WORK)" >&2
+    exit 1
+  fi
+done
+
 echo "# host: $(uname -a)"
 echo "# cpu:  $(lscpu | awk -F: '/Model name/{gsub(/^ +/,"",$2); print $2; exit}')"
 echo "# governor: $(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null || echo unknown)"
 echo "# smt:  $(cat /sys/devices/system/cpu/smt/active 2>/dev/null || echo unknown)"
+echo "# gcc:  $(gcc --version | head -n1)"
+echo "# python: $(python3 --version)"
 echo "# nucleics-align: $(git -C "$ROOT" rev-parse --short HEAD)"
 echo "# nw_sha256: $(sha256sum "$NW" | awk '{print $1}')"
 echo "# sw_sha256: $(sha256sum "$SW" | awk '{print $1}')"
+echo "# ksw2: $(git -C "$WORK/src/ksw2" rev-parse --short HEAD)"
+echo "# WFA2-lib: $(git -C "$WORK/src/WFA2-lib" rev-parse --short HEAD)"
 
 # 1. Build pinned parasail v2.6.2 (600fb26, AVX2 256-bit 16-bit striped NW + traceback)
 if [ ! -d "$WORK/src/parasail" ]; then
-  git clone --depth 1 --branch v2.6.2 https://github.com/jeffdaily/parasail "$WORK/src/parasail"
+  git clone --branch v2.6.2 https://github.com/jeffdaily/parasail "$WORK/src/parasail"
 fi
+git -C "$WORK/src/parasail" checkout -q v2.6.2
 echo "# parasail: $(git -C "$WORK/src/parasail" rev-parse --short HEAD) (v2.6.2)"
 
 cat > "$WORK/src/config.h" <<'EOF'
@@ -208,6 +220,7 @@ def rescore_aligned(a, b, sub_fn, go, ge):
     assert len(a) == len(b)
     sc, in_a, in_b = 0, False, False
     for x, y in zip(a, b):
+        assert not (x == "-" and y == "-"), "Invalid double-gap column"
         if x == "-":
             sc += ge if in_a else (go + ge); in_a, in_b = True, False
         elif y == "-":
@@ -219,9 +232,9 @@ def rescore_aligned(a, b, sub_fn, go, ge):
 def rescore_cigar(seq_a, seq_b, cigar_str, sub_fn, go, ge, swap_id=False):
     i = j = sc = 0
     if re.match(r"^[MIDX=]+$", cigar_str):
-        # WFA2 raw operations string (M/X/I/D where I=ins in text b, D=del in pattern a)
         ops = [(1, ch) for ch in cigar_str]
     else:
+        assert re.fullmatch(r"(?:[1-9]\d*[MIDX=])+", cigar_str), f"Malformed CIGAR: {cigar_str[:40]}"
         ops = [(int(n), op) for n, op in re.findall(r"(\d+)([MIDX=])", cigar_str)]
     prev_op = None
     for n, op in ops:
@@ -359,6 +372,7 @@ for label, length, mut, fname, reps, do_loc, do_biwfa in cases:
         if length == "1000000" and mut == "5" and mname in ("full", "wfa"):
             row.append(f"{mname}=---"); continue
         med, lo, hi, _, rss, sc, _ = run_timed(cmd, reps=reps)
+        assert sc is not None, f"Missing score for {mname} on {label} {mut}"
         g_scores[mname] = sc
         row.append(f"{mname}={lo:7.1f}/{rss:5.0f}")
     if do_loc:
