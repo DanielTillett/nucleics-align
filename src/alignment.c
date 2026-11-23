@@ -141,6 +141,7 @@ bool alignment_diff_enabled = true;
 bool alignment_linear_fallback = false;
 size_t alignment_linear_above = 0;
 bool alignment_wfa_alignment = false;
+size_t alignment_wfa_budget = 0;
 static atomic_size_t alignment_diff_fills;
 // Band fills (each width tried), and bands sized by alignment_wfa_score()
 static atomic_size_t alignment_band_tries, alignment_band_wfa_sized;
@@ -230,29 +231,73 @@ size_t alignment_band_width(score_t smax, score_t gap_extend,
 
 typedef struct {
   _Alignas(64) atomic_size_t v;
+  atomic_uint waiters;
+  pthread_mutex_t mu;
+  pthread_cond_t cv;
 } aln_done_t;
 
 // Publish progress every ALN_PUB_ROWS rows (plus the final row) to cut
 // cross-core atomic traffic while keeping the pipeline full
 #define ALN_PUB_ROWS 16
 
+static inline void aln_publish_row(aln_done_t *d, size_t y)
+{
+  atomic_store_explicit(&d->v, y, memory_order_release);
+  atomic_thread_fence(memory_order_seq_cst);
+  if(atomic_load_explicit(&d->waiters, memory_order_relaxed) > 0) {
+    pthread_mutex_lock(&d->mu);
+    pthread_cond_broadcast(&d->cv);
+    pthread_mutex_unlock(&d->mu);
+  }
+}
+
+static inline void aln_wake_right(aln_done_t *d)
+{
+  if(d == NULL) return;
+  // Publish SIZE_MAX so a late waiter registering after an abort never parks
+  atomic_store_explicit(&d->v, SIZE_MAX, memory_order_release);
+  atomic_thread_fence(memory_order_seq_cst);
+  if(atomic_load_explicit(&d->waiters, memory_order_relaxed) > 0) {
+    pthread_mutex_lock(&d->mu);
+    pthread_cond_broadcast(&d->cv);
+    pthread_mutex_unlock(&d->mu);
+  }
+}
+
 // Wait until the block on the left has finished row y. Caches the last
-// observed row in *seen so the common case needs no atomic load. Returns
-// false if a block stopped meanwhile (see alignment_block_t.stop)
-static inline bool alignment_wait_row(atomic_size_t *left_done, size_t y,
+// observed row in *seen so the common case needs no atomic load. Uses a
+// bounded spin followed by a condition-variable wait to cut wasted CPU time.
+// Returns false if a block stopped meanwhile (see alignment_block_t.stop)
+static inline bool alignment_wait_row(aln_done_t *left_done, size_t y,
                                       atomic_bool *stop, size_t *seen)
 {
   if(*seen >= y) return true;
   unsigned spins = 0;
   size_t cur;
-  while((cur = atomic_load_explicit(left_done, memory_order_acquire)) < y) {
+  while((cur = atomic_load_explicit(&left_done->v, memory_order_acquire)) < y) {
     if(stop != NULL &&
        atomic_load_explicit(stop, memory_order_relaxed)) return false;
+    if(spins < 512) {
 #if defined(__x86_64__) || defined(__i386__)
-    __builtin_ia32_pause();
+      __builtin_ia32_pause();
 #endif
-    if(++spins > 64) { spins = 0; sched_yield(); }
+      spins++;
+      continue;
+    }
+    pthread_mutex_lock(&left_done->mu);
+    atomic_fetch_add_explicit(&left_done->waiters, 1, memory_order_seq_cst);
+    atomic_thread_fence(memory_order_seq_cst);
+    while((cur = atomic_load_explicit(&left_done->v, memory_order_acquire)) < y &&
+          (stop == NULL || !atomic_load_explicit(stop, memory_order_acquire))) {
+      pthread_cond_wait(&left_done->cv, &left_done->mu);
+    }
+    atomic_fetch_sub_explicit(&left_done->waiters, 1, memory_order_relaxed);
+    pthread_mutex_unlock(&left_done->mu);
+    break;
   }
+  if(stop != NULL && atomic_load_explicit(stop, memory_order_acquire))
+    return false;
+  if(cur < y) return false;
   *seen = cur;
   return true;
 }
@@ -275,7 +320,7 @@ static inline bool alignment_wait_row(atomic_size_t *left_done, size_t y,
 // to lastrow[m] by matrix column
 typedef struct {
   aligner_t *aligner; const sub_table_t *table; score_t min;
-  size_t c0, width; atomic_size_t *left_done, *done;
+  size_t c0, width; aln_done_t *left_done, *done;
   const score_t *r0[3], *lc[3]; size_t lstride;
   uint8_t *trace; score_t *rc[3];
   bool track_best; score_t best_score; size_t best_x, best_y;
@@ -435,7 +480,21 @@ static void* alignment_block_thread(void *ptr)
   else if(p->bits == 8) alignment_fill_striped_8(p);
   else if(p->bits == 16) alignment_fill_striped_16(p);
   else alignment_fill_striped_32(p);
+  // Always wake any downstream sleeper on normal or early (OOM/overflow/stop) exit
+  aln_wake_right(p->done);
   return NULL;
+}
+
+static int alignment_online_cpus(void)
+{
+  static atomic_int cached = 0;
+  int c = atomic_load_explicit(&cached, memory_order_relaxed);
+  if(c <= 0) {
+    long n = sysconf(_SC_NPROCESSORS_ONLN);
+    c = n > 0 ? (int)n : 1;
+    atomic_store_explicit(&cached, c, memory_order_relaxed);
+  }
+  return c;
 }
 
 // Threads (column blocks) for a striped fill of width x rows cells
@@ -450,8 +509,8 @@ static size_t alignment_fill_threads(const alignment_options_t *o,
 {
   int threads = o->max_threads;
   if(threads <= 0) {
-    long cpus = sysconf(_SC_NPROCESSORS_ONLN);
-    threads = cpus > 1 ? (int)(cpus / 2) : 1;
+    int cpus = alignment_online_cpus();
+    threads = cpus > 1 ? cpus / 2 : 1;
   }
   // At least one vector of columns per block, so no block is empty
   const size_t min_cols = MAX2(whole ? 2 * o->block_min_cols
@@ -504,12 +563,30 @@ static bool alignment_fill_blocks(alignment_block_t *tmpl)
 
   for(i = 0; i < nblocks; i++) {
     atomic_init(&done[i].v, 0);
+    atomic_init(&done[i].waiters, 0);
+    if(pthread_mutex_init(&done[i].mu, NULL) != 0) {
+      for(size_t j = 0; j < i; j++) {
+        pthread_cond_destroy(&done[j].cv);
+        pthread_mutex_destroy(&done[j].mu);
+      }
+      free(cols);
+      return false;
+    }
+    if(pthread_cond_init(&done[i].cv, NULL) != 0) {
+      pthread_mutex_destroy(&done[i].mu);
+      for(size_t j = 0; j < i; j++) {
+        pthread_cond_destroy(&done[j].cv);
+        pthread_mutex_destroy(&done[j].mu);
+      }
+      free(cols);
+      return false;
+    }
     alignment_block_t *b = &args[i];
     *b = *tmpl;
     b->c0 = tmpl->c0 + i * width;
     b->width = i + 1 < nblocks ? width : len_i - i * width;
-    b->left_done = i > 0 ? &done[i-1].v : NULL;
-    b->done = i + 1 < nblocks ? &done[i].v : NULL;
+    b->left_done = i > 0 ? &done[i-1] : NULL;
+    b->done = i + 1 < nblocks ? &done[i] : NULL;
     b->best_score = 0;
     b->best_x = b->best_y = 0;
     b->stop = &stop;
@@ -533,6 +610,10 @@ static bool alignment_fill_blocks(alignment_block_t *tmpl)
   for(i = 1; i < nblocks; i++) {
     if(started[i]) pthread_join(thread_ids[i], NULL);
     else alignment_block_thread(&args[i]);
+  }
+  for(i = 0; i < nblocks; i++) {
+    pthread_cond_destroy(&done[i].cv);
+    pthread_mutex_destroy(&done[i].mu);
   }
 
   if(atomic_load(&nomem)) {
@@ -1294,6 +1375,17 @@ static fill_result_t alignment_fill_banded(aligner_t *aligner,
                       alignment_diff_bits(table, scoring, &floor, &ceiling)
                       ? 0.35 : 0.6;
 
+  // Quick reject for small single-threaded inputs where even the narrowest
+  // allowed band with the minimum strip height cannot beat a full compact fill
+  if(full_threads <= 1.0) {
+    const double min_cols = (double)(D < 0 ? -D : D) +
+                            2.0 * (double)aligner->opts.band_min_width + 1.0;
+    const size_t min_strip = aligner->opts.band_strip_rows
+                             ? aligner->opts.band_strip_rows : 64;
+    if(min_cols + (double)min_strip >= pays * (double)len_i)
+      return FILL_SKIPPED;
+  }
+
   // The best score itself where the wavefront algorithm finds it within
   // its budget (close pairs): then the band it needs is filled once (50 kb
   // at 0.1%: 0.040 -> 0.018 s). Otherwise skip the band if even a high
@@ -1353,18 +1445,20 @@ static fill_result_t alignment_fill_banded(aligner_t *aligner,
                    : MAX2(64, (size_t)(cols / 4));
     double keep_max = (double)aligner->opts.band_keep_max_cells;
     if(keep_max == 0) {
-      // A quarter of the physical memory (or 1 GB if unknown): the strips
-      // cost a second fill of the band as the traceback reaches them
-      long pages = sysconf(_SC_PHYS_PAGES), page = sysconf(_SC_PAGESIZE);
-      keep_max = pages > 0 && page > 0 ? (double)pages * (double)page / 4
-                                       : (double)((size_t)1 << 30);
+      static atomic_size_t cached_keep_max = 0;
+      size_t km = atomic_load_explicit(&cached_keep_max, memory_order_relaxed);
+      if(km == 0) {
+        long pages = sysconf(_SC_PHYS_PAGES), page = sysconf(_SC_PAGESIZE);
+        km = pages > 0 && page > 0 && (size_t)pages <= SIZE_MAX / (size_t)page
+             ? ((size_t)pages * (size_t)page) / 4
+             : ((size_t)1 << 30);
+        if(km == 0) km = (size_t)1 << 30;
+        atomic_store_explicit(&cached_keep_max, km, memory_order_relaxed);
+      }
+      keep_max = (double)km;
     }
     const bool keep = (double)len_j * (cols + (double)strip) > keep_max;
     if(keep && !aligner->opts.band_strip_rows) {
-      // At most about sqrt(12 x rows) rows, so a wide band's one strip of
-      // bytes stays small; a narrow band keeps its usual strips (taller
-      // ones would reach further across: 300 kb at 0.1%, 0.68 -> 2.0 s),
-      // and their top rows take only about 60 bytes per row
       size_t most;
       for(most = 64; most * most < 12 * len_j; most++) {}
       strip = MIN2(strip, most);
@@ -1376,13 +1470,6 @@ static fill_result_t alignment_fill_banded(aligner_t *aligner,
                                      (size_t)cols + strip, strip, false);
     if((cols + strip) / MAX2(1.0, band_threads / 2) >=
        pays * (double)len_i / MAX2(1.0, full_threads / 2)) {
-      // A band too small for its strips to be split across all the threads
-      // can cost more than a wider one that is (50 kb at 3%: 1,677
-      // diagonals each side ran on one thread, and the whole matrix was
-      // filled instead). So, while it has fewer threads than the whole
-      // fill, try it a quarter wider, a few times: a wider band holds every
-      // path the narrower one would, so its proof, and the alignment, are
-      // unchanged
       if(widened < 8 && band_threads < full_threads && bw < len_i) {
         bw += MAX2(bw / 4, (size_t)1);
         widened++;

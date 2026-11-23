@@ -54,6 +54,7 @@ typedef struct
 #ifdef HB_STRIPED
   void *vbuf; // striped rows and score profile, see hb_pass_striped()
   void *vbuf2; // the same for a pass on a second thread
+  size_t vbuf_bytes; // lazy allocation size for vbuf / vbuf2
   bool simd_ok; // all scores far enough from HB_NEG and overflow
   int pass_threads; // threads for the passes of one step (see hb_passes_striped())
   score_t smax; // best substitution score, at least 0, see hb_band()
@@ -225,9 +226,23 @@ static void hb_chain_take(hb_chain_t *c, size_t n, bool reverse,
 typedef struct {
   _Alignas(64) score_t *H, *F;
   atomic_size_t done;
+  atomic_uint waiters;
+  pthread_mutex_t mu;
+  pthread_cond_t cv;
 } hb_boundary_t;
 
 #define HB_PUB_ROWS 16
+
+static inline void hb_publish_row(hb_boundary_t *right, size_t val)
+{
+  atomic_store_explicit(&right->done, val, memory_order_release);
+  atomic_thread_fence(memory_order_seq_cst);
+  if(atomic_load_explicit(&right->waiters, memory_order_relaxed) > 0) {
+    pthread_mutex_lock(&right->mu);
+    pthread_cond_broadcast(&right->cv);
+    pthread_mutex_unlock(&right->mu);
+  }
+}
 
 // Wait until the block on the left has published row r
 static inline void hb_wait_row(hb_boundary_t *left, size_t r, size_t *seen)
@@ -236,10 +251,22 @@ static inline void hb_wait_row(hb_boundary_t *left, size_t r, size_t *seen)
   unsigned spins = 0;
   size_t cur;
   while((cur = atomic_load_explicit(&left->done, memory_order_acquire)) <= r) {
+    if(spins < 512) {
 #if defined(__x86_64__) || defined(__i386__)
-    __builtin_ia32_pause();
+      __builtin_ia32_pause();
 #endif
-    if(++spins > 64) { spins = 0; sched_yield(); }
+      spins++;
+      continue;
+    }
+    pthread_mutex_lock(&left->mu);
+    atomic_fetch_add_explicit(&left->waiters, 1, memory_order_seq_cst);
+    atomic_thread_fence(memory_order_seq_cst);
+    while((cur = atomic_load_explicit(&left->done, memory_order_acquire)) <= r) {
+      pthread_cond_wait(&left->cv, &left->mu);
+    }
+    atomic_fetch_sub_explicit(&left->waiters, 1, memory_order_relaxed);
+    pthread_mutex_unlock(&left->mu);
+    break;
   }
   *seen = cur;
 }
@@ -436,7 +463,7 @@ static void hb_block_pass16(hb_state_t *st, const char *a, ptrdiff_t astep,
     right->H[0] = top == NULL ? g + (score_t)(c0 + width) * h
                               : top->H[c0+width];
     right->F[0] = HB_NEG; // not used
-    atomic_store_explicit(&right->done, 1, memory_order_release);
+    hb_publish_row(right, 1);
   }
 
   size_t left_seen = 0;
@@ -460,7 +487,7 @@ static void hb_block_pass16(hb_state_t *st, const char *a, ptrdiff_t astep,
       right->H[r+1] = hl;
       right->F[r+1] = fo;
       if(((r + 1) & (HB_PUB_ROWS - 1)) == 0 || r + 1 == rows)
-        atomic_store_explicit(&right->done, r+2, memory_order_release);
+        hb_publish_row(right, r+2);
     }
   }
 
@@ -545,7 +572,7 @@ static void hb_block_pass(hb_state_t *st, const char *a, ptrdiff_t astep,
     right->H[0] = top == NULL ? g + (score_t)(c0 + width) * h
                               : top->H[c0+width];
     right->F[0] = HB_NEG; // not used
-    atomic_store_explicit(&right->done, 1, memory_order_release);
+    hb_publish_row(right, 1);
   }
 
   // The column left of the block: column 0 (only deletions) for the first
@@ -614,7 +641,7 @@ static void hb_block_pass(hb_state_t *st, const char *a, ptrdiff_t astep,
       right->H[r+1] = Hn[seg-1][ALN_VL-1];
       right->F[r+1] = fout;
       if(((r + 1) & (HB_PUB_ROWS - 1)) == 0 || r + 1 == rows)
-        atomic_store_explicit(&right->done, r+2, memory_order_release);
+        hb_publish_row(right, r+2);
     }
 
     tmp = H; H = Hn; Hn = tmp;
@@ -693,6 +720,28 @@ static void hb_pass_striped(hb_state_t *st, const char *a, ptrdiff_t astep,
     bounds[i].H = edges + 2*i*(rows+1);
     bounds[i].F = bounds[i].H + (rows+1);
     atomic_init(&bounds[i].done, 0);
+    atomic_init(&bounds[i].waiters, 0);
+    if(pthread_mutex_init(&bounds[i].mu, NULL) != 0) {
+      for(size_t j = 0; j < i; j++) {
+        pthread_cond_destroy(&bounds[j].cv);
+        pthread_mutex_destroy(&bounds[j].mu);
+      }
+      free(bufs);
+      free(edges);
+      hb_nomem(st);
+      return;
+    }
+    if(pthread_cond_init(&bounds[i].cv, NULL) != 0) {
+      pthread_mutex_destroy(&bounds[i].mu);
+      for(size_t j = 0; j < i; j++) {
+        pthread_cond_destroy(&bounds[j].cv);
+        pthread_mutex_destroy(&bounds[j].mu);
+      }
+      free(bufs);
+      free(edges);
+      hb_nomem(st);
+      return;
+    }
   }
 
   for(i = 0; i < nblocks; i++) {
@@ -713,6 +762,10 @@ static void hb_pass_striped(hb_state_t *st, const char *a, ptrdiff_t astep,
   for(i = 1; i < nblocks; i++) {
     if(started[i]) pthread_join(thread_ids[i], NULL);
     else hb_block_thread(&args[i]);
+  }
+  for(i = 0; i + 1 < nblocks; i++) {
+    pthread_cond_destroy(&bounds[i].cv);
+    pthread_mutex_destroy(&bounds[i].mu);
   }
 
   free(bufs);
@@ -1034,6 +1087,19 @@ static score_t hb_midpoint(const hb_state_t *st, size_t n, size_t *midj,
 // them (do_f, do_r). Passes over all columns also write the rows of their
 // save chain (NULL: none). The passes read shared, unchanging data and write
 // different rows, so big ones run at the same time
+static bool hb_ensure_vbuf(hb_state_t *st, bool need_second)
+{
+  if(st->vbuf == NULL) {
+    st->vbuf = aln_aligned_alloc(sizeof(vscore_t), st->vbuf_bytes);
+    if(st->vbuf == NULL) { hb_nomem(st); return false; }
+  }
+  if(need_second && st->vbuf2 == NULL) {
+    st->vbuf2 = aln_aligned_alloc(sizeof(vscore_t), st->vbuf_bytes);
+    if(st->vbuf2 == NULL) { hb_nomem(st); return false; }
+  }
+  return true;
+}
+
 static void hb_passes_striped(hb_state_t *st, const char *a, const char *b,
                               size_t m, size_t n, size_t imid,
                               score_t tb, score_t te,
@@ -1041,6 +1107,7 @@ static void hb_passes_striped(hb_state_t *st, const char *a, const char *b,
                               bool do_f, bool do_r, const hb_chain_t *fsave,
                               const hb_chain_t *rsave)
 {
+  if(!hb_ensure_vbuf(st, do_r)) return;
   // In the reverse pass, diagonal j - i becomes (n - m) - (j - i): the band
   // around 0 .. n-m maps onto itself
   hb_pass_args_t fwd = {st, a, 1, imid, b, 1, n, tb,
@@ -1144,15 +1211,30 @@ static void hb_passes(hb_state_t *st, const char *a, const char *b,
   #endif
   const bool do_f = fwd->len == 0, do_r = rev->len == 0;
   const size_t rrows = m - imid; // rows of the reverse pass
+  if(!do_f) hb_chain_take(fwd, n, false, st->cc, st->dd);
+  if(!do_r) hb_chain_take(rev, n, true, st->rr, st->ss);
+  // Unit-cost Myers split rows on one thread (faster than unbanded striped
+  // SIMD on divergent unit-cost pairs; with gap_open == 0, type 2 in
+  // hb_midpoint() requires strict '>' and cannot win over type 1)
+  if(hirschberg_myers_enabled && tb == 0 && te == 0 &&
+#ifdef HB_STRIPED
+     st->pass_threads <= 1 &&
+#endif
+     (!do_f || alignment_myers_row(&st->table, st->scoring, a, imid, b, n,
+                                   false, st->cc)) &&
+     (!do_r || alignment_myers_row(&st->table, st->scoring, a + imid, rrows,
+                                   b, n, true, st->rr))) {
+    if(do_f) memcpy(st->dd, st->cc, (n + 1) * sizeof(score_t));
+    if(do_r) memcpy(st->ss, st->rr, (n + 1) * sizeof(score_t));
+    return;
+  }
   if(do_f) hb_chain_plan(st, fwd, imid, imid / 2, false, n);
-  else hb_chain_take(fwd, n, false, st->cc, st->dd);
   if(do_r) hb_chain_plan(st, rev, rrows, rrows - rrows / 2, true, n);
-  else hb_chain_take(rev, n, true, st->rr, st->ss);
   #ifdef HB_STRIPED
   if(simd) {
     hb_passes_striped(st, a, b, m, n, imid, tb, te, 0, -1, do_f, do_r,
                       fwd, rev);
-    if(hirschberg_check_striped)
+    if(hirschberg_check_striped && !st->nomem)
       hb_check_striped(st, a, b, m, n, imid, tb, te, false);
     return;
   }
@@ -1406,18 +1488,19 @@ static bool hb_state_init(hb_state_t *st, const char *a, const char *b,
   // Threads per pass: the forward and reverse passes already run at once
   st->pass_threads = st->opts.hb_max_threads;
   if(st->pass_threads <= 0) {
-    long cpus = sysconf(_SC_NPROCESSORS_ONLN);
-    st->pass_threads = cpus > 1 ? (int)(cpus / 2) : 1;
+    static atomic_int cached_cpus = 0;
+    int cpus = atomic_load_explicit(&cached_cpus, memory_order_relaxed);
+    if(cpus <= 0) {
+      long n = sysconf(_SC_NPROCESSORS_ONLN);
+      cpus = n > 0 ? (int)n : 1;
+      atomic_store_explicit(&cached_cpus, cpus, memory_order_relaxed);
+    }
+    st->pass_threads = cpus > 1 ? cpus / 2 : 1;
   }
 
-  st->vbuf = aln_aligned_alloc(sizeof(vscore_t),
-                               (3 + st->table.n) * seg * sizeof(vscore_t));
-  st->vbuf2 = aln_aligned_alloc(sizeof(vscore_t),
-                                (3 + st->table.n) * seg * sizeof(vscore_t));
-  if(st->vbuf == NULL || st->vbuf2 == NULL) {
-    hb_state_free(st);
-    return false;
-  }
+  st->vbuf = NULL;
+  st->vbuf2 = NULL;
+  st->vbuf_bytes = (3 + st->table.n) * seg * sizeof(vscore_t);
 #endif
 
   st->dd = rows + (len_b+1);
@@ -1601,31 +1684,30 @@ static aln_status_t hb_score(const char *a, const char *b,
   size_t midj;
   int type;
 
+  // Unit-cost scoring: banded Myers bit-vector beats speculative striped
+  // bands and avoids allocating striped SIMD scratch
+  if(hb_myers(&st, a, len_a, b, len_b, score))
+  {
+  }
   #ifdef HB_STRIPED
   // Banded forward and reverse passes of hb_diff(), which run at the same
   // time: every alignment crosses the middle row, so the best crossing is
   // the best score
-  if(hb_simd_ok(&st, len_a, len_b) &&
-     hb_passes_banded(&st, a, b, len_a, len_b, len_a / 2, g, g, HB_NO_BOUND))
+  else if(hb_simd_ok(&st, len_a, len_b) &&
+          hb_passes_banded(&st, a, b, len_a, len_b, len_a / 2, g, g, HB_NO_BOUND))
   {
     if(!st.nomem) *score = hb_midpoint(&st, len_b, &midj, &type);
   }
-  // Unit costs on one thread: Myers' bit-vector algorithm, faster there
-  // than the striped pass (see alignment_myers.c)
-  else if(st.pass_threads <= 1 && hb_myers(&st, a, len_a, b, len_b, score))
-  {
-  }
   // Otherwise one forward pass over every row of a: cc[len_b] is the best
   // score, ending in any state
-  else if(hb_simd_ok(&st, len_a, len_b))
+  else if(hb_simd_ok(&st, len_a, len_b) && hb_ensure_vbuf(&st, false))
   {
     hb_pass_striped(&st, a, 1, len_a, b, 1, 0, len_b, g, st.cc, st.dd, 1,
                     st.vbuf, NULL, st.pass_threads);
     if(!st.nomem) *score = st.cc[len_b];
   }
-  else
   #endif
-  if(!hb_myers(&st, a, len_a, b, len_b, score))
+  else if(!st.nomem)
   {
     // with imid = len_a the reverse pass has no rows
     hb_passes_scalar(&st, a, b, len_a, len_b, len_a, g, g, true, false,

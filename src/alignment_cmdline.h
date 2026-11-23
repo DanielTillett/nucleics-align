@@ -41,6 +41,7 @@ typedef struct
   unsigned int print_context, max_hits_per_alignment;
   bool min_score_set, max_hits_per_alignment_set;
   bool print_seq;
+  bool fast_local; // opt-in scan + BiWFA/linear sub-rectangle traceback
 
   // NW specific
   bool print_matrices, print_scores;
@@ -50,6 +51,7 @@ typedef struct
   bool linear_fallback; // linear space if too big for the matrices
   unsigned int linear_above; // linear space from this length (0: never)
   bool wfa_align; // the wavefront algorithm where it applies
+  size_t wfa_budget; // diagonal-update cap for --wfa (0: automatic)
 
   // Turns off zlib for stdin
   bool interactive;

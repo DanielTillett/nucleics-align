@@ -235,7 +235,7 @@ static void DN(alignment_fill_diff)(alignment_block_t *p)
     for(l = 0; l < ALN_D_VL; l++) hlane[l] += hend[l];
 
     if(p->done != NULL && (((y - p->y0) & (ALN_PUB_ROWS - 1)) == (ALN_PUB_ROWS - 1) || y == p->y1))
-      atomic_store_explicit(p->done, y, memory_order_release);
+      aln_publish_row(p->done, y);
 
     tmp = pOM; pOM = cOM; cOM = tmp;
     tmp = pOA; pOA = cOA; cOA = tmp;

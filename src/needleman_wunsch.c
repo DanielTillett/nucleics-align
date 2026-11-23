@@ -88,8 +88,12 @@ static bool _nw_wfa(const char *a, const char *b, size_t len_a, size_t len_b,
     return false;
   sub_table_t table;
   if(!sub_table_build(&table, scoring, a, len_a, b, len_b)) return false;
-  const size_t budget = MIN2(NW_WFA_MAX_CELLS,
-                             NW_WFA_PER_LETTER * (len_a + len_b));
+  size_t budget = alignment_wfa_budget;
+  if(budget == 0) {
+    const size_t total = len_a <= SIZE_MAX - len_b ? len_a + len_b : SIZE_MAX;
+    budget = total <= NW_WFA_MAX_CELLS / NW_WFA_PER_LETTER
+             ? NW_WFA_PER_LETTER * total : NW_WFA_MAX_CELLS;
+  }
   const bool done = alignment_wfa_align(&table, scoring, a, len_a, b, len_b,
                                         budget, result) == ALN_OK;
   sub_table_free(&table);

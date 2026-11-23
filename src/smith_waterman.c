@@ -16,6 +16,7 @@
 #include "sort_r/sort_r.h"
 
 #include "smith_waterman.h"
+#include "hirschberg.h"
 #include "alignment_macros.h"
 #include "alignment_alloc.h"
 #include "alignment_testing.h"
@@ -80,10 +81,14 @@ struct sw_aligner_t
   bool strips;
   score_t *ckpt;
   size_t strip_rows;
+  // Opt-in fast best-hit reconstruction (smith_waterman_fast_rect)
+  bool fast_hit;
+  alignment_t fast_res;
 };
 
 size_t smith_waterman_rect_min_cells = (size_t)1 << 24;
 size_t smith_waterman_strip_min_cells = (size_t)1 << 28;
+bool smith_waterman_fast_rect = false;
 size_t smith_waterman_strip_rows = 0;
 size_t smith_waterman_strip_alignments = 0;
 
@@ -287,6 +292,8 @@ sw_aligner_t* smith_waterman_new(void)
 void smith_waterman_free(sw_aligner_t *sw)
 {
   free(sw->ckpt);
+  free(sw->fast_res.result_a);
+  free(sw->fast_res.result_b);
   aligner_destroy(&(sw->aligner));
   sub_table_free(&sw->table);
   bitset_dealloc(&sw->history.match_scores_mask);
@@ -475,6 +482,123 @@ static int _follow_strips(sw_aligner_t *sw, alignment_t *result)
 // of 0, so a hit can open with a gap only if a gap can score above 0.
 // Returns false where the scans do not apply, or if out of memory (the
 // whole fill then reports it)
+// Verify that a global alignment of a[x0..x0+rx) vs b[y0..y0+ry) is a valid
+// optimal local hit scoring exactly best with strictly positive local prefixes
+static bool _sw_verify_local_hit(const sub_table_t *t, const scoring_t *scoring,
+                                 const alignment_t *res, size_t rx, size_t ry,
+                                 score_t best)
+{
+  if(res->length == 0 || res->score != best) return false;
+  if(res->result_a[0] == '-' || res->result_b[0] == '-') return false;
+  if(res->result_a[res->length - 1] == '-' ||
+     res->result_b[res->length - 1] == '-') return false;
+  const long long open = (long long)scoring->gap_open + scoring->gap_extend;
+  const long long ext = (long long)scoring->gap_extend;
+  long long sc = 0;
+  size_t ia = 0, ib = 0, k;
+  int st = 0; // 0: match, 1: gap_a, 2: gap_b
+  for(k = 0; k < res->length; k++) {
+    char ca = res->result_a[k], cb = res->result_b[k];
+    if(ca == '-' && cb == '-') return false;
+    if(ca == '-') {
+      sc += (st == 1 ? ext : open);
+      st = 1;
+      ib++;
+    } else if(cb == '-') {
+      sc += (st == 2 ? ext : open);
+      st = 2;
+      ia++;
+    } else {
+      sc += t->scores[t->code[(unsigned char)cb] * t->n +
+                      t->code[(unsigned char)ca]];
+      st = 0;
+      ia++;
+      ib++;
+    }
+    if(sc <= 0) return false;
+  }
+  return ia == rx && ib == ry && sc == (long long)best;
+}
+
+static bool _sw_align_fast_rect(sw_aligner_t *sw, const char *a, const char *b,
+                                size_t len_a, size_t len_b,
+                                const scoring_t *scoring)
+{
+  aligner_t *aligner = &sw->aligner;
+  score_t best = 0, best2 = 0;
+  size_t bx = 0, by = 0, rx = 0, ry = 0, i;
+
+  if(scoring->gap_extend > 0 || scoring->gap_open + scoring->gap_extend > 0 ||
+     scoring->no_start_gap_penalty || scoring->no_end_gap_penalty ||
+     scoring->no_gaps_in_a || scoring->no_gaps_in_b ||
+     scoring->no_gaps_in_longest || scoring->no_mismatches)
+    return false;
+
+  if(!alignment_sw_scan(a, len_a, b, len_b, scoring, 0, &aligner->opts,
+                        &best, &bx, &by))
+    return false;
+
+  if(best < sw->min_score) {
+    aligner->scoring = scoring;
+    aligner->seq_a = a;
+    aligner->seq_b = b;
+    aligner->score_width = len_a + 1;
+    aligner->score_height = len_b + 1;
+    aligner->traced = true;
+    aligner->best_score = best;
+    sw->rect = true;
+    sw->off_a = sw->off_b = 0;
+    return true;
+  }
+
+  // Reverse scan with target=0 locates a genuine jointly-located optimal start
+  char *ra = aln_malloc(bx + by);
+  if(ra == NULL) return false;
+  char *rb = ra + bx;
+  for(i = 0; i < bx; i++) ra[i] = a[bx - 1 - i];
+  for(i = 0; i < by; i++) rb[i] = b[by - 1 - i];
+  bool ok = alignment_sw_scan(ra, bx, rb, by, scoring, 0, &aligner->opts,
+                              &best2, &rx, &ry);
+  free(ra);
+  if(!ok || best2 != best || rx == 0 || ry == 0) return false;
+
+  const size_t x0 = bx - rx, y0 = by - ry;
+  const size_t total = rx <= SIZE_MAX - ry ? rx + ry : SIZE_MAX;
+  size_t wfa_budget = alignment_wfa_budget;
+  if(wfa_budget == 0) {
+    const size_t max_c = (size_t)1 << 28;
+    wfa_budget = total <= max_c / 256 ? 256 * total : max_c;
+  }
+
+  aln_status_t st = alignment_wfa_align(&sw->table, scoring, a + x0, rx,
+                                        b + y0, ry, wfa_budget, &sw->fast_res);
+  if(st != ALN_OK) {
+    st = hirschberg_align_checked(a + x0, b + y0, rx, ry, scoring,
+                                  &aligner->opts, &sw->fast_res, NULL);
+  }
+  if(st != ALN_OK ||
+     !_sw_verify_local_hit(&sw->table, scoring, &sw->fast_res, rx, ry, best))
+    return false;
+
+  sw->fast_res.pos_a = x0;
+  sw->fast_res.pos_b = y0;
+  sw->fast_res.len_a = rx;
+  sw->fast_res.len_b = ry;
+  sw->fast_hit = true;
+  sw->rect = true;
+  sw->off_a = x0;
+  sw->off_b = y0;
+  sw->full_best = by * (len_a + 1) + bx;
+  aligner->scoring = scoring;
+  aligner->seq_a = a;
+  aligner->seq_b = b;
+  aligner->score_width = len_a + 1;
+  aligner->score_height = len_b + 1;
+  aligner->traced = true;
+  aligner->best_score = best;
+  return true;
+}
+
 static bool _sw_align_rect(sw_aligner_t *sw, const char *a, const char *b,
                            size_t len_a, size_t len_b,
                            const scoring_t *scoring)
@@ -590,7 +714,7 @@ static aln_status_t _sw_align(const char *a, const char *b,
   sw->seq_b = b;
   sw->len_a = len_a;
   sw->len_b = len_b;
-  sw->rect = sw->strips = false;
+  sw->rect = sw->strips = sw->fast_hit = false;
   free(sw->ckpt);
   sw->ckpt = NULL;
   _no_hits(hist);
@@ -600,6 +724,13 @@ static aln_status_t _sw_align(const char *a, const char *b,
   aligner->compact = sw->compact;
   if(aligner->options != NULL) aligner->opts = *aligner->options;
   else alignment_options_default(&aligner->opts);
+  if(sw->compact && smith_waterman_fast_rect &&
+     (double)len_a * (double)len_b >= (double)aligner->opts.sw_rect_min_cells &&
+     _sw_align_fast_rect(sw, a, b, len_a, len_b, scoring))
+  {
+    hist->indexed = hist->first_done = false;
+    return ALN_OK;
+  }
   if(!sw->compact ||
      (double)len_a * (double)len_b < (double)aligner->opts.sw_rect_min_cells ||
      !_sw_align_rect(sw, a, b, len_a, len_b, scoring))
@@ -872,6 +1003,21 @@ static int _sw_fetch(sw_aligner_t *sw, alignment_t *result,
 
   if(!hist->first_done) {
     hist->first_done = true;
+    if(sw->fast_hit) {
+      if(!alignment_reserve(result, sw->fast_res.length)) {
+        *status = ALN_ERR_NOMEM;
+        return 0;
+      }
+      memcpy(result->result_a, sw->fast_res.result_a, sw->fast_res.length + 1);
+      memcpy(result->result_b, sw->fast_res.result_b, sw->fast_res.length + 1);
+      result->length = sw->fast_res.length;
+      result->pos_a = sw->fast_res.pos_a;
+      result->pos_b = sw->fast_res.pos_b;
+      result->len_a = sw->fast_res.len_a;
+      result->len_b = sw->fast_res.len_b;
+      result->score = sw->fast_res.score;
+      return 1;
+    }
     size_t best = 0;
     if(!_best_cell(sw, &best)) { hist->indexed = true; return 0; }
     // Cannot be refused: no cell is used yet
@@ -908,14 +1054,29 @@ static int _sw_fetch(sw_aligner_t *sw, alignment_t *result,
       }
       memset(hist->match_scores_mask.b, 0,
              (arr_size + 31) / 32 * sizeof(hist->match_scores_mask.b[0]));
-      alignment_t first;
-      memset(&first, 0, sizeof(first));
-      found = _follow_hit(sw, sw->full_best, &first);
-      free(first.result_a);
-      free(first.result_b);
-      if(found < 0) {
-        *status = ALN_ERR_NOMEM;
-        return 0;
+      if(sw->fast_hit) {
+        // Mark the exact cells of the fast_res hit already returned to the caller
+        size_t w = aligner->score_width;
+        size_t x = sw->fast_res.pos_a, y = sw->fast_res.pos_b;
+        size_t idx = y * w + x;
+        hist->match_scores_mask.b[idx >> 5] |= 1U << (idx & 31);
+        for(size_t k = 0; k < sw->fast_res.length; k++) {
+          if(sw->fast_res.result_a[k] != '-') x++;
+          if(sw->fast_res.result_b[k] != '-') y++;
+          idx = y * w + x;
+          hist->match_scores_mask.b[idx >> 5] |= 1U << (idx & 31);
+        }
+        sw->fast_hit = false;
+      } else {
+        alignment_t first;
+        memset(&first, 0, sizeof(first));
+        found = _follow_hit(sw, sw->full_best, &first);
+        free(first.result_a);
+        free(first.result_b);
+        if(found < 0) {
+          *status = ALN_ERR_NOMEM;
+          return 0;
+        }
       }
     }
     else if(aligner->traced) {

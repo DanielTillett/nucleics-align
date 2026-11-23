@@ -86,6 +86,14 @@ extern size_t smith_waterman_rect_min_cells;
 // hit still fills the score matrices. For tuning and tests
 extern size_t smith_waterman_strip_min_cells;
 
+// Opt-in fast best-hit reconstruction (default false): after forward and
+// reverse O(len_b)-memory scans locate an optimal local start and end pair,
+// reconstruct the sub-rectangle with BiWFA or linear-space global alignment
+// and verify exact optimal local score and strictly positive prefixes
+// (falling back to the exact local fill on any mismatch). Preserves optimal
+// local score; among equal-scoring paths, may choose another alignment
+extern bool smith_waterman_fast_rect;
+
 // An alignment to read from, and a pointer to memory to store the result
 // returns 1 if an alignment was read, 0 otherwise
 int smith_waterman_fetch(sw_aligner_t *sw, alignment_t *result);

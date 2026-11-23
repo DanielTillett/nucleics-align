@@ -380,7 +380,7 @@ static void KN(alignment_fill_striped)(alignment_block_t *p)
       }
     }
     if(p->done != NULL && (((y - p->y0) & (ALN_PUB_ROWS - 1)) == (ALN_PUB_ROWS - 1) || y == p->y1))
-      atomic_store_explicit(p->done, y, memory_order_release);
+      aln_publish_row(p->done, y);
 
     tmp = pM; pM = cM; cM = tmp;
     tmp = pA; pA = cA; cA = tmp;

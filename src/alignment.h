@@ -245,6 +245,14 @@ bool alignment_myers_score(const sub_table_t *table, const scoring_t *scoring,
                            const char *seq_a, size_t len_a,
                            const char *seq_b, size_t len_b, score_t *score);
 
+// Full bottom-row global scores under unit costs for Hirschberg --linear:
+// rev=false fills cc[0..len_b] for prefixes of seq_b; rev=true fills
+// cc[len_b..0] for suffixes of seq_b against reversed seq_a
+bool alignment_myers_row(const sub_table_t *table, const scoring_t *scoring,
+                         const char *seq_a, size_t len_a,
+                         const char *seq_b, size_t len_b,
+                         bool rev, score_t *cc);
+
 // Use the striped SIMD fill where it applies (default true). It gives the
 // same matrices as the scalar fill; turning it off is for tests/benchmarks
 extern bool alignment_striped_enabled;
@@ -313,6 +321,9 @@ extern size_t alignment_linear_above;
 // score, but it may choose another of several equal-scoring alignments.
 // Default false
 extern bool alignment_wfa_alignment;
+// Diagonal-update cap for --wfa / alignment_wfa_alignment (0: automatic,
+// min(2^28, 256 * (len_a + len_b))). Separate from alignment_band_wfa_budget
+extern size_t alignment_wfa_budget;
 
 // The default settings, from the variables above (and their hirschberg_*
 // and smith_waterman_* counterparts) as they are now

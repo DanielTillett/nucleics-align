@@ -378,6 +378,7 @@ int main(int argc, char* argv[])
 
   sw_set_default_scoring();
   cmd = cmdline_new(argc, argv, &scoring, NUCLEICS_ALIGN_SW_CMD);
+  smith_waterman_fast_rect = cmd->fast_local;
 
   static const cmd_tool_t tool = {sw_aligner_new, sw_aligner_free,
                                   sw_set_options, align, number_pair,

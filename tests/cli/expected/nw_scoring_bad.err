@@ -43,6 +43,7 @@ usage: ./bin/needleman_wunsch [OPTIONS] [seq1 seq2]
     --wfa                Align similar pairs by the wavefront algorithm, much
                          faster for near-identical ones (same score, but may
                          pick another equal-scoring alignment)
+    --wfabudget <n>      Diagonal-update cap for --wfa (default: automatic)
     --printmatrices      Print dynamic programming matrices
     --printfasta         Print fasta header lines
     --pretty             Print with a descriptor line

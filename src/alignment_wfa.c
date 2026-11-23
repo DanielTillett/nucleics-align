@@ -34,13 +34,34 @@
 #define WFA_NONE (INT32_MIN / 2)
 
 typedef struct {
-  int32_t lo, hi; // diagonals held; none if lo > hi
+  int32_t lo, hi; // active diagonals held; none if lo > hi
   size_t cap;
-  int32_t *off; // off[k - lo]
+  int32_t *buf; // allocation base (what free() receives)
+  int32_t *off; // points into buf; off[k - lo] is diagonal k
 } wavefront_t;
 
 // The wavefronts of one score: match (M), insertion (I) and deletion (D)
 typedef struct { wavefront_t m, i, d; } wf_slot_t;
+
+// Reusable all-WFA_NONE buffer so wf_compute_interior can run vectorised
+// even when one or more source wavefronts are empty
+typedef struct {
+  int32_t *buf;
+  size_t cap;
+} wf_null_t;
+
+static bool wf_null_ensure(wf_null_t *nl, size_t need)
+{
+  if(need <= nl->cap) return true;
+  size_t cap = nl->cap ? nl->cap : 256;
+  while(cap < need) cap *= 2;
+  int32_t *b = aln_realloc(nl->buf, cap * sizeof(int32_t));
+  if(b == NULL) return false;
+  for(size_t i = nl->cap; i < cap; i++) b[i] = WFA_NONE;
+  nl->buf = b;
+  nl->cap = cap;
+  return true;
+}
 
 static inline int32_t wf_get(const wavefront_t *w, int32_t k)
 {
@@ -53,12 +74,40 @@ static bool wf_reserve(wavefront_t *w, int32_t lo, int32_t hi)
   w->hi = hi;
   size_t need = (size_t)(hi - lo + 1);
   if(need > w->cap) {
-    int32_t *off = aln_realloc(w->off, need * sizeof(int32_t));
-    if(off == NULL) return false;
-    w->off = off;
+    int32_t *buf = aln_realloc(w->buf, need * sizeof(int32_t));
+    if(buf == NULL) return false;
+    w->buf = buf;
     w->cap = need;
   }
+  w->off = w->buf;
   return true;
+}
+
+static inline void wf_trim(wavefront_t *w)
+{
+  int32_t lo = w->lo, hi = w->hi;
+  if(lo > hi) return;
+  int32_t *off = w->off;
+  int32_t len = hi - lo + 1;
+  int32_t l = 0, r = len - 1;
+  while(l <= r && off[l] == WFA_NONE) l++;
+  if(l > r) {
+    w->lo = 1;
+    w->hi = 0;
+    return;
+  }
+  while(r > l && off[r] == WFA_NONE) r--;
+  w->lo = lo + l;
+  w->hi = lo + r;
+  w->off = off + l;
+}
+
+static long long wfa_gcd(long long a, long long b)
+{
+  if(a < 0) a = -a;
+  if(b < 0) b = -b;
+  while(b != 0) { long long t = a % b; a = b; b = t; }
+  return a;
 }
 
 // Matching letters from h, v on: their number. Letters are class numbers
@@ -93,7 +142,7 @@ static inline int32_t wf_extend(const uint8_t *a, const uint8_t *b,
 typedef struct {
   uint8_t *a, *b;
   int32_t m, nb;
-  long long l, px, po, pe;
+  long long l, px, po, pe, scale;
 } wfa_pair_t;
 
 // Set pair up for seq_a and seq_b, or return false where the scoring is not
@@ -158,6 +207,11 @@ static bool wfa_setup(const sub_table_t *table, const scoring_t *scoring,
   pair->pe = 2 * e + l;
   if(pair->px <= 0 || pair->po < 0 || pair->pe <= 0 || pair->px > 1000000 ||
      pair->po + pair->pe > 1000000) return false;
+  const long long g = wfa_gcd(pair->px, wfa_gcd(pair->po, pair->pe));
+  pair->scale = g > 0 ? g : 1;
+  pair->px /= pair->scale;
+  pair->po /= pair->scale;
+  pair->pe /= pair->scale;
 
   // Class numbers of the letters, then 8 padding bytes each, different
   pair->m = (int32_t)len_a;
@@ -188,12 +242,16 @@ static long long wfa_fill(const wfa_pair_t *pair, size_t budget, bool keep,
   const size_t ring = (size_t)(px > po + pe ? px : po + pe) + 1;
   size_t nslots = keep ? 0 : ring, i;
   wf_slot_t *slots = keep ? NULL : aln_calloc(ring, sizeof(wf_slot_t));
-  const wavefront_t none = {1, 0, 0, NULL};
+  const wavefront_t none = {1, 0, 0, NULL, NULL};
   long long s, result = -1;
   size_t work = 0;
+  if(!keep && slots == NULL) {
+    *slots_out = NULL;
+    *nslots_out = 0;
+    return -1;
+  }
   *slots_out = slots;
   *nslots_out = nslots;
-  if(!keep && slots == NULL) return -1;
   for(i = 0; i < nslots; i++) {
     slots[i].m = slots[i].i = slots[i].d = none;
   }
@@ -250,6 +308,11 @@ static long long wfa_fill(const wfa_pair_t *pair, size_t budget, bool keep,
       }
       if(lo < -m) lo = -m;
       if(hi > nb) hi = nb;
+      if(lo > hi) {
+        cur->m.lo = cur->i.lo = cur->d.lo = 1;
+        cur->m.hi = cur->i.hi = cur->d.hi = 0;
+        continue;
+      }
       work += (size_t)(hi - lo + 1);
       if(work > budget) break;
       if(!wf_reserve(&cur->m, lo, hi) || !wf_reserve(&cur->i, lo, hi) ||
@@ -279,6 +342,9 @@ static long long wfa_fill(const wfa_pair_t *pair, size_t budget, bool keep,
         else best = WFA_NONE;
         cur->m.off[k - lo] = best;
       }
+      wf_trim(&cur->m);
+      wf_trim(&cur->i);
+      wf_trim(&cur->d);
     }
     if(wf_get(&cur->m, kend) >= nb) { result = s; break; }
     if(s > (long long)INT32_MAX / 2) break;
@@ -292,9 +358,9 @@ static void wfa_free(wf_slot_t *slots, size_t nslots)
   if(slots == NULL) return;
   size_t i;
   for(i = 0; i < nslots; i++) {
-    free(slots[i].m.off);
-    free(slots[i].i.off);
-    free(slots[i].d.off);
+    free(slots[i].m.buf);
+    free(slots[i].i.buf);
+    free(slots[i].d.buf);
   }
   free(slots);
 }
@@ -304,7 +370,7 @@ static bool wfa_best(const wfa_pair_t *pair, long long penalty,
                      score_t *score)
 {
   const long long best = (pair->l * ((long long)pair->m + pair->nb) -
-                          penalty) / 2;
+                          penalty * pair->scale) / 2;
   if(best < INT_MIN || best > INT_MAX) return false;
   *score = (score_t)best;
   return true;
@@ -434,41 +500,56 @@ static inline int32_t wf_extend_lim(const uint8_t *a, const uint8_t *b,
 
 typedef enum { WFA_M = 0, WFA_I = 1, WFA_D = 2 } wfa_state_t;
 
-// Vectorisable hot interior compute loop (multi-versioned for AVX2/SSE4.1/SSE2)
+// Vectorisable hot interior compute loop (multi-versioned for AVX2/SSE4.1/SSE2).
+// All pointers are strictly in-bounds for [0 .. len-1], and each candidate
+// (ins, del, sub) is range-checked before taking the maximum, matching the
+// scalar edge loops identically.
 ALN_TARGET_CLONES
-static void wf_compute_interior(int32_t in_lo, int32_t in_hi, int32_t m, int32_t nb,
-                                const int32_t *mxp, const int32_t *mop,
-                                const int32_t *iep, const int32_t *dep,
-                                int32_t *moff, int32_t *ioff, int32_t *doff)
+static void wf_compute_interior(int32_t k0, int32_t len, int32_t m, int32_t nb,
+                                const int32_t *restrict mxp,
+                                const int32_t *restrict molp,
+                                const int32_t *restrict morp,
+                                const int32_t *restrict iep,
+                                const int32_t *restrict dep,
+                                int32_t *restrict moff,
+                                int32_t *restrict ioff,
+                                int32_t *restrict doff)
 {
-  int32_t k;
-  for(k = in_lo; k <= in_hi; k++) {
-    int32_t vi = mop[k - 1], ei = iep[k - 1];
+  int32_t idx;
+  for(idx = 0; idx < len; idx++) {
+    int32_t k = k0 + idx;
+    int32_t vi = molp[idx], ei = iep[idx];
     int32_t ins = (vi > ei ? vi : ei) + 1;
-    int32_t vd = mop[k + 1], ed = dep[k + 1];
+    ins = (ins <= nb && ins - k <= m && ins >= 0) ? ins : WFA_NONE;
+    int32_t vd = morp[idx], ed = dep[idx];
     int32_t del = vd > ed ? vd : ed;
-    int32_t sub = mxp[k] + 1;
+    del = (del - k <= m && del >= 0) ? del : WFA_NONE;
+    int32_t sub = mxp[idx] + 1;
+    sub = (sub <= nb && sub - k <= m && sub >= 0) ? sub : WFA_NONE;
     int32_t best = sub > ins ? sub : ins;
     best = best > del ? best : del;
-    ioff[k] = (ins <= nb && ins - k <= m && ins >= 0) ? ins : WFA_NONE;
-    doff[k] = (del - k <= m && del >= 0) ? del : WFA_NONE;
-    moff[k] = (best <= nb && best - k <= m && best >= 0 && best - k >= 0) ? best : WFA_NONE;
+    ioff[idx] = ins;
+    doff[idx] = del;
+    moff[idx] = (best >= 0 && best - k >= 0) ? best : WFA_NONE;
   }
 }
 
 // Advance one wavefront score s in ring or kept storage. Returns diagonal
-// updates performed, or SIZE_MAX on OOM. Writes max offset reached in *max_h
+// updates performed, or SIZE_MAX on OOM. Writes max offset reached in *max_h.
+// When padded is true, a[m..m+7] and b[nb..nb+7] hold distinct sentinel bytes
+// so unchecked 8-byte wf_extend() is safe.
 static size_t wf_step(const uint8_t *a, int32_t m, const uint8_t *b, int32_t nb,
                       long long px, long long po, long long pe,
                       wfa_state_t s0, wf_slot_t *slots, size_t ring,
-                      bool keep, long long s, int32_t *max_h)
+                      bool keep, bool padded, wf_null_t *null_wf,
+                      long long s, int32_t *max_h)
 {
-  const wavefront_t none = {1, 0, 0, NULL};
+  const wavefront_t none = {1, 0, 0, NULL, NULL};
   #define SLOT(t) (keep ? &slots[(t)] : &slots[(size_t)(t) % ring])
   wf_slot_t *cur = SLOT(s);
   if(s == 0) {
     if(!wf_reserve(&cur->m, 0, 0)) return SIZE_MAX;
-    int32_t h0 = wf_extend_lim(a, b, 0, 0, m, nb);
+    int32_t h0 = padded ? wf_extend(a, b, 0, 0) : wf_extend_lim(a, b, 0, 0, m, nb);
     cur->m.off[0] = h0;
     if(max_h && h0 > *max_h) *max_h = h0;
     if(s0 == WFA_I) {
@@ -505,37 +586,44 @@ static size_t wf_step(const uint8_t *a, int32_t m, const uint8_t *b, int32_t nb,
     lo = de->lo - 1 < lo ? de->lo - 1 : lo;
     hi = de->hi - 1 > hi ? de->hi - 1 : hi;
   }
+  if(lo < -m) lo = -m;
+  if(hi > nb) hi = nb;
   if(lo > hi) {
     cur->m.lo = cur->i.lo = cur->d.lo = 1;
     cur->m.hi = cur->i.hi = cur->d.hi = 0;
     return 0;
   }
-  if(lo < -m) lo = -m;
-  if(hi > nb) hi = nb;
   if(!wf_reserve(&cur->m, lo, hi) || !wf_reserve(&cur->i, lo, hi) ||
      !wf_reserve(&cur->d, lo, hi)) return SIZE_MAX;
-  int32_t *moff = cur->m.off - lo;
-  int32_t *ioff = cur->i.off - lo;
-  int32_t *doff = cur->d.off - lo;
-  // Interior range where all 4 source wavefronts are in-bounds (branch-free,
-  // auto-vectorisable by GCC/Clang into AVX2/NEON)
+  int32_t *moff = cur->m.off;
+  int32_t *ioff = cur->i.off;
+  int32_t *doff = cur->d.off;
+  const bool has_mx = mx->lo <= mx->hi;
+  const bool has_mo = mo->lo <= mo->hi;
+  const bool has_ie = ie->lo <= ie->hi;
+  const bool has_de = de->lo <= de->hi;
+  // Interior range where every non-empty source wavefront is in-bounds
+  // (empty sources read from null_wf->buf filled with WFA_NONE)
   int32_t in_lo = lo, in_hi = hi;
-  if(mx->lo <= mx->hi) {
+  if(has_mx) {
     if(mx->lo > in_lo) in_lo = mx->lo;
     if(mx->hi < in_hi) in_hi = mx->hi;
-  } else { in_lo = hi + 1; }
-  if(mo->lo <= mo->hi) {
+  }
+  if(has_mo) {
     if(mo->lo + 1 > in_lo) in_lo = mo->lo + 1;
     if(mo->hi - 1 < in_hi) in_hi = mo->hi - 1;
-  } else { in_lo = hi + 1; }
-  if(ie->lo <= ie->hi) {
+  }
+  if(has_ie) {
     if(ie->lo + 1 > in_lo) in_lo = ie->lo + 1;
     if(ie->hi + 1 < in_hi) in_hi = ie->hi + 1;
-  } else { in_lo = hi + 1; }
-  if(de->lo <= de->hi) {
+  }
+  if(has_de) {
     if(de->lo - 1 > in_lo) in_lo = de->lo - 1;
     if(de->hi - 1 < in_hi) in_hi = de->hi - 1;
-  } else { in_lo = hi + 1; }
+  }
+  if(in_lo <= in_hi && (!has_mx || !has_mo || !has_ie || !has_de)) {
+    if(!wf_null_ensure(null_wf, (size_t)(in_hi - in_lo + 1))) return SIZE_MAX;
+  }
 
   // Loop 1a: boundary diagonals before in_lo
   const int32_t b_end = in_lo <= in_hi ? in_lo - 1 : hi;
@@ -550,16 +638,21 @@ static size_t wf_step(const uint8_t *a, int32_t m, const uint8_t *b, int32_t nb,
     if(sub > nb || sub - k > m || sub < 0) sub = WFA_NONE;
     int32_t best = sub > ins ? sub : ins;
     best = best > del ? best : del;
-    ioff[k] = ins;
-    doff[k] = del;
-    moff[k] = (best >= 0 && best - k >= 0) ? best : WFA_NONE;
+    ioff[k - lo] = ins;
+    doff[k - lo] = del;
+    moff[k - lo] = (best >= 0 && best - k >= 0) ? best : WFA_NONE;
   }
   // Loop 1b: hot interior (zero bounds checks, AVX2/SSE4.1/SSE2 multi-versioned)
   if(in_lo <= in_hi) {
-    wf_compute_interior(in_lo, in_hi, m, nb,
-                        mx->off - mx->lo, mo->off - mo->lo,
-                        ie->off - ie->lo, de->off - de->lo,
-                        moff, ioff, doff);
+    const int32_t in_len = in_hi - in_lo + 1;
+    const int32_t off_d = in_lo - lo;
+    const int32_t *mxp  = has_mx ? mx->off + (in_lo - mx->lo)     : null_wf->buf;
+    const int32_t *molp = has_mo ? mo->off + (in_lo - 1 - mo->lo) : null_wf->buf;
+    const int32_t *morp = has_mo ? mo->off + (in_lo + 1 - mo->lo) : null_wf->buf;
+    const int32_t *iep  = has_ie ? ie->off + (in_lo - 1 - ie->lo) : null_wf->buf;
+    const int32_t *dep  = has_de ? de->off + (in_lo + 1 - de->lo) : null_wf->buf;
+    wf_compute_interior(in_lo, in_len, m, nb, mxp, molp, morp, iep, dep,
+                        moff + off_d, ioff + off_d, doff + off_d);
     // Loop 1c: boundary diagonals after in_hi
     for(k = in_hi + 1; k <= hi; k++) {
       int32_t vi = wf_get(mo, k - 1), ei = wf_get(ie, k - 1);
@@ -572,22 +665,37 @@ static size_t wf_step(const uint8_t *a, int32_t m, const uint8_t *b, int32_t nb,
       if(sub > nb || sub - k > m || sub < 0) sub = WFA_NONE;
       int32_t best = sub > ins ? sub : ins;
       best = best > del ? best : del;
-      ioff[k] = ins;
-      doff[k] = del;
-      moff[k] = (best >= 0 && best - k >= 0) ? best : WFA_NONE;
+      ioff[k - lo] = ins;
+      doff[k - lo] = del;
+      moff[k - lo] = (best >= 0 && best - k >= 0) ? best : WFA_NONE;
     }
   }
   // Loop 2: 8-byte match extension (decoupled from compute)
   int32_t mh = max_h ? *max_h : 0;
-  for(k = lo; k <= hi; k++) {
-    int32_t best = moff[k];
-    if(best >= 0) {
-      best += wf_extend_lim(a, b, best - k, best, m, nb);
-      moff[k] = best;
-      if(best > mh) mh = best;
+  if(padded) {
+    for(k = lo; k <= hi; k++) {
+      int32_t best = moff[k - lo];
+      if(best >= 0) {
+        best += wf_extend(a, b, best - k, best);
+        moff[k - lo] = best;
+        if(best > mh) mh = best;
+      }
+    }
+  }
+  else {
+    for(k = lo; k <= hi; k++) {
+      int32_t best = moff[k - lo];
+      if(best >= 0) {
+        best += wf_extend_lim(a, b, best - k, best, m, nb);
+        moff[k - lo] = best;
+        if(best > mh) mh = best;
+      }
     }
   }
   if(max_h) *max_h = mh;
+  wf_trim(&cur->m);
+  wf_trim(&cur->i);
+  wf_trim(&cur->d);
   #undef SLOT
   return (size_t)(hi - lo + 1);
 }
@@ -597,13 +705,14 @@ static size_t wf_step(const uint8_t *a, int32_t m, const uint8_t *b, int32_t nb,
 static size_t biwfa_base(const uint8_t *a, const char *sa, int32_t m,
                          const uint8_t *b, const char *sb, int32_t nb,
                          long long px, long long po, long long pe,
-                         wfa_state_t s0, wfa_state_t s1,
+                         wfa_state_t s0, wfa_state_t s1, bool padded,
+                         wf_null_t *null_wf,
                          size_t *budget_left, char *out_a, char *out_b)
 {
   const int32_t kend = nb - m;
   size_t nslots = 0, i;
   wf_slot_t *slots = NULL;
-  const wavefront_t none = {1, 0, 0, NULL};
+  const wavefront_t none = {1, 0, 0, NULL, NULL};
   long long s, penalty = -1;
 
   for(s = 0; ; s++) {
@@ -616,7 +725,8 @@ static size_t biwfa_base(const uint8_t *a, const char *sa, int32_t m,
         slots[i].m = slots[i].i = slots[i].d = none;
       nslots = grow;
     }
-    size_t w = wf_step(a, m, b, nb, px, po, pe, s0, slots, 0, true, s, NULL);
+    size_t w = wf_step(a, m, b, nb, px, po, pe, s0, slots, 0, true,
+                       padded, null_wf, s, NULL);
     if(w == SIZE_MAX || w > *budget_left) break;
     *budget_left -= w;
     const wf_slot_t *cur = &slots[s];
@@ -752,6 +862,7 @@ static size_t biwfa_rec(const uint8_t *a, const uint8_t *ra, const char *sa, int
                         const uint8_t *b, const uint8_t *rb, const char *sb, int32_t nb,
                         long long px, long long po, long long pe,
                         wfa_state_t s0, wfa_state_t s1,
+                        bool fwd_pad, bool rev_pad, wf_null_t *null_wf,
                         size_t *budget_left, char *out_a, char *out_b,
                         long long *penalty_out)
 {
@@ -770,14 +881,14 @@ static size_t biwfa_rec(const uint8_t *a, const uint8_t *ra, const char *sa, int
   }
   if((size_t)m + (size_t)nb <= 2048) {
     return biwfa_base(a, sa, m, b, sb, nb, px, po, pe, s0, s1,
-                      budget_left, out_a, out_b);
+                      fwd_pad, null_wf, budget_left, out_a, out_b);
   }
 
   const size_t ring = (size_t)(px > po + pe ? px : po + pe) + 1;
   wf_slot_t *fwd = aln_calloc(ring, sizeof(wf_slot_t));
   wf_slot_t *rev = aln_calloc(ring, sizeof(wf_slot_t));
   if(fwd == NULL || rev == NULL) { free(fwd); free(rev); return 0; }
-  const wavefront_t none = {1, 0, 0, NULL};
+  const wavefront_t none = {1, 0, 0, NULL, NULL};
   size_t i;
   for(i = 0; i < ring; i++) {
     fwd[i].m = fwd[i].i = fwd[i].d = none;
@@ -793,7 +904,8 @@ static size_t biwfa_rec(const uint8_t *a, const uint8_t *ra, const char *sa, int
 
   for(;;) {
     sf++;
-    size_t w = wf_step(a, m, b, nb, px, po, pe, s0, fwd, ring, false, sf, &max_hf);
+    size_t w = wf_step(a, m, b, nb, px, po, pe, s0, fwd, ring, false,
+                       fwd_pad, null_wf, sf, &max_hf);
     if(w == SIZE_MAX || w > *budget_left) { ok = false; break; }
     *budget_left -= w;
     if(sr >= 0 && w > 0 && max_hf + max_hr >= nb) {
@@ -806,7 +918,8 @@ static size_t biwfa_rec(const uint8_t *a, const uint8_t *ra, const char *sa, int
     if(best_s < LLONG_MAX && sf + sr >= best_s + po + (long long)ring) break;
 
     sr++;
-    w = wf_step(ra, m, rb, nb, px, po, pe, s1, rev, ring, false, sr, &max_hr);
+    w = wf_step(ra, m, rb, nb, px, po, pe, s1, rev, ring, false,
+                rev_pad, null_wf, sr, &max_hr);
     if(w == SIZE_MAX || w > *budget_left) { ok = false; break; }
     *budget_left -= w;
     if(w > 0 && max_hf + max_hr >= nb) {
@@ -827,18 +940,18 @@ static size_t biwfa_rec(const uint8_t *a, const uint8_t *ra, const char *sa, int
 
   if((bp_v <= 0 && bp_h <= 0) || (bp_v >= m && bp_h >= nb)) {
     return biwfa_base(a, sa, m, b, sb, nb, px, po, pe, s0, s1,
-                      budget_left, out_a, out_b);
+                      fwd_pad, null_wf, budget_left, out_a, out_b);
   }
 
   size_t nl = biwfa_rec(a, ra + (m - bp_v), sa, bp_v,
                         b, rb + (nb - bp_h), sb, bp_h,
-                        px, po, pe, s0, bp_state, budget_left,
-                        out_a, out_b, NULL);
+                        px, po, pe, s0, bp_state, false, rev_pad, null_wf,
+                        budget_left, out_a, out_b, NULL);
   if(nl == 0 && (bp_v > 0 || bp_h > 0)) return 0;
   size_t nr = biwfa_rec(a + bp_v, ra, sa + bp_v, m - bp_v,
                         b + bp_h, rb, sb + bp_h, nb - bp_h,
-                        px, po, pe, bp_state, s1, budget_left,
-                        out_a + nl, out_b + nl, NULL);
+                        px, po, pe, bp_state, s1, fwd_pad, false, null_wf,
+                        budget_left, out_a + nl, out_b + nl, NULL);
   if(nr == 0 && (m - bp_v > 0 || nb - bp_h > 0)) return 0;
   return nl + nr;
 }
@@ -893,20 +1006,25 @@ aln_status_t alignment_wfa_align(const sub_table_t *table,
     free(pair.a);
     return ALN_ERR_NOMEM;
   }
-  uint8_t *ra = aln_malloc(len_a + len_b);
+  uint8_t *ra = aln_malloc(len_a + len_b + 16);
   if(ra == NULL) { free(pair.a); return ALN_ERR_NOMEM; }
-  uint8_t *rb = ra + len_a;
+  uint8_t *rb = ra + len_a + 8;
   size_t i;
   for(i = 0; i < len_a; i++) ra[i] = pair.a[len_a - 1 - i];
   for(i = 0; i < len_b; i++) rb[i] = pair.b[len_b - 1 - i];
+  memset(ra + len_a, 0xFE, 8);
+  memset(rb + len_b, 0xFF, 8);
 
+  wf_null_t null_wf = {NULL, 0};
   size_t budget_left = budget;
   long long penalty = -1;
   size_t n = biwfa_rec(pair.a, ra, seq_a, pair.m,
                        pair.b, rb, seq_b, pair.nb,
                        pair.px, pair.po, pair.pe, WFA_M, WFA_M,
+                       true, true, &null_wf,
                        &budget_left, result->result_a, result->result_b,
                        &penalty);
+  free(null_wf.buf);
   free(ra);
   aln_status_t status = ALN_ERR_UNSUPPORTED;
   score_t score;

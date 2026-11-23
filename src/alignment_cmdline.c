@@ -145,6 +145,9 @@ static void print_usage(enum NucleicsAlignCmdType cmd_type, score_t defaults[4],
 "                         [default: match * MAX(0.2 * length, 2)]\n"
 "    --maxhits <hits>     Maximum number of results per alignment\n"
 "                         [default: no limit]\n"
+"    --fastlocal          Opt-in scan + BiWFA/linear sub-rectangle traceback\n"
+"                         for single-hit runs (use with --maxhits 1; exact\n"
+"                         optimal score, may pick another equal-scoring hit)\n"
 "\n"
 "    --context <n>        Print <n> bases of context\n"
 "    --printseq           Print sequences before local alignments\n");
@@ -168,7 +171,8 @@ static void print_usage(enum NucleicsAlignCmdType cmd_type, score_t defaults[4],
 "                         least <n> letters (as --linearfallback)\n"
 "    --wfa                Align similar pairs by the wavefront algorithm, much\n"
 "                         faster for near-identical ones (same score, but may\n"
-"                         pick another equal-scoring alignment)\n");
+"                         pick another equal-scoring alignment)\n"
+"    --wfabudget <n>      Diagonal-update cap for --wfa (default: automatic)\n");
   }
 
   fprintf(stderr,
@@ -380,6 +384,12 @@ cmdline_t* cmdline_new(int argc, char **argv, scoring_t *scoring,
           usage("--wfa only valid with Needleman-Wunsch");
         cmd->wfa_align = true;
       }
+      else if(strcasecmp(argv[argi], "--fastlocal") == 0)
+      {
+        if(cmd_type != NUCLEICS_ALIGN_SW_CMD)
+          usage("--fastlocal only valid with Smith-Waterman");
+        cmd->fast_local = true;
+      }
       else if(strcasecmp(argv[argi], "--stdin") == 0)
       {
         // Similar to --file argument below
@@ -453,6 +463,22 @@ cmdline_t* cmdline_new(int argc, char **argv, scoring_t *scoring,
         if(!parse_entire_uint(argv[argi+1], &cmd->linear_above) ||
            cmd->linear_above == 0)
           usage("Invalid --linearabove <n> argument (must be at least 1)");
+        argi++;
+      }
+      else if(strcasecmp(argv[argi], "--wfabudget") == 0)
+      {
+        if(cmd_type != NUCLEICS_ALIGN_NW_CMD)
+          usage("--wfabudget only valid with Needleman-Wunsch");
+        const char *arg = argv[argi+1];
+        if(arg[0] == '\0' || !isdigit((unsigned char)arg[0]))
+          usage("Invalid --wfabudget <n> argument (must be a positive integer)");
+        char *end = NULL;
+        errno = 0;
+        unsigned long long v = strtoull(arg, &end, 10);
+        if(errno == ERANGE || end == NULL || *end != '\0' || v == 0 ||
+           v > (unsigned long long)SIZE_MAX)
+          usage("Invalid --wfabudget <n> argument (must be a positive integer)");
+        cmd->wfa_budget = (size_t)v;
         argi++;
       }
       else if(strcasecmp(argv[argi], "--threads") == 0)

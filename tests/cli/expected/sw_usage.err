@@ -31,6 +31,9 @@ usage: ./bin/smith_waterman [OPTIONS] [seq1 seq2]
                          [default: match * MAX(0.2 * length, 2)]
     --maxhits <hits>     Maximum number of results per alignment
                          [default: no limit]
+    --fastlocal          Opt-in scan + BiWFA/linear sub-rectangle traceback
+                         for single-hit runs (use with --maxhits 1; exact
+                         optimal score, may pick another equal-scoring hit)
 
     --context <n>        Print <n> bases of context
     --printseq           Print sequences before local alignments
