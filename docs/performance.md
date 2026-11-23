@@ -14,11 +14,11 @@ flowchart TD
     S0 -- yes --> HS0{"hirschberg_score_checked()"}
     HS0 -- ALN_ERR_UNSUPPORTED --> NW
     HS0 -- other error --> ERR["nw_error() (exit non-zero)"]
-    HS0 -- ok --> HB{"Banded SIMD pass<br/>pays?"}
-    HB -- yes --> DONE[Output]
-    HB -- no --> MY{"Unit cost (0/-1/0/-1),<br/>1 thread (or no SIMD)<br/>& Myers succeeds?"}
-    MY -- yes --> MYR["Myers bit-vector (64 cells/word)"] --> DONE
-    MY -- no --> FULLS["Full striped or scalar linear pass"] --> DONE
+    HS0 -- ok --> MY{"Unit cost (0/-1/0/-1)?"}
+    MY -- yes --> MYR["Ukkonen-banded Myers (64 cells/word)<br/>(MT striped fallback if divergent)"] --> DONE[Output]
+    MY -- no --> HB{"Banded SIMD pass<br/>pays?"}
+    HB -- yes --> DONE
+    HB -- no --> FULLS["Full striped or scalar linear pass"] --> DONE
 
     S0 -- no --> L0{"--linear?"}
     L0 -- yes --> L1["hirschberg_align_checked()"]
@@ -54,45 +54,45 @@ flowchart TD
   <img src="figures/dp-banding-strips.svg" width="760" alt="Full DP matrix vs exact banding in strips vs linear space Hirschberg vs wavefront alignment">
 </p>
 
-## Benchmarks on Linux (`pop-os`, AMD Ryzen 7 5700G)
+## Benchmarks on Linux (`pop-os`, AMD Ryzen 7 5700G, v1.3.0)
 
-Measured on an 8-core / 16-thread desktop (AMD Ryzen 7 5700G, 62 GB RAM, Pop!_OS Linux, default `make` build at `-O3`, default 8 threads, default DNA scoring `+1 / -2 / -4 / -1`). Standard pairs (`5 kb – 50 kb`) are best of 3 runs; large pairs (`100 kb – 1 Mb`) are 1 run each, timed with millisecond precision (`time.perf_counter()` + GNU `time` for CPU and peak RSS). **Bold** marks the fastest global mode returning a full alignment (excluding `--scoreonly` and `local --maxhits 1`).
+Measured on an 8-core / 16-thread desktop (AMD Ryzen 7 5700G, 62 GiB RAM, Pop!_OS 24.04 Linux, GCC 13.3.0, default `make` build at `-O3`, default 8 threads, default DNA scoring `+1 / -2 / -4 / -1`, Nucleics Align v1.3.0 commit `2529b86`, archived in [`benchmarks/results/pop-os-v1.3.0-journal.txt`](../benchmarks/results/pop-os-v1.3.0-journal.txt)). Standard pairs (`5 kb – 50 kb`) are min wall / median RSS of 3 runs; large pairs (`100 kb – 1 Mb`) are 1 run each, timed with millisecond precision (`time.perf_counter()` + GNU `time -v` in binary MiB). **Bold** marks the fastest global mode returning a full alignment (excluding `--scoreonly` and `local --maxhits 1`).
 
 <p align="center">
   <img src="figures/perf-pop-os.svg" width="760" alt="Global alignment wall time on pop-os (Ryzen 7 5700G) from 5 kb to 1 Mb">
 </p>
 
-### Standard lengths (5 kb – 50 kb, best of 3)
+### Standard lengths (5 kb – 50 kb, min of 3)
 
-| Length | Div | `full` (wall / MB) | `--wfa` (wall / MB) | `--linear` (wall / MB) | `--scoreonly` (wall / MB) | `local --maxhits 1` (wall / MB) |
+| Length | Div | `full` (wall / MiB) | `--wfa` (wall / MiB) | `--linear` (wall / MiB) | `--scoreonly` (wall / MiB) | `local --maxhits 1` (wall / MiB) |
 |---|---|---:|---:|---:|---:|---:|
-| 5 kb | 1% | 3.4 ms / 3 MB | **1.8 ms** / 3 MB | 6.5 ms / 3 MB | 2.6 ms / 3 MB | 21.1 ms / 31 MB |
-| 5 kb | 10% | 11.7 ms / 9 MB | 17.4 ms / 10 MB | **9.7 ms** / 3 MB | 4.0 ms / 3 MB | 19.9 ms / 31 MB |
-| 5 kb | rand | 13.3 ms / 27 MB | 18.8 ms / 27 MB | **12.7 ms** / 3 MB | 4.4 ms / 2 MB | 7.0 ms / 3 MB |
-| 20 kb | 1% | 22.7 ms / 16 MB | **13.1 ms** / 14 MB | 29.0 ms / 3 MB | 8.1 ms / 3 MB | 149.7 ms / 25 MB |
-| 20 kb | 10% | 73.8 ms / 388 MB | 102.0 ms / 388 MB | **62.6 ms** / 4 MB | 14.5 ms / 4 MB | 135.0 ms / 24 MB |
-| 20 kb | rand | **71.3 ms** / 387 MB | 100.2 ms / 388 MB | 73.4 ms / 4 MB | 20.2 ms / 4 MB | 23.9 ms / 4 MB |
-| 50 kb | 1% | 101.2 ms / 71 MB | 166.4 ms / 76 MB | **97.0 ms** / 4 MB | 28.0 ms / 4 MB | 577.4 ms / 87 MB |
-| 50 kb | 10% | **165.7 ms** / 584 MB | 244.1 ms / 584 MB | 216.8 ms / 6 MB | 60.7 ms / 6 MB | 546.4 ms / 87 MB |
-| 50 kb | rand | 417.1 ms / 2,395 MB | 489.2 ms / 2,396 MB | **276.4 ms** / 8 MB | 97.6 ms / 6 MB | 129.7 ms / 7 MB |
+| 5 kb | 1% | 6.3 ms / 4 MiB | **2.8 ms** / 2 MiB | 7.1 ms / 2 MiB | 3.1 ms / 2 MiB | 23.5 ms / 30 MiB |
+| 5 kb | 10% | 14.1 ms / 27 MiB | 23.2 ms / 27 MiB | **11.1 ms** / 3 MiB | 4.8 ms / 3 MiB | 21.6 ms / 31 MiB |
+| 5 kb | rand | **12.4 ms** / 27 MiB | 21.0 ms / 27 MiB | 13.4 ms / 3 MiB | 4.9 ms / 2 MiB | 30.5 ms / 31 MiB |
+| 20 kb | 1% | 25.6 ms / 16 MiB | **9.5 ms** / 3 MiB | 30.1 ms / 3 MiB | 8.7 ms / 3 MiB | 144.6 ms / 24 MiB |
+| 20 kb | 10% | 71.0 ms / 387 MiB | 100.3 ms / 387 MiB | **70.1 ms** / 4 MiB | 15.6 ms / 4 MiB | 124.9 ms / 24 MiB |
+| 20 kb | rand | **70.3 ms** / 387 MiB | 102.0 ms / 387 MiB | 76.4 ms / 4 MiB | 20.1 ms / 4 MiB | 153.0 ms / 24 MiB |
+| 50 kb | 1% | 125.8 ms / 83 MiB | **39.4 ms** / 3 MiB | 105.4 ms / 4 MiB | 33.5 ms / 4 MiB | 618.8 ms / 87 MiB |
+| 50 kb | 10% | 420.4 ms / 2,397 MiB | 498.1 ms / 2,397 MiB | **226.2 ms** / 7 MiB | 63.2 ms / 6 MiB | 550.1 ms / 86 MiB |
+| 50 kb | rand | 402.1 ms / 2,395 MiB | 474.8 ms / 2,395 MiB | **277.9 ms** / 7 MiB | 96.8 ms / 6 MiB | 702.3 ms / 86 MiB |
 
 ### Large lengths (100 kb – 1 Mb, 1 run)
 
-| Length | Div | `full` (wall / MB) | `--wfa` (wall / MB) | `--linear` (wall / MB) | `--scoreonly` (wall / MB) |
+| Length | Div | `full` (wall / MiB) | `--wfa` (wall / MiB) | `--linear` (wall / MiB) | `--scoreonly` (wall / MiB) |
 |---|---|---:|---:|---:|---:|
-| 100 kb | 0.1% | 44.1 ms / 34 MB | **6.1 ms** / 6 MB | 143.2 ms / 7 MB | 26.6 ms / 6 MB |
-| 100 kb | 1% | 350.6 ms / 268 MB | 488.4 ms / 268 MB | **274.7 ms** / 7 MB | 94.6 ms / 6 MB |
-| 100 kb | 5% | **409.3 ms** / 1,234 MB | 567.3 ms / 1,234 MB | 515.4 ms / 8 MB | 122.6 ms / 7 MB |
-| 300 kb | 0.1% | 337.9 ms / 256 MB | **31.4 ms** / 32 MB | 523.9 ms / 15 MB | 117.5 ms / 15 MB |
-| 300 kb | 1% | **876.1 ms** / 2,376 MB | 1,246.2 ms / 2,376 MB | 1,054.1 ms / 16 MB | 246.8 ms / 16 MB |
-| 300 kb | 5% | 2,731.3 ms / 11,625 MB | 3,185.1 ms / 11,625 MB | **2,522.6 ms** / 20 MB | 944.7 ms / 19 MB |
-| 1 Mb | 0.1% | 3,480.8 ms / 2,641 MB | **315.8 ms** / 312 MB | 2,910.7 ms / 46 MB | 935.2 ms / 43 MB |
-| 1 Mb | 1% | 8,103.1 ms / 319 MB *(strips)* | 8,517.2 ms / 392 MB | **6,402.6 ms** / 49 MB | 2,256.7 ms / 46 MB |
-| 1 Mb | 5% | *(not run)* | *(not run)* | **24,257.5 ms** / 64 MB | 11,955.8 ms / 61 MB |
+| 100 kb | 0.1% | 70.9 ms / 38 MiB | **9.9 ms** / 3 MiB | 211.8 ms / 7 MiB | 39.1 ms / 6 MiB |
+| 100 kb | 1% | 476.7 ms / 308 MiB | **136.1 ms** / 4 MiB | 304.8 ms / 6 MiB | 108.3 ms / 6 MiB |
+| 100 kb | 5% | **453.8 ms** / 1,474 MiB | 627.6 ms / 1,474 MiB | 482.0 ms / 9 MiB | 143.2 ms / 8 MiB |
+| 300 kb | 0.1% | 374.1 ms / 282 MiB | **24.1 ms** / 5 MiB | 545.5 ms / 15 MiB | 126.3 ms / 15 MiB |
+| 300 kb | 1% | **969.8 ms** / 2,693 MiB | 1,418.0 ms / 2,693 MiB | 1,170.1 ms / 16 MiB | 276.7 ms / 16 MiB |
+| 300 kb | 5% | 3,562.8 ms / 206 MiB *(strips)* | 4,033.3 ms / 206 MiB | **2,870.9 ms** / 22 MiB | 1,073.0 ms / 20 MiB |
+| 1 Mb | 0.1% | 4,041.0 ms / 3,125 MiB | **160.7 ms** / 11 MiB | 3,183.5 ms / 46 MiB | 1,072.8 ms / 44 MiB |
+| 1 Mb | 1% | 9,349.3 ms / 342 MiB *(strips)* | 10,220.5 ms / 342 MiB | **7,293.5 ms** / 50 MiB | 2,658.4 ms / 47 MiB |
+| 1 Mb | 5% | *(not run)* | *(not run)* | **95,338.5 ms** / 110 MiB | 58,836.2 ms / 94 MiB |
 
-I added `--wfa` hoping to speed up close sequences without giving up exactness, and on these simulated DNA pairs (`+1 / -2 / -4 / -1`) at **0.1% divergence** it delivered: **1 Mb in 316 ms** (11x faster than `full`, 9x faster than `--linear`, and 3x faster than `--scoreonly` while returning the full alignment). What surprised me was how sharply the crossover hit at **1% divergence**: `--wfa` still wins at 5 kb and 20 kb, but from 50 kb up it runs into its cell budget (`64 * (len_a + len_b)` cells across the combined length, capped at $2^{25}$) and falls back to the matrices, making it slower than `full` by the cost of that failed attempt.
+With v1.3.0 BiWFA (wavefront trimming, reusable null fronts, and 32-byte AVX2 match extension), `--wfa` aligns **1 Mb at 0.1% divergence in 160.7 ms and 11 MiB** (25.1x faster and 284x smaller than `full`, 19.8x faster than `--linear`, and 6.7x faster than `--scoreonly` while returning the full alignment), and **100 kb at 1% divergence in 136.1 ms and 4 MiB** (3.5x faster and 77x smaller than `full`). At 300 kb 1% and 1 Mb 1%, `--wfa` hits its default work budget (`min(2^28, 256 * (len_a + len_b))`, adjustable via `--wfabudget <N>`) and falls back to the matrix aligner.
 
-For longer or more divergent pairs, `full` and `--linear` trade the lead (`full` is faster at 100 kb 5% and 300 kb 1%; `--linear` is faster at 50 kb rand, 100 kb 1%, 300 kb 5% and 1 Mb 1%), while `--linear` keeps peak RAM at **at most 64 MB** even at 1 Mb and 5% divergence. At 1 Mb and 1%, `full` automatically switches to strip-kept bands, dropping peak RAM from ~35 GB to **319 MB** while keeping fixed tie-breaking.
+For longer or more divergent pairs, `full` and `--linear` trade the lead (`full` is faster at 100 kb 5% and 300 kb 1%; `--linear` is faster at 50 kb 10%/rand, 300 kb 5%, and 1 Mb 1%), while `--linear` keeps peak RAM at **46–110 MiB** even at 1 Mb and 5% divergence. At 1 Mb and 1%, `full` automatically switches to strip-kept bands, dropping peak RAM to **342 MiB** while keeping fixed tie-breaking.
 
 ## Other workloads (protein, batching, 1 Mb strips)
 
@@ -161,10 +161,10 @@ In rough order of what made the biggest difference:
 2. **Striped SIMD fills (Farrar 2007) + prefix-scan lazy F:** Written with portable GCC/clang vector extensions (AVX2/SSE4.1/SSE2 multi-versioned on x86-64 Linux, AVX-512 with `NATIVE=1`, NEON on Arm64). Precomputing inter-lane carries with a single scan cuts lazy-F sweeps along bands from ~8 per row down to 1.
 3. **8- and 16-bit narrow / difference-encoded lanes:** Smith-Waterman starts in 8-bit lanes (4x width) and widens to 16- or 32-bit only if scores outgrow the lane. Needleman-Wunsch full traceback fills store differences from the cell above (Suzuki & Kasahara 2018), keeping values in 8 bits for DNA and 16 bits for BLOSUM62 at any sequence length. Linear-space passes use 16-bit relative blocks.
 4. **Exact banding, WFA sizing, and A\*PA2 strip narrowing:** Before filling a global matrix, a budgeted WFA score pass (or 12-mer sample guess) estimates the band width. Each strip is narrowed using the exact upper bound from the row above; if the band is too big for a quarter of RAM, only one strip's bytes are kept at a time and refilled on traceback.
-5. **Wavefront alignment (`--wfa`):** On close pairs, skips runs of matching bases 8 bytes at a time and traces back directly through kept wavefronts.
-6. **Linear-space global alignment (`--linear`) with row reuse:** Hirschberg / Myers-Miller with exact banded passes, 16-bit blocks, and saving intermediate rows down two recursion levels so child sub-problems skip redundant passes.
-7. **Myers' bit-vector edit distance:** Under unit costs (`0 / -1 / 0 / -1`) on one thread, `--scoreonly` computes 64 cells per CPU word operation.
-8. **Smith-Waterman rectangles & strip checkpoints:** Large best-hit searches scan forward and reverse in $O(n)$ memory to find the exact rectangle of the best hit; if that rectangle still exceeds $2^{28}$ cells, periodic row checkpoints let traceback refill one strip at a time.
-9. **Column-block & batch threading:** Large single alignments split columns across threads in a pipelined wavefront; file batches align independent pairs in parallel and emit them in strict input order.
+5. **Bidirectional wavefront alignment (`--wfa`, `--wfabudget`):** On close pairs, trims empty wavefront diagonals, uses 32-byte AVX2 match extension (8-byte fallback), and finds breakpoints in $O(s)$ wavefront memory.
+6. **Linear-space global alignment (`--linear`) with row reuse:** Hirschberg / Myers-Miller with exact banded passes, 16-bit blocks, two-level intermediate row reuse, and Myers bit-vector split rows for single-threaded unit-cost pairs.
+7. **Ukkonen-banded Myers' bit-vector edit distance:** Under unit costs (`0 / -1 / 0 / -1`), `--scoreonly` computes 64 cells per CPU word inside an exponential Ukkonen diagonal band (matching `edlib` at 20 kb 1% in 3.4 ms).
+8. **Smith-Waterman rectangles, strip checkpoints, & `--fastlocal`:** Large best-hit searches scan forward and reverse in $O(n)$ memory with lane-width hints to find the exact rectangle of the best hit; if that rectangle still exceeds $2^{28}$ cells, periodic row checkpoints refill one strip at a time. Opt-in `--fastlocal` reconstructs the sub-rectangle with BiWFA or Hirschberg and verifies exact local optimality.
+9. **Column-block & batch threading:** Large single alignments split columns across threads in a pipelined wavefront with bounded 512-`pause` spins and per-boundary condition-variable waits; file batches align independent pairs in parallel and emit them in strict input order.
 
 To reproduce the `5 kb – 50 kb` Nucleics Align timings (best of 3 with GNU `time` at 10 ms resolution, without `--wfa`), see [`benchmarks/README.md`](../benchmarks/README.md) and [`benchmarks/run.sh`](../benchmarks/run.sh). The `pop-os` `5 kb – 1 Mb` millisecond tables (including `--wfa`) were timed directly on simulated DNA pairs (`seed=11`, substitutions + indels) using Python's `time.perf_counter()` and GNU `time -v`.

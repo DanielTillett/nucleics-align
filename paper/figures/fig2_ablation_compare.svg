@@ -26,41 +26,41 @@
   <line x1="148" y1="336" x2="435" y2="336" stroke="#94a3b8" stroke-width="1"/>
   <text x="291.5" y="366" text-anchor="middle" class="lblb">Median wall time (ms, log scale)</text>
   <text x="142" y="75.0" text-anchor="end" class="lbl">1. Scalar 3-mat (1t)</text>
-  <rect x="148" y="62.0" width="261.9" height="9" rx="2" fill="#0d9488"/>
-  <rect x="148" y="72.0" width="263.5" height="9" rx="2" fill="#2563eb"/>
-  <text x="407.5" y="70.0" text-anchor="end" class="small" style="fill:#fff">4.58 GiB</text>
+  <rect x="148" y="62.0" width="261.8" height="9" rx="2" fill="#0d9488"/>
+  <rect x="148" y="72.0" width="263.3" height="9" rx="2" fill="#2563eb"/>
+  <text x="407.3" y="70.0" text-anchor="end" class="small" style="fill:#fff">4.58 GiB</text>
   <text x="142" y="105.88888888888889" text-anchor="end" class="lbl">2. Compact+32b SIMD</text>
   <rect x="148" y="92.88888888888889" width="186.3" height="9" rx="2" fill="#0d9488"/>
-  <rect x="148" y="102.88888888888889" width="185.2" height="9" rx="2" fill="#2563eb"/>
-  <text x="338.3" y="105.88888888888889" class="small">386 MiB</text>
+  <rect x="148" y="102.88888888888889" width="187.2" height="9" rx="2" fill="#2563eb"/>
+  <text x="339.2" y="105.88888888888889" class="small">386 MiB</text>
   <text x="142" y="136.77777777777777" text-anchor="end" class="lbl">3. + 8-bit diff lanes</text>
-  <rect x="148" y="123.77777777777777" width="160.3" height="9" rx="2" fill="#0d9488"/>
-  <rect x="148" y="133.77777777777777" width="160.4" height="9" rx="2" fill="#2563eb"/>
-  <text x="312.4" y="136.77777777777777" class="small">385 MiB</text>
+  <rect x="148" y="123.77777777777777" width="169.9" height="9" rx="2" fill="#0d9488"/>
+  <rect x="148" y="133.77777777777777" width="169.7" height="9" rx="2" fill="#2563eb"/>
+  <text x="321.9" y="136.77777777777777" class="small">385 MiB</text>
   <text x="142" y="167.66666666666669" text-anchor="end" class="lbl">4. + Band (12-mer)</text>
-  <rect x="148" y="154.66666666666669" width="63.0" height="9" rx="2" fill="#0d9488"/>
-  <rect x="148" y="164.66666666666669" width="161.3" height="9" rx="2" fill="#2563eb"/>
-  <text x="313.3" y="167.66666666666669" class="small">17 / 386 MiB</text>
+  <rect x="148" y="154.66666666666669" width="61.7" height="9" rx="2" fill="#0d9488"/>
+  <rect x="148" y="164.66666666666669" width="170.5" height="9" rx="2" fill="#2563eb"/>
+  <text x="322.5" y="167.66666666666669" class="small">17 / 385 MiB</text>
   <text x="142" y="198.55555555555554" text-anchor="end" class="lbl">5. + Band (WFA probe)</text>
-  <rect x="148" y="185.55555555555554" width="65.5" height="9" rx="2" fill="#0d9488"/>
-  <rect x="148" y="195.55555555555554" width="161.4" height="9" rx="2" fill="#2563eb"/>
-  <text x="313.4" y="198.55555555555554" class="small">18 / 386 MiB</text>
+  <rect x="148" y="185.55555555555554" width="65.7" height="9" rx="2" fill="#0d9488"/>
+  <rect x="148" y="195.55555555555554" width="170.6" height="9" rx="2" fill="#2563eb"/>
+  <text x="322.6" y="198.55555555555554" class="small">18 / 386 MiB</text>
   <text x="142" y="229.44444444444446" text-anchor="end" class="lbl">6. + Multi-thread (8t)</text>
   <rect x="148" y="216.44444444444446" width="65.5" height="9" rx="2" fill="#0d9488"/>
-  <rect x="148" y="226.44444444444446" width="109.4" height="9" rx="2" fill="#2563eb"/>
-  <text x="261.4" y="229.44444444444446" class="small">18 / 387 MiB</text>
+  <rect x="148" y="226.44444444444446" width="114.6" height="9" rx="2" fill="#2563eb"/>
+  <text x="266.6" y="229.44444444444446" class="small">18 / 387 MiB</text>
   <text x="142" y="260.33333333333337" text-anchor="end" class="lbl">7. --linear (1t)</text>
-  <rect x="148" y="247.33333333333334" width="86.2" height="9" rx="2" fill="#0d9488"/>
-  <rect x="148" y="257.33333333333337" width="148.2" height="9" rx="2" fill="#2563eb"/>
-  <text x="300.2" y="260.33333333333337" class="small">2.8 / 3.2 MiB</text>
+  <rect x="148" y="247.33333333333334" width="86.0" height="9" rx="2" fill="#0d9488"/>
+  <rect x="148" y="257.33333333333337" width="144.2" height="9" rx="2" fill="#2563eb"/>
+  <text x="296.2" y="260.33333333333337" class="small">2.8 / 3.2 MiB</text>
   <text x="142" y="291.22222222222223" text-anchor="end" class="lbl">8. --linear (8t)</text>
-  <rect x="148" y="278.22222222222223" width="72.6" height="9" rx="2" fill="#0d9488"/>
-  <rect x="148" y="288.22222222222223" width="106.0" height="9" rx="2" fill="#2563eb"/>
-  <text x="258.0" y="291.22222222222223" class="small">3.2 / 3.6 MiB</text>
+  <rect x="148" y="278.22222222222223" width="72.5" height="9" rx="2" fill="#0d9488"/>
+  <rect x="148" y="288.22222222222223" width="107.1" height="9" rx="2" fill="#2563eb"/>
+  <text x="259.1" y="291.22222222222223" class="small">3.2 / 3.6 MiB</text>
   <text x="142" y="322.1111111111111" text-anchor="end" class="lbl">9. --wfa BiWFA (1t)</text>
-  <rect x="148" y="309.1111111111111" width="22.5" height="9" rx="2" fill="#0d9488"/>
-  <rect x="148" y="319.1111111111111" width="167.0" height="9" rx="2" fill="#2563eb"/>
-  <text x="319.0" y="322.1111111111111" class="small">2.9 / 386 MiB</text>
+  <rect x="148" y="309.1111111111111" width="18.5" height="9" rx="2" fill="#0d9488"/>
+  <rect x="148" y="319.1111111111111" width="174.4" height="9" rx="2" fill="#2563eb"/>
+  <text x="326.4" y="322.1111111111111" class="small">2.9 / 386 MiB</text>
   <rect x="148" y="42" width="10" height="8" rx="1.5" fill="#0d9488"/>
   <text x="162" y="49" class="small">1% sub.</text>
   <rect x="214" y="42" width="10" height="8" rx="1.5" fill="#2563eb"/>
@@ -88,24 +88,24 @@
   <rect x="520" y="58" width="340" height="278" fill="none" stroke="#94a3b8" stroke-width="1"/>
   <text x="690.0" y="366" text-anchor="middle" class="lblb">Median wall time (ms, log scale)</text>
   <text x="476" y="197.0" text-anchor="middle" class="lblb" transform="rotate(-90 476 197.0)">Peak RSS (MiB, log)</text>
-  <circle cx="599.4" cy="320.4" r="4.5" fill="#0d9488" stroke="#fff" stroke-width="1"/>
-  <text x="605.4" y="332.4" class="small" style="fill:#0d9488;font-weight:600">NA --wfa (1%,1t)</text>
-  <circle cx="660.7" cy="314.4" r="4.5" fill="#2563eb" stroke="#fff" stroke-width="1"/>
-  <text x="667.7" y="318.4" class="small" style="fill:#2563eb;font-weight:600">NA --lin (1%,1t)</text>
-  <rect x="741.0" y="303.5" width="8" height="8" fill="#2563eb" stroke="#fff" stroke-width="1"/>
-  <text x="717.0" y="321.5" class="small" style="fill:#2563eb;font-weight:600">NA --lin (10%,1t)</text>
-  <rect x="672.9" y="296.7" width="8" height="8" fill="#7c3aed" stroke="#fff" stroke-width="1"/>
-  <text x="683.9" y="294.7" class="small" style="fill:#7c3aed;font-weight:600">NA --lin (10%,8t)</text>
-  <polygon points="551.6,300.1 547.1,309.1 556.1,309.1" fill="#d97706" stroke="#fff" stroke-width="0.8"/>
-  <text x="557.6" y="300.1" class="small" style="fill:#d97706;font-weight:600">WFA2 BiWFA (1%)</text>
-  <polygon points="746.4,261.7 741.9,270.7 750.9,270.7" fill="#d97706" stroke="#fff" stroke-width="0.8"/>
-  <text x="714.4" y="257.7" class="small" style="fill:#d97706;font-weight:600">WFA2 BiWFA (10%)</text>
-  <polygon points="621.9,203.2 617.4,212.2 626.4,212.2" fill="#dc2626" stroke="#fff" stroke-width="0.8"/>
-  <text x="627.9" y="211.2" class="small" style="fill:#dc2626;font-weight:600">WFA2 high (1%)</text>
-  <polygon points="837.1,68.1 832.6,77.1 841.6,77.1" fill="#dc2626" stroke="#fff" stroke-width="0.8"/>
-  <text x="751.1" y="87.1" class="small" style="fill:#dc2626;font-weight:600">WFA2 high (10%)</text>
-  <polygon points="797.5,105.7 802.5,110.7 797.5,115.7 792.5,110.7" fill="#64748b" stroke="#fff" stroke-width="0.8"/>
-  <text x="755.5" y="126.7" class="small" style="fill:#64748b;font-weight:600">ksw2 (1% &amp; 10%)</text>
-  <rect x="706.6" y="111.2" width="8" height="8" fill="#1b365d" stroke="#fff" stroke-width="1"/>
-  <text x="626.6" y="119.2" class="small" style="fill:#1b365d;font-weight:600">NA full (10%,8t)</text>
+  <circle cx="588.8" cy="319.5" r="4.5" fill="#0d9488" stroke="#fff" stroke-width="1"/>
+  <text x="594.8" y="331.5" class="small" style="fill:#0d9488;font-weight:600">NA --wfa (1%,1t)</text>
+  <circle cx="660.5" cy="313.6" r="4.5" fill="#2563eb" stroke="#fff" stroke-width="1"/>
+  <text x="667.5" y="317.6" class="small" style="fill:#2563eb;font-weight:600">NA --lin (1%,1t)</text>
+  <rect x="741.1" y="304.1" width="8" height="8" fill="#2563eb" stroke="#fff" stroke-width="1"/>
+  <text x="752.1" y="312.1" class="small" style="fill:#2563eb;font-weight:600">NA --lin (10%,1t)</text>
+  <rect x="674.1" y="295.8" width="8" height="8" fill="#7c3aed" stroke="#fff" stroke-width="1"/>
+  <text x="685.1" y="293.8" class="small" style="fill:#7c3aed;font-weight:600">NA --lin (10%,8t)</text>
+  <polygon points="551.6,299.5 547.1,308.5 556.1,308.5" fill="#d97706" stroke="#fff" stroke-width="0.8"/>
+  <text x="557.6" y="299.5" class="small" style="fill:#d97706;font-weight:600">WFA2 BiWFA (1%)</text>
+  <polygon points="746.6,261.5 742.1,270.5 751.1,270.5" fill="#d97706" stroke="#fff" stroke-width="0.8"/>
+  <text x="714.6" y="257.5" class="small" style="fill:#d97706;font-weight:600">WFA2 BiWFA (10%)</text>
+  <polygon points="617.9,203.2 613.4,212.2 622.4,212.2" fill="#dc2626" stroke="#fff" stroke-width="0.8"/>
+  <text x="623.9" y="211.2" class="small" style="fill:#dc2626;font-weight:600">WFA2 high (1%)</text>
+  <polygon points="836.8,68.1 832.3,77.1 841.3,77.1" fill="#dc2626" stroke="#fff" stroke-width="0.8"/>
+  <text x="750.8" y="87.1" class="small" style="fill:#dc2626;font-weight:600">WFA2 high (10%)</text>
+  <polygon points="797.9,105.7 802.9,110.7 797.9,115.7 792.9,110.7" fill="#64748b" stroke="#fff" stroke-width="0.8"/>
+  <text x="755.9" y="126.7" class="small" style="fill:#64748b;font-weight:600">ksw2 (1% &amp; 10%)</text>
+  <rect x="707.3" y="111.2" width="8" height="8" fill="#1b365d" stroke="#fff" stroke-width="1"/>
+  <text x="627.3" y="119.2" class="small" style="fill:#1b365d;font-weight:600">NA full (10%,8t)</text>
 </svg>

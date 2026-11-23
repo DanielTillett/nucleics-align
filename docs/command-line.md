@@ -31,11 +31,12 @@ By default, `needleman_wunsch` keeps one traceback byte per cell (12x smaller th
 
 | Flag | When to use it | Trade-off |
 |---|---|---|
-| `--wfa` | Near-identical pairs (~0.1% divergence, or ≤ 20 kb at ~1%) | 1 Mb at 0.1% in 316 ms (11x faster); on our simulated DNA pairs from 50 kb at ≥ 1% it hits its cell budget (`64 * (len_a + len_b)`, capped at $2^{25}$) and falls back to the matrices |
-| `--linear` | Long or divergent pairs (50 kb – 1 Mb+) | $O(n)$ memory (46–64 MB at 1 Mb) instead of gigabytes |
+| `--wfa` | Near-identical pairs (~0.1%–1% divergence up to 1 Mb) | $O(s)$-space BiWFA with 32-byte AVX2 match extension; default diagonal-update cap `min(2^28, 256 * (len_a + len_b))` (override with `--wfabudget <n>`), falling back to matrices if exceeded |
+| `--wfabudget <n>` | Raise or tune the `--wfa` diagonal-update cap | Lets `--wfa` finish longer 1% pairs (e.g. 300 kb–1 Mb) instead of falling back |
+| `--linear` | Long or divergent pairs (50 kb – 1 Mb+) | $O(n)$ memory (46–110 MiB at 1 Mb) instead of gigabytes; uses Myers bit-vector split rows for single-threaded unit-cost pairs |
 | `--linearabove <n>` | Mixed batches of short and long pairs | Matrices below `n` letters, linear space at or above `n` |
 | `--linearfallback` | Safety net on big batches | Switches to linear space only if a pair would run out of memory or overflow matrix dimensions |
-| `--scoreonly` | You only need the optimal score | Fastest for scores alone; uses Myers' bit-vector algorithm only under unit costs (`0/-1/0/-1`) on 1 thread when a band does not pay |
+| `--scoreonly` | You only need the optimal score | Fastest for scores alone; uses Ukkonen-banded Myers bit-vector under unit costs (`0/-1/0/-1`), with multi-threaded striped SIMD fallback on divergent pairs |
 
 > [!NOTE]
 > `--linear`, `--linearfallback`, `--linearabove` and `--wfa` always return the same optimal score as the default aligner, but if several alignments tie for the best score they may pick a different one. `--linear`, `--linearabove`, `--wfa` and `--scoreonly` cannot be combined with `--printmatrices` (`--linearfallback` can). `--scoreonly` also cannot be combined with `--zam`, `--pretty` or `--colour`. `--linear` refuses `--freestartgap`, `--freeendgap`, `--nogaps..`, `--nomismatches` and positive `--gapopen` (whereas `--scoreonly` and `--linearabove` fall back to the matrices for those).
@@ -103,6 +104,7 @@ hit 0.1 score: 35
 
 Key flags for local alignment:
 - `--maxhits 1`: if you only want the best hit, always pass this. It avoids filling the full 12-byte score matrices and skips indexing sub-optimal hits. On 20 kb DNA this uses 3–25 MB and runs in 0.01–0.15 s, instead of gigabytes for the full score matrices.
+- `--fastlocal`: opt-in best-hit reconstruction for single-hit runs (`--maxhits 1`). Uses forward and reverse $O(|B|)$-memory scans to locate a joint optimal start/end pair, then reconstructs the sub-rectangle via BiWFA or linear-space alignment and verifies exact optimal local score and strictly positive local prefixes (automatically falling back to exact Gotoh on any mismatch; cuts peak RAM to ~4 MiB at 20 kb, though it may choose a different tied hit than default Gotoh).
 - `--minscore <s>`: ignore hits scoring below `s`. Outside `--stdin`, the default is `match * MAX(0.2 * shorter_length, 2)` (truncated to an integer and clamped to the `score_t` range). Under `--stdin`, the default is `0`.
 - `--context <n>`: print `n` flanking bases on either side of each hit (marked with `.` on the pretty line):
 
@@ -255,6 +257,7 @@ usage: ./bin/needleman_wunsch [OPTIONS] [seq1 seq2]
     --wfa                Align similar pairs by the wavefront algorithm, much
                          faster for near-identical ones (same score, but may
                          pick another equal-scoring alignment)
+    --wfabudget <n>      Diagonal-update cap for --wfa (default: automatic)
     --printmatrices      Print dynamic programming matrices
     --printfasta         Print fasta header lines
     --pretty             Print with a descriptor line
@@ -315,6 +318,9 @@ usage: ./bin/smith_waterman [OPTIONS] [seq1 seq2]
                          [default: match * MAX(0.2 * length, 2)]
     --maxhits <hits>     Maximum number of results per alignment
                          [default: no limit]
+    --fastlocal          Opt-in scan + BiWFA/linear sub-rectangle traceback
+                         for single-hit runs (use with --maxhits 1; exact
+                         optimal score, may pick another equal-scoring hit)
 
     --context <n>        Print <n> bases of context
     --printseq           Print sequences before local alignments

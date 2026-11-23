@@ -49,17 +49,17 @@ Here is the checklist I use myself:
 | What you have | Command | Why |
 |---|---|---|
 | Everyday global alignment | `./bin/needleman_wunsch --printscores seqA seqB` | Exact, banded, multi-threaded, fixed tie-breaking |
-| Near-identical pairs (~0.1% divergence, or ≤ 20 kb at ~1%) | `./bin/needleman_wunsch --wfa --printscores --file pairs.fa` | 1 Mb at 0.1% in 316 ms (11x faster); on these simulated pairs from 50 kb at 1%, it hits its cell budget and falls back to the matrices |
-| Long or divergent pairs (50 kb – 1 Mb+) | `./bin/needleman_wunsch --linear --printscores --file pairs.fa` | Keeps RAM at most 64 MB even at 1 Mb and 5% divergence |
+| Near-identical pairs (~0.1%–1% divergence up to 1 Mb) | `./bin/needleman_wunsch --wfa --printscores --file pairs.fa` | $O(s)$-space BiWFA with 32-byte AVX2 match extension (~92 ms / 12 MiB at 1 Mb 0.1%); raise its diagonal-update cap with `--wfabudget <n>` for longer 1% pairs |
+| Long or divergent pairs (50 kb – 1 Mb+) | `./bin/needleman_wunsch --linear --printscores --file pairs.fa` | Keeps RAM at most 46–110 MiB even at 1 Mb and 5% divergence; uses Myers bit-vector split rows on 1-thread unit-cost pairs |
 | Mixed batch of short and long pairs | `./bin/needleman_wunsch --linearabove 100000 --printscores --file pairs.fa` | Exact matrices for short pairs, linear memory for long ones |
-| Just the score | `./bin/needleman_wunsch --scoreonly --file pairs.fa` | Fastest for scores alone (linear memory); with `--threads 1` and unit costs (`0/-1/0/-1`), uses Myers' bit-vector algorithm |
-| Best local hit | `./bin/smith_waterman --maxhits 1 --file pairs.fa.gz` | Skips indexing sub-optimal hits; 20 kb best hit uses 3–25 MB instead of gigabytes |
+| Just the score | `./bin/needleman_wunsch --scoreonly --file pairs.fa` | Fastest for scores alone (linear memory); uses Ukkonen-banded Myers bit-vector under unit costs (`0/-1/0/-1`), with multi-threaded striped SIMD fallback on divergent pairs |
+| Best local hit | `./bin/smith_waterman --maxhits 1 --file pairs.fa.gz` | Skips indexing sub-optimal hits; 20 kb best hit uses 3–25 MB instead of gigabytes (add opt-in `--fastlocal` for ~4 MiB verified BiWFA/linear reconstruction) |
 | Protein alignment | `./bin/needleman_wunsch --scoring BLOSUM62 seqA seqB` | Built-in PAM30, PAM70, BLOSUM80, BLOSUM62 |
 | Overlap alignment | `./bin/needleman_wunsch --freestartgap --freeendgap seqA seqB` | Free overhangs at both ends |
 | Repeated substrings in one sequence | `./bin/lcs ACGTACGTTACGACGT` | Lists common substrings longest first |
 
 > [!NOTE]
-> `--linear`, `--linearfallback`, `--linearabove` and `--wfa` always return the same optimal score as the default aligner, but when several alignments tie for the best score they may pick a different one.
+> `--linear`, `--linearfallback`, `--linearabove`, `--wfa` and `--fastlocal` always return the same optimal score as the default aligner, but when several alignments tie for the best score they may pick a different one.
 
 ## Building
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate publication-quality SVG figures for the Nucleics Align v1.2.0 manuscript
+"""Generate publication-quality SVG figures for the Nucleics Align v1.3.0 manuscript
 directly from archived pop-os benchmark measurements (zero external dependencies)."""
 import math
 import os
@@ -43,11 +43,11 @@ def svg_header(w, h):
     )
 
 def make_fig1():
-    """Figure 1: Nucleics Align v1.2.0 execution dispatch & exactness architecture."""
+    """Figure 1: Nucleics Align v1.3.0 execution dispatch & exactness architecture."""
     w, h = 860, 350
     s = [svg_header(w, h)]
-    s.append(f'  <text x="20" y="24" class="title">Nucleics Align v1.2.0 — Exact Execution Dispatch Architecture</text>')
-    s.append(f'  <text x="20" y="40" class="sub">All default matrix paths preserve byte-identical scalar Gotoh tie-breaking; --linear and --wfa guarantee identical optimal scores.</text>')
+    s.append(f'  <text x="20" y="24" class="title">Nucleics Align v1.3.0 — Exact Execution Dispatch Architecture</text>')
+    s.append(f'  <text x="20" y="40" class="sub">All default matrix paths preserve byte-identical scalar Gotoh tie-breaking; --linear, --wfa and --fastlocal guarantee identical optimal scores.</text>')
 
     def box(x, y, bw, bh, title, lines, fill="#f8fafc", stroke=C_NAVY, title_color=C_NAVY):
         s.append(f'  <rect x="{x}" y="{y}" width="{bw}" height="{bh}" rx="6" fill="{fill}" stroke="{stroke}" stroke-width="1.4"/>')
@@ -65,14 +65,14 @@ def make_fig1():
     box(20, 140, 145, 72, "Pairwise Input", ["DNA or protein (A, B)", "Affine scoring + matrix", "Checked C11 / CLI API"], fill="#eff6ff", stroke=C_BLUE, title_color=C_BLUE)
 
     # 4 mode branches
-    box(215, 56, 175, 58, "--wfa (BiWFA)", ["O(s) wavefront state, AVX2", "Work cap min(2^28, 256(m+n))"], fill="#ecfdf5", stroke=C_TEAL, title_color=C_TEAL)
-    box(215, 130, 175, 58, "--linear (Hirschberg)", ["O(|B|) working score rows", "16-bit relative blocks + reuse"], fill="#f5f3ff", stroke=C_PURPLE, title_color=C_PURPLE)
-    box(215, 204, 175, 58, "--scoreonly", ["Banded striped SIMD", "or Myers 64-bit (0/-1/0/-1)"], fill="#fffbeb", stroke=C_AMBER, title_color=C_AMBER)
-    box(215, 278, 175, 54, "smith_waterman --maxhits 1", ["O(|B|) fwd/rev scan -> sub-rect", "8/16-bit checkpoint strip refill"], fill="#fef2f2", stroke=C_RED, title_color=C_RED)
+    box(215, 56, 175, 58, "--wfa (BiWFA)", ["O(s) trimmed fronts, 32B AVX2", "--wfabudget (auto <= 2^28)"], fill="#ecfdf5", stroke=C_TEAL, title_color=C_TEAL)
+    box(215, 130, 175, 58, "--linear (Hirschberg)", ["O(|B|) rows, 16-bit + reuse", "Myers split rows (0/-1/0/-1)"], fill="#f5f3ff", stroke=C_PURPLE, title_color=C_PURPLE)
+    box(215, 204, 175, 58, "--scoreonly", ["Ukkonen-banded Myers (unit)", "or banded/MT striped SIMD"], fill="#fffbeb", stroke=C_AMBER, title_color=C_AMBER)
+    box(215, 278, 175, 54, "smith_waterman --maxhits 1", ["O(|B|) scans + lane hints", "8/16b strips or opt-in --fastlocal"], fill="#fef2f2", stroke=C_RED, title_color=C_RED)
 
     # Default matrix pipeline on right
     box(445, 72, 185, 72, "1. Band Sizing & Certificate", ["Budgeted score-only WFA or 12-mer", "Strict S_out(b) < L certificate", "Excludes tied paths outside B(b)"], fill="#f8fafc", stroke=C_NAVY, title_color=C_NAVY)
-    box(445, 170, 185, 72, "2. Striped Diff-Encoded Fill", ["1-byte/cell traceback (12x RAM cut)", "8/16-bit diff lanes + prefix-scan", "64B-padded 16-row MT pipeline"], fill="#f8fafc", stroke=C_NAVY, title_color=C_NAVY)
+    box(445, 170, 185, 72, "2. Striped Diff-Encoded Fill", ["1-byte/cell traceback (12x RAM cut)", "8/16-bit diff lanes + prefix-scan", "64B padded condvar MT pipeline"], fill="#f8fafc", stroke=C_NAVY, title_color=C_NAVY)
     box(665, 72, 175, 72, "Strip Pruning & Strip-Kept", ["Upper bound U(x,y) < L pruning", "Auto strip-kept if >25% RAM", "1 Mb 1% in 342 MiB (exact ties)"], fill="#f0f9ff", stroke=C_BLUE, title_color=C_BLUE)
     box(665, 170, 175, 72, "Exact Output & Fallbacks", ["Byte-identical Gotoh traceback", "Unsupported -> 3-matrix scalar", "--linearfallback on OOM"], fill="#f8fafc", stroke=C_NAVY, title_color=C_NAVY)
 
@@ -104,15 +104,15 @@ def make_fig2():
     s.append(f'  <text x="16" y="36" class="sub">Median library wall time (log scale, ms) with median peak RSS annotated</text>')
 
     rows = [
-        ("1. Scalar 3-mat (1t)",      2730.3, 2838.4, "4.58 GiB"),
-        ("2. Compact+32b SIMD",        443.0,  431.0, "386 MiB"),
-        ("3. + 8-bit diff lanes",      237.1,  237.7, "385 MiB"),
-        ("4. + Band (12-mer)",          22.8,  242.9, "17 / 386 MiB"),
-        ("5. + Band (WFA probe)",       24.2,  243.3, "18 / 386 MiB"),
-        ("6. + Multi-thread (8t)",      24.2,   69.6, "18 / 387 MiB"),
-        ("7. --linear (1t)",            39.8,  177.1, "2.8 / 3.2 MiB"),
-        ("8. --linear (8t)",            28.7,   64.1, "3.2 / 3.6 MiB"),
-        ("9. --wfa BiWFA (1t)",          8.6,  278.5, "2.9 / 386 MiB"),
+        ("1. Scalar 3-mat (1t)",      2728.8, 2828.5, "4.58 GiB"),
+        ("2. Compact+32b SIMD",        443.4,  453.1, "386 MiB"),
+        ("3. + 8-bit diff lanes",      298.8,  296.9, "385 MiB"),
+        ("4. + Band (12-mer)",          22.1,  302.8, "17 / 385 MiB"),
+        ("5. + Band (WFA probe)",       24.3,  303.4, "18 / 386 MiB"),
+        ("6. + Multi-thread (8t)",      24.2,   78.9, "18 / 387 MiB"),
+        ("7. --linear (1t)",            39.6,  160.9, "2.8 / 3.2 MiB"),
+        ("8. --linear (8t)",            28.6,   65.9, "3.2 / 3.6 MiB"),
+        ("9. --wfa BiWFA (1t)",          7.8,  332.6, "2.9 / 386 MiB"),
     ]
     ax0, ax1, ay0, ay1 = 148, 435, 58, 336
     lmin, lmax = math.log10(5.0), math.log10(5000.0)
@@ -174,16 +174,16 @@ def make_fig2():
 
     pts = [
         # (wall_ms, rss_mib, color, shape, label, dx, dy)
-        (47.6,   3.3,  C_TEAL,  "circle", "NA --wfa (1%,1t)",   6, 12),
-        (158.9,  4.0,  C_BLUE,  "circle", "NA --lin (1%,1t)",    7,  4),
-        (833.6,  5.0,  C_BLUE,  "square", "NA --lin (10%,1t)", -28, 14),
-        (218.7,  6.2,  C_PURPLE,"square", "NA --lin (10%,8t)",  7, -6),
-        (18.6,   5.4,  C_AMBER, "tri",    "WFA2 BiWFA (1%)",    6, -5),
-        (857.9,  18.5, C_AMBER, "tri",    "WFA2 BiWFA (10%)", -32, -9),
-        (74.2,  121.0, C_RED,   "tri",    "WFA2 high (1%)",     6,  3),
-        (5102.6,9226.0,C_RED,   "tri",    "WFA2 high (10%)",  -86, 14),
-        (2342.9,2760.0,C_GRAY,  "diamond","ksw2 (1% & 10%)",  -42, 16),
-        (423.8, 2394.0,C_NAVY,  "square", "NA full (10%,8t)", -84,  4),
+        (38.7,   3.4,  C_TEAL,  "circle", "NA --wfa (1%,1t)",   6, 12),
+        (158.5,  4.1,  C_BLUE,  "circle", "NA --lin (1%,1t)",    7,  4),
+        (835.4,  4.9,  C_BLUE,  "square", "NA --lin (10%,1t)",   7,  4),
+        (224.0,  6.4,  C_PURPLE,"square", "NA --lin (10%,8t)",  7, -6),
+        (18.6,   5.5,  C_AMBER, "tri",    "WFA2 BiWFA (1%)",    6, -5),
+        (860.5,  18.6, C_AMBER, "tri",    "WFA2 BiWFA (10%)", -32, -9),
+        (68.6,  121.0, C_RED,   "tri",    "WFA2 high (1%)",     6,  3),
+        (5069.8,9225.4,C_RED,   "tri",    "WFA2 high (10%)",  -86, 14),
+        (2357.9,2759.9,C_GRAY,  "diamond","ksw2 (1% & 10%)",  -42, 16),
+        (429.8, 2393.3,C_NAVY,  "square", "NA full (10%,8t)", -84,  4),
     ]
     for vm, vr, col, shp, lbl, dx, dy in pts:
         x, y = px(vm), py(vr)
@@ -208,7 +208,7 @@ def make_fig3():
 
     # --- Panel A: 5 kb - 1 Mb scaling ---
     ax0, ax1, ay0, ay1 = 62, 420, 58, 326
-    s.append(f'  <text x="16" y="22" class="title">(a) Scaling from 5 kb to 1 Mb (v1.2.0, Table 3)</text>')
+    s.append(f'  <text x="16" y="22" class="title">(a) Scaling from 5 kb to 1 Mb (v1.3.0, Table 3)</text>')
     s.append(f'  <text x="16" y="36" class="sub">Wall time vs sequence length (log-log; 1% solid, 0.1% dashed)</text>')
 
     xmin, xmax = math.log10(4.0), math.log10(1300.0)
@@ -229,12 +229,12 @@ def make_fig3():
     s.append(f'  <text x="16" y="{(ay0+ay1)/2:.1f}" text-anchor="middle" class="lblb" transform="rotate(-90 16 {(ay0+ay1)/2:.1f})">Wall time (log)</text>')
 
     series = [
-        ("full 1% (8t)",        C_NAVY,  "",    [(5,6.2),(20,26.3),(50,125.2),(100,496.8),(300,904.9),(1000,9232.1)]),
-        ("--linear 1% (8t)",    C_BLUE,  "",    [(5,7.1),(20,30.2),(50,105.7),(100,303.4),(300,1157.2),(1000,7193.2)]),
-        ("--wfa 1% (1t)",       C_TEAL,  "",    [(5,2.9),(20,11.2),(50,47.5),(100,163.4)]),
-        ("--wfa 0.1% (1t)",     C_TEAL,  "5,3", [(100,10.7),(300,27.3),(1000,186.5)]),
-        ("WFA2 BiWFA 1% (1t)",  C_AMBER, "",    [(100,56.1),(300,384.8),(1000,4199.2)]),
-        ("WFA2 BiWFA 0.1% (1t)",C_AMBER, "5,3", [(100,6.4),(300,12.2),(1000,74.4)]),
+        ("full 1% (8t)",        C_NAVY,  "",    [(5,6.3),(20,25.6),(50,125.8),(100,476.7),(300,969.8),(1000,9349.3)]),
+        ("--linear 1% (8t)",    C_BLUE,  "",    [(5,7.1),(20,30.1),(50,105.4),(100,304.8),(300,1170.1),(1000,7293.5)]),
+        ("--wfa 1% (1t)",       C_TEAL,  "",    [(5,2.8),(20,9.5),(50,39.4),(100,136.1)]),
+        ("--wfa 0.1% (1t)",     C_TEAL,  "5,3", [(100,9.9),(300,24.1),(1000,160.7)]),
+        ("WFA2 BiWFA 1% (1t)",  C_AMBER, "",    [(100,57.9),(300,390.8),(1000,4009.6)]),
+        ("WFA2 BiWFA 0.1% (1t)",C_AMBER, "5,3", [(100,6.9),(300,12.1),(1000,76.1)]),
     ]
     for lbl, col, dash, pts in series:
         d = " ".join(f"{'M' if i==0 else 'L'} {px(x):.1f} {py(y):.1f}" for i,(x,y) in enumerate(pts))
@@ -258,11 +258,11 @@ def make_fig3():
     s.append(f'  <text x="465" y="36" class="sub">Median wall time (ms, log scale); 5 NCBI RefSeq orthologues</text>')
 
     prots = [
-        ("TP53\n(393 aa)",    5.8,  1.8,  2.0,  2.0,  2.1),
-        ("POLR2A\n(1,970 aa)",85.6,  6.1,  6.7,  5.7,  6.1),
-        ("BRCA1\n(1,863 aa)", 84.2,  5.7,  6.7,  5.8,  6.0),
-        ("MTOR\n(2,549 aa)", 153.6,  9.4, 10.3,  7.8,  6.5),
-        ("ATM\n(3,056 aa)",  230.1, 12.9, 14.3, 10.4,  8.1),
+        ("TP53\n(393 aa)",     5.6,  2.0,  2.1,  2.0,  2.1),
+        ("POLR2A\n(1,970 aa)",85.9,  6.2,  6.0,  5.9,  5.9),
+        ("BRCA1\n(1,863 aa)", 85.8,  6.9,  6.2,  5.8,  5.9),
+        ("MTOR\n(2,549 aa)", 152.1,  9.9,  9.5,  8.3,  6.5),
+        ("ATM\n(3,056 aa)",  226.5, 13.1, 12.4, 10.4,  8.1),
     ]
     pmin, pmax = math.log10(1.0), math.log10(350.0)
     def bpy(v): return by1 - (math.log10(v) - pmin) / (pmax - pmin) * (by1 - by0)

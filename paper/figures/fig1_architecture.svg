@@ -15,8 +15,8 @@
     .small { font-size: 8.8px; fill: #475569; }
   </style>
 
-  <text x="20" y="24" class="title">Nucleics Align v1.2.0 — Exact Execution Dispatch Architecture</text>
-  <text x="20" y="40" class="sub">All default matrix paths preserve byte-identical scalar Gotoh tie-breaking; --linear and --wfa guarantee identical optimal scores.</text>
+  <text x="20" y="24" class="title">Nucleics Align v1.3.0 — Exact Execution Dispatch Architecture</text>
+  <text x="20" y="40" class="sub">All default matrix paths preserve byte-identical scalar Gotoh tie-breaking; --linear, --wfa and --fastlocal guarantee identical optimal scores.</text>
   <rect x="20" y="140" width="145" height="72" rx="6" fill="#eff6ff" stroke="#2563eb" stroke-width="1.4"/>
   <text x="92.5" y="158" text-anchor="middle" class="lblb" style="fill:#2563eb">Pairwise Input</text>
   <text x="92.5" y="173" text-anchor="middle" class="small">DNA or protein (A, B)</text>
@@ -24,20 +24,20 @@
   <text x="92.5" y="199" text-anchor="middle" class="small">Checked C11 / CLI API</text>
   <rect x="215" y="56" width="175" height="58" rx="6" fill="#ecfdf5" stroke="#0d9488" stroke-width="1.4"/>
   <text x="302.5" y="74" text-anchor="middle" class="lblb" style="fill:#0d9488">--wfa (BiWFA)</text>
-  <text x="302.5" y="89" text-anchor="middle" class="small">O(s) wavefront state, AVX2</text>
-  <text x="302.5" y="102" text-anchor="middle" class="small">Work cap min(2^28, 256(m+n))</text>
+  <text x="302.5" y="89" text-anchor="middle" class="small">O(s) trimmed fronts, 32B AVX2</text>
+  <text x="302.5" y="102" text-anchor="middle" class="small">--wfabudget (auto &lt;= 2^28)</text>
   <rect x="215" y="130" width="175" height="58" rx="6" fill="#f5f3ff" stroke="#7c3aed" stroke-width="1.4"/>
   <text x="302.5" y="148" text-anchor="middle" class="lblb" style="fill:#7c3aed">--linear (Hirschberg)</text>
-  <text x="302.5" y="163" text-anchor="middle" class="small">O(|B|) working score rows</text>
-  <text x="302.5" y="176" text-anchor="middle" class="small">16-bit relative blocks + reuse</text>
+  <text x="302.5" y="163" text-anchor="middle" class="small">O(|B|) rows, 16-bit + reuse</text>
+  <text x="302.5" y="176" text-anchor="middle" class="small">Myers split rows (0/-1/0/-1)</text>
   <rect x="215" y="204" width="175" height="58" rx="6" fill="#fffbeb" stroke="#d97706" stroke-width="1.4"/>
   <text x="302.5" y="222" text-anchor="middle" class="lblb" style="fill:#d97706">--scoreonly</text>
-  <text x="302.5" y="237" text-anchor="middle" class="small">Banded striped SIMD</text>
-  <text x="302.5" y="250" text-anchor="middle" class="small">or Myers 64-bit (0/-1/0/-1)</text>
+  <text x="302.5" y="237" text-anchor="middle" class="small">Ukkonen-banded Myers (unit)</text>
+  <text x="302.5" y="250" text-anchor="middle" class="small">or banded/MT striped SIMD</text>
   <rect x="215" y="278" width="175" height="54" rx="6" fill="#fef2f2" stroke="#dc2626" stroke-width="1.4"/>
   <text x="302.5" y="296" text-anchor="middle" class="lblb" style="fill:#dc2626">smith_waterman --maxhits 1</text>
-  <text x="302.5" y="311" text-anchor="middle" class="small">O(|B|) fwd/rev scan -&gt; sub-rect</text>
-  <text x="302.5" y="324" text-anchor="middle" class="small">8/16-bit checkpoint strip refill</text>
+  <text x="302.5" y="311" text-anchor="middle" class="small">O(|B|) scans + lane hints</text>
+  <text x="302.5" y="324" text-anchor="middle" class="small">8/16b strips or opt-in --fastlocal</text>
   <rect x="445" y="72" width="185" height="72" rx="6" fill="#f8fafc" stroke="#1b365d" stroke-width="1.4"/>
   <text x="537.5" y="90" text-anchor="middle" class="lblb" style="fill:#1b365d">1. Band Sizing &amp; Certificate</text>
   <text x="537.5" y="105" text-anchor="middle" class="small">Budgeted score-only WFA or 12-mer</text>
@@ -47,7 +47,7 @@
   <text x="537.5" y="188" text-anchor="middle" class="lblb" style="fill:#1b365d">2. Striped Diff-Encoded Fill</text>
   <text x="537.5" y="203" text-anchor="middle" class="small">1-byte/cell traceback (12x RAM cut)</text>
   <text x="537.5" y="216" text-anchor="middle" class="small">8/16-bit diff lanes + prefix-scan</text>
-  <text x="537.5" y="229" text-anchor="middle" class="small">64B-padded 16-row MT pipeline</text>
+  <text x="537.5" y="229" text-anchor="middle" class="small">64B padded condvar MT pipeline</text>
   <rect x="665" y="72" width="175" height="72" rx="6" fill="#f0f9ff" stroke="#2563eb" stroke-width="1.4"/>
   <text x="752.5" y="90" text-anchor="middle" class="lblb" style="fill:#2563eb">Strip Pruning &amp; Strip-Kept</text>
   <text x="752.5" y="105" text-anchor="middle" class="small">Upper bound U(x,y) &lt; L pruning</text>

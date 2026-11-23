@@ -5,6 +5,40 @@ Nucleics Align is derived from Isaac Turner's
 2017). Output is the same as seq-align's, byte for byte, except for the
 fixes listed under [Changes to output](#changes-to-output).
 
+## 1.3.0 - 24 Nov 2026
+
+### Added
+
+- `needleman_wunsch --wfabudget <n>` (`alignment_wfa_budget`): configurable
+  diagonal-update cap for `--wfa` BiWFA, separate from `alignment_band_wfa_budget`
+- `smith_waterman --fastlocal` (`smith_waterman_fast_rect`): opt-in best-hit
+  reconstruction for single-hit compact runs (`--maxhits 1`) using forward and
+  reverse $O(|B|)$-memory scans to locate a joint optimal start/end pair,
+  followed by BiWFA or linear-space alignment and exact local score + strict
+  positive-prefix verification (automatic fallback to exact Gotoh on mismatch;
+  default Gotoh tie-breaking unchanged)
+- Ukkonen exponential diagonal banding in `alignment_myers_score()` and
+  `alignment_myers_score_banded()`, plus full-row `alignment_myers_row()` wired
+  into single-threaded unit-cost Hirschberg (`--linear`)
+- `alignment_sw_scan_hint()` to skip narrow 8/16-bit lane retries when a lower
+  bound on the optimal score is already known
+
+### Improved
+
+- BiWFA (`src/alignment_wfa.c`): fixed `wf_compute_interior` pointer-offset UB
+  and candidate bounds-check order, added reusable all-`WFA_NONE` null
+  wavefront for empty sources, added leading/trailing `WFA_NONE` trimming
+  (`wf_trim`), `gcd(px, po, pe)` penalty normalisation, 32-byte sentinel
+  padding on forward and reversed buffers, runtime-dispatched 32-byte AVX2
+  match extension, and empty-ring bailout (~2.0–2.3x faster on 20 kb–1 Mb DNA)
+- Multi-threaded wave synchronisation (`alignment.c`, `hirschberg.c`): replaced
+  unbounded `sched_yield()` spin-waits with bounded 512-`pause` spin +
+  per-boundary condition-variable waits, cutting 8-thread full-matrix CPU time
+  by ~25% while keeping wall time fast
+- Small-input setup: cached online CPU count and physical RAM quarter, added
+  early single-thread band rejection before WFA/k-mer probing, and made
+  Hirschberg SIMD scratch allocation lazy
+
 ## 1.2.0 - 22 Nov 2026
 
 ### Added
