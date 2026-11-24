@@ -137,8 +137,8 @@ int main(int argc, char **argv) {
   scoring_t scoring;
   scoring_system_BLOSUM62(&scoring);
   alignment_options_t o1, o8;
-  alignment_options_default(&o1); o1.max_threads = 1;
-  alignment_options_default(&o8); o8.max_threads = 8;
+  alignment_options_default(&o1); o1.max_threads = 1; o1.hb_max_threads = 1;
+  alignment_options_default(&o8); o8.max_threads = 8; o8.hb_max_threads = 8;
   aln_error_t err;
 
   /* 3. Nucleics full (1t) */

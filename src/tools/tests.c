@@ -1591,7 +1591,8 @@ void simd_test_diff()
     bool same = true;
     for(y = 1; y <= lb; y++)
       for(x = 1; x <= la; x++)
-        same &= al_on.trace[y*(la+1) + x] == al_off.trace[y*(la+1) + x];
+        same &= al_on.trace[alignment_trace_index(&al_on, x, y)] ==
+                al_off.trace[alignment_trace_index(&al_off, x, y)];
     ASSERT(same);
     ASSERT(memcmp(al_on.final_scores, al_off.final_scores,
                   sizeof(al_on.final_scores)) == 0);

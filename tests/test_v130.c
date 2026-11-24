@@ -162,6 +162,29 @@ static void test_myers_boundaries(void)
       free(b);
     }
   }
+
+  // Codex row-zero frontier regression: leading gap in b of length K = 128 / 160
+  // where block 0's lower bound exceeds K at column 1 while row 0 is still viable.
+  {
+    const size_t cases[][2] = {{257, 128}, {320, 160}};
+    for(size_t ci = 0; ci < 2; ci++) {
+      size_t ma = cases[ci][0], pad = cases[ci][1], nb = ma + pad;
+      char *a = malloc(ma + 1), *b = malloc(nb + 1);
+      assert(a && b);
+      memset(a, 'A', ma); a[ma] = '\0';
+      memset(b, 'C', pad); memset(b + pad, 'A', ma); b[nb] = '\0';
+      sub_table_t tbl;
+      assert(sub_table_build(&tbl, &sc, a, ma, b, nb));
+      score_t ms = 0, bs = 0;
+      assert(alignment_myers_score(&tbl, &sc, a, ma, b, nb, &ms));
+      assert(ms == -(score_t)pad);
+      assert(alignment_myers_score_banded(&tbl, &sc, a, ma, b, nb, &bs));
+      assert(bs == ms);
+      sub_table_free(&tbl);
+      free(a);
+      free(b);
+    }
+  }
   alignment_free(aln);
   printf("  [PASS] test_myers_boundaries\n");
 }
@@ -224,12 +247,94 @@ static void test_sw_fastlocal(void)
   printf("  [PASS] test_sw_fastlocal\n");
 }
 
+static void test_strip_col0_and_striped_trace(void)
+{
+  // 1. Codex counterexample: TAA+32*C vs ATA+32*C (+5/-4/-2/-1) with strip_rows=1.
+  // The 32-C tail makes width-1 banding eligible (asserting trace_banded == true)
+  // while preserving the exact leading-gap tie (-TAA / ATA-) at column 0.
+  scoring_t sc;
+  scoring_init(&sc, 5, -4, -2, -1, false, false, false, false, false, true);
+  alignment_options_t o_scalar, o_band;
+  alignment_options_default(&o_scalar);
+  o_scalar.striped = false; o_scalar.band = false; o_scalar.diff = false; o_scalar.max_threads = 1;
+  alignment_options_default(&o_band);
+  o_band.striped = true; o_band.band = true; o_band.diff = false;
+  o_band.band_strip_rows = 1; o_band.band_min_width = 1; o_band.max_threads = 1;
+
+  char ta[36], tb[36];
+  memcpy(ta, "TAA", 3); memset(ta + 3, 'C', 32); ta[35] = '\0';
+  memcpy(tb, "ATA", 3); memset(tb + 3, 'C', 32); tb[35] = '\0';
+
+  nw_aligner_t *nw1 = needleman_wunsch_new(), *nw2 = needleman_wunsch_new();
+  alignment_t *r1 = alignment_create(128), *r2 = alignment_create(128);
+  nw1->compact = false; nw1->options = &o_scalar;
+  nw2->compact = true;  nw2->options = &o_band;
+  assert(needleman_wunsch_align_checked(ta, tb, 35, 35, &sc, nw1, r1, NULL) == ALN_OK);
+  assert(needleman_wunsch_align_checked(ta, tb, 35, 35, &sc, nw2, r2, NULL) == ALN_OK);
+  assert(nw2->trace_banded);
+  assert(r1->score == r2->score);
+  assert(strcmp(r1->result_a, r2->result_a) == 0);
+  assert(strcmp(r1->result_b, r2->result_b) == 0);
+
+  // 2. Striped vector-order trace (diff8 DNA + diff16 BLOSUM62, 1t & 4t) byte-identical to scalar
+  scoring_t sc_dna, sc_b62;
+  scoring_init(&sc_dna, 1, -2, -4, -1, false, false, false, false, false, true);
+  scoring_system_BLOSUM62(&sc_b62);
+  alignment_options_t o_diff1, o_diff4;
+  alignment_options_default(&o_diff1);
+  o_diff1.striped = true; o_diff1.band = false; o_diff1.diff = true; o_diff1.max_threads = 1;
+  alignment_options_default(&o_diff4);
+  o_diff4.striped = true; o_diff4.band = false; o_diff4.diff = true;
+  o_diff4.max_threads = 4; o_diff4.block_min_cells = 1; o_diff4.block_min_cols = 32;
+
+  static const char aa20[] = "ACDEFGHIKLMNPQRSTVWY";
+  size_t test_lens[] = {17, 63, 64, 65, 257, 513};
+  for(size_t li = 0; li < sizeof(test_lens)/sizeof(test_lens[0]); li++) {
+    size_t la = test_lens[li], lb = test_lens[li] + (li % 3) * 7;
+    char *a = malloc(la + 1), *b = malloc(lb + 1);
+    assert(a && b);
+    rand_dna(a, la);
+    rand_dna(b, lb);
+    // DNA diff8
+    nw1->options = &o_scalar;
+    assert(needleman_wunsch_align_checked(a, b, la, lb, &sc_dna, nw1, r1, NULL) == ALN_OK);
+    nw2->options = &o_diff1;
+    assert(needleman_wunsch_align_checked(a, b, la, lb, &sc_dna, nw2, r2, NULL) == ALN_OK);
+    assert(nw2->trace_striped);
+    size_t dna_vl = nw2->trace_vl;
+    assert(r1->score == r2->score && strcmp(r1->result_a, r2->result_a) == 0 && strcmp(r1->result_b, r2->result_b) == 0);
+    nw2->options = &o_diff4;
+    assert(needleman_wunsch_align_checked(a, b, la, lb, &sc_dna, nw2, r2, NULL) == ALN_OK);
+    assert(nw2->trace_striped && nw2->trace_vl == dna_vl);
+    assert(r1->score == r2->score && strcmp(r1->result_a, r2->result_a) == 0 && strcmp(r1->result_b, r2->result_b) == 0);
+    // Protein BLOSUM62 diff16 (ensure 'W' is present so score range forces 16-bit lanes)
+    for(size_t i = 0; i < la; i++) a[i] = aa20[next_rand() % 20];
+    for(size_t i = 0; i < lb; i++) b[i] = aa20[next_rand() % 20];
+    a[0] = 'W'; b[0] = 'W';
+    nw1->options = &o_scalar;
+    assert(needleman_wunsch_align_checked(a, b, la, lb, &sc_b62, nw1, r1, NULL) == ALN_OK);
+    nw2->options = &o_diff1;
+    assert(needleman_wunsch_align_checked(a, b, la, lb, &sc_b62, nw2, r2, NULL) == ALN_OK);
+    assert(nw2->trace_striped && nw2->trace_vl * 2 == dna_vl);
+    assert(r1->score == r2->score && strcmp(r1->result_a, r2->result_a) == 0 && strcmp(r1->result_b, r2->result_b) == 0);
+    nw2->options = &o_diff4;
+    assert(needleman_wunsch_align_checked(a, b, la, lb, &sc_b62, nw2, r2, NULL) == ALN_OK);
+    assert(nw2->trace_striped && nw2->trace_vl * 2 == dna_vl);
+    assert(r1->score == r2->score && strcmp(r1->result_a, r2->result_a) == 0 && strcmp(r1->result_b, r2->result_b) == 0);
+    free(a); free(b);
+  }
+  alignment_free(r1); alignment_free(r2);
+  needleman_wunsch_free(nw1); needleman_wunsch_free(nw2);
+  printf("  [PASS] test_strip_col0_and_striped_trace\n");
+}
+
 int main(void)
 {
   printf("Running v1.3.0 targeted regression tests...\n");
   test_biwfa_deep();
   test_myers_boundaries();
   test_sw_fastlocal();
+  test_strip_col0_and_striped_trace();
   printf("All v1.3.0 targeted tests passed!\n");
   return 0;
 }

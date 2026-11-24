@@ -87,6 +87,11 @@ typedef struct
   bool trace_banded;
   ptrdiff_t *trace_rows;
   size_t trace_rows_capacity;
+  // Striped vector-order trace (unbanded difference-encoded Needleman-Wunsch):
+  // each row y (1..len_b) stores blocks sequentially in striped vector order
+  bool trace_striped;
+  size_t trace_nblocks, trace_bwidth, trace_seg0, trace_seg_last;
+  size_t trace_vl, trace_stride;
   // A band too big to keep (see alignment_band_keep_max_cells): trace and
   // trace_rows hold one strip of rows at a time, which alignment_trace_load()
   // fills again as needed (private; NULL otherwise)
@@ -139,9 +144,21 @@ static inline int alignment_trace_next(const aligner_t *aligner, size_t index,
 static inline size_t alignment_trace_index(const aligner_t *aligner,
                                            size_t x, size_t y)
 {
-  return aligner->trace_banded
-         ? (size_t)(aligner->trace_rows[y] + (ptrdiff_t)x)
-         : y * aligner->score_width + x;
+  if(aligner->trace_banded)
+    return (size_t)(aligner->trace_rows[y] + (ptrdiff_t)x);
+  if(aligner->trace_striped) {
+    const size_t i = x - 1;
+    size_t bi = aligner->trace_nblocks > 1 ? i / aligner->trace_bwidth : 0;
+    if(bi >= aligner->trace_nblocks) bi = aligner->trace_nblocks - 1;
+    const size_t off = i - bi * aligner->trace_bwidth;
+    const size_t seg = (bi + 1 < aligner->trace_nblocks)
+                       ? aligner->trace_seg0 : aligner->trace_seg_last;
+    const size_t l = off / seg, k = off % seg;
+    return (y - 1) * aligner->trace_stride +
+           bi * (aligner->trace_seg0 * aligner->trace_vl) +
+           k * aligner->trace_vl + l;
+  }
+  return y * aligner->score_width + x;
 }
 
 #ifdef __cplusplus

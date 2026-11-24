@@ -46,7 +46,7 @@ static void DN(alignment_fill_diff)(alignment_block_t *p)
   const size_t c0 = p->c0, ls = p->lstride, ly0 = p->ly0;
   const score_t *lcM = p->lc[MATCH], *lcA = p->lc[GAP_A], *lcB = p->lc[GAP_B];
   const char *seq_a = aligner->seq_a + c0;
-  const size_t w = aligner->score_width, len_i = p->width;
+  const size_t len_i = p->width;
   const size_t seg = (len_i + ALN_D_VL - 1) / ALN_D_VL;
   const size_t n = table->n;
   const score_t lo = p->floor, up = p->ceiling;
@@ -62,7 +62,7 @@ static void DN(alignment_fill_diff)(alignment_block_t *p)
 
   // profile[c*seg + k] lane l: score of seq_a[l*seg+k] against character c
   // of seq_b (0 past the end of seq_a); then the rows' vectors
-  DV *buf = aln_aligned_alloc(sizeof(DV), (n + 12) * seg * sizeof(DV));
+  DV *buf = aln_aligned_alloc(sizeof(DV), (n + 11) * seg * sizeof(DV));
   if(buf == NULL) {
     atomic_store_explicit(p->nomem, true, memory_order_relaxed);
     atomic_store_explicit(p->stop, true, memory_order_relaxed);
@@ -71,7 +71,7 @@ static void DN(alignment_fill_diff)(alignment_block_t *p)
   DV *profile = buf;
   DV *pOM = buf + n*seg, *pOA = pOM + seg, *pOB = pOA + seg, *pV = pOB + seg;
   DV *cOM = pV + seg, *cOA = cOM + seg, *cOB = cOA + seg, *cV = cOB + seg;
-  DV *cm = cV + seg, *ca = cm + seg, *cb = ca + seg, *tb = cb + seg;
+  DV *cm = cV + seg, *ca = cm + seg, *cb = ca + seg;
   DV *tmp;
 
   for(c = 0; c < n; c++) {
@@ -199,6 +199,7 @@ static void DN(alignment_fill_diff)(alignment_block_t *p)
     DV eM = DN(kshift)(cm[seg-1], (DS)em0);
     DV eA = DN(kshift)(ca[seg-1], (DS)ea0);
     DV eB = DN(kshift)(cb[seg-1], (DS)eb0);
+    uint8_t *trow = p->trace + (y - 1) * p->trace_stride + p->trace_boff;
     for(k = 0; k < seg; k++) {
       const DV h = DN(kmax)(DN(kmax)(cm[k], ca[k]), cb[k]);
       // The diagonal cell's best state, gap_a before gap_b before match
@@ -206,10 +207,17 @@ static void DN(alignment_fill_diff)(alignment_block_t *p)
       fM = DN(ksel)(dA == vzero, codeA, fM);
       // gap_b against values one column back: add v back
       const DV bc = cb[k] + pV[k];
-      tb[k] = fM |
-              DN(ktrace)(ca[k], pOA[k] + vext, pOB[k] + vopen,
-                         pOM[k] + vopen) << 2 |
-              DN(ktrace)(bc, eA + vopen, eB + vext, eM + vopen) << 4;
+      const DV tv = fM |
+                    DN(ktrace)(ca[k], pOA[k] + vext, pOB[k] + vopen,
+                               pOM[k] + vopen) << 2 |
+                    DN(ktrace)(bc, eA + vopen, eB + vext, eM + vopen) << 4;
+#if ALN_D_SUFFIX == 8
+      memcpy(trow + k * ALN_D_VL, &tv, ALN_D_VL);
+#else
+      typedef uint8_t DN(tb8v) __attribute__((vector_size(ALN_D_VL)));
+      const DN(tb8v) tb8 = __builtin_convertvector(tv, DN(tb8v));
+      memcpy(trow + k * ALN_D_VL, &tb8, ALN_D_VL);
+#endif
       cV[k] = pV[k] + h - hleft;
       cOM[k] = DN(kmax)(cm[k] - h, vF);
       cOA[k] = DN(kmax)(ca[k] - h, vF);
@@ -218,11 +226,6 @@ static void DN(alignment_fill_diff)(alignment_block_t *p)
       dA = pOA[k]; dB = pOB[k];
       eM = cm[k]; eA = ca[k]; eB = cb[k];
     }
-
-    uint8_t *trow = p->trace + y*w + c0 + 1;
-    for(l = 0; l < ALN_D_VL; l++)
-      for(k = 0, i = l*seg; k < seg && i < len_i; k++, i++)
-        trow[i] = (uint8_t)tb[k][l];
 
     // The last column's scores for the block on the right (and the final
     // cell), and the first and last columns' H for the next row
