@@ -31,11 +31,11 @@ CFLAGS ?= -Wall -Wextra
 # AVX; the SIMD helpers are always inlined, so no call passes one
 CFLAGS += -std=c11 $(OPT) -Wno-psabi
 OBJFLAGS = -fPIC
-LINKFLAGS = -lalign -lstrbuf -lpthread -lz
+LINKFLAGS = -lalign -lpthread -lz
 
 INCS=-I $(LIBS_PATH) -I src
-LIBS=-L $(LIBS_PATH)/string_buffer -L src
-LINK=-lalign -lstrbuf -lpthread -lz
+LIBS=-L src
+LINK=-lalign -lpthread -lz
 
 # Compile and bundle all non-main files into library
 SRCS=$(wildcard src/*.c)
@@ -58,9 +58,7 @@ endif
 $(FLAGS_STAMP):
 	echo '$(BUILD_FLAGS)' > $@
 
-# Build libraries only if they're downloaded
 src/libalign.a: $(OBJS)
-	[ -d libs/string_buffer ] && cd libs && $(MAKE)
 	rm -f $@
 	ar -csr $@ $(OBJS)
 

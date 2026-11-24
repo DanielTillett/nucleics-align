@@ -13,8 +13,6 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "sort_r/sort_r.h"
-
 #include "smith_waterman.h"
 #include "hirschberg.h"
 #include "alignment_macros.h"
@@ -206,26 +204,50 @@ typedef struct
   size_t score_width;
 } MatrixSort;
 
-// Function passed to sort_r
-static int sort_match_indices(const void *aa, const void *bb, void *arg)
+// Compare two candidate cell indices: descending score, then ascending x, then y
+static inline int cmp_match_index(size_t ia, size_t ib, const MatrixSort *ctx)
 {
-  const size_t *a = aa;
-  const size_t *b = bb;
-  const MatrixSort *tmp = arg;
+  const score_t *match_scores = ctx->match_scores;
+  size_t score_width = ctx->score_width;
 
-  // Recover variables from the struct
-  const score_t *match_scores = tmp->match_scores;
-  size_t score_width = tmp->score_width;
-
-  long diff = (long)match_scores[*b] - match_scores[*a];
-
-  // Then by position on seq_a, then seq_b (same order as the counting sort)
+  long diff = (long)match_scores[ib] - match_scores[ia];
   if(diff == 0) {
-    size_t xa = *a % score_width, xb = *b % score_width;
+    size_t xa = ia % score_width, xb = ib % score_width;
     if(xa != xb) return (xa > xb) - (xa < xb);
-    return (*a > *b) - (*a < *b);
+    return (ia > ib) - (ia < ib);
   }
-  else return diff > 0 ? 1 : -1;
+  return diff > 0 ? 1 : -1;
+}
+
+// In-place O(n log n) heapsort for candidate hit indices (portable C11, no sort_r)
+static void sw_sort_match_indices(size_t *arr, size_t n, const MatrixSort *ctx)
+{
+  if(n < 2) return;
+  for(size_t start = n / 2; start > 0; start--) {
+    size_t root = start - 1;
+    while(root * 2 + 1 < n) {
+      size_t child = root * 2 + 1;
+      if(child + 1 < n && cmp_match_index(arr[child], arr[child + 1], ctx) < 0)
+        child++;
+      if(cmp_match_index(arr[root], arr[child], ctx) < 0) {
+        size_t tmp = arr[root]; arr[root] = arr[child]; arr[child] = tmp;
+        root = child;
+      } else break;
+    }
+  }
+  for(size_t end = n - 1; end > 0; end--) {
+    size_t tmp = arr[end]; arr[end] = arr[0]; arr[0] = tmp;
+    size_t root = 0;
+    while(root * 2 + 1 < end) {
+      size_t child = root * 2 + 1;
+      if(child + 1 < end && cmp_match_index(arr[child], arr[child + 1], ctx) < 0)
+        child++;
+      if(cmp_match_index(arr[root], arr[child], ctx) < 0) {
+        size_t sw = arr[root]; arr[root] = arr[child]; arr[child] = sw;
+        root = child;
+      } else break;
+    }
+  }
 }
 
 static void _init_history(sw_history_t *hist)
@@ -843,8 +865,8 @@ static bool _index_hits(sw_aligner_t *sw)
         hist->sorted_match_indices[hist->num_of_hits++] = pos;
     }
     MatrixSort tmp_struct = {aligner->match_scores, aligner->score_width};
-    sort_r(hist->sorted_match_indices, hist->num_of_hits,
-           sizeof(size_t), sort_match_indices, &tmp_struct);
+    sw_sort_match_indices(hist->sorted_match_indices, hist->num_of_hits,
+                          &tmp_struct);
     return true;
   }
 

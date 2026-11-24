@@ -15,12 +15,82 @@
 #include <string.h>
 #include <ctype.h> // tolower isspace
 
-#include "string_buffer/string_buffer.h"
-
 #include "alignment_cmdline.h"
 #include "alignment_scoring_load.h"
 
 #define lc(c,case_sensitive) ((case_sensitive) ? (c) : (char)tolower((unsigned char)(c)))
+
+// Minimal growable line buffer for reading gzFile lines without external deps
+typedef struct {
+  char *b;
+  size_t end;
+  size_t cap;
+} line_buf_t;
+
+static void line_buf_init(line_buf_t *lb, size_t init_cap)
+{
+  lb->cap = init_cap > 0 ? init_cap : 256;
+  lb->b = malloc(lb->cap);
+  if(lb->b == NULL) {
+    fprintf(stderr, "%s:%i: Out of memory\n", __FILE__, __LINE__);
+    exit(EXIT_FAILURE);
+  }
+  lb->b[0] = '\0';
+  lb->end = 0;
+}
+
+static void line_buf_free(line_buf_t *lb)
+{
+  free(lb->b);
+  lb->b = NULL;
+  lb->end = lb->cap = 0;
+}
+
+static size_t line_buf_gzreadline(line_buf_t *lb, gzFile file)
+{
+  lb->end = 0;
+  lb->b[0] = '\0';
+  for(;;) {
+    if(lb->cap - lb->end < 128) {
+      size_t ncap = lb->cap * 2;
+      char *nb = realloc(lb->b, ncap);
+      if(nb == NULL) {
+        fprintf(stderr, "%s:%i: Out of memory\n", __FILE__, __LINE__);
+        exit(EXIT_FAILURE);
+      }
+      lb->b = nb;
+      lb->cap = ncap;
+    }
+    int avail = (lb->cap - lb->end > (size_t)INT_MAX) ? INT_MAX : (int)(lb->cap - lb->end);
+    if(gzgets(file, lb->b + lb->end, avail) == NULL)
+      return lb->end;
+    size_t got = strlen(lb->b + lb->end);
+    lb->end += got;
+    if(got == 0 || lb->b[lb->end - 1] == '\n')
+      return lb->end;
+  }
+}
+
+static void line_buf_chomp(line_buf_t *lb)
+{
+  while(lb->end > 0 && (lb->b[lb->end - 1] == '\n' || lb->b[lb->end - 1] == '\r'))
+    lb->b[--lb->end] = '\0';
+}
+
+static bool str_is_all_whitespace(const char *s)
+{
+  while(*s != '\0') {
+    if(!isspace((unsigned char)*s)) return false;
+    s++;
+  }
+  return true;
+}
+
+static char *str_next_nonwhitespace(char *s)
+{
+  while(*s != '\0' && isspace((unsigned char)*s)) s++;
+  return *s == '\0' ? NULL : s;
+}
 
 static void _loading_error(const char* err_msg, const char* file_path,
                            int line_num, char is_matrix)
@@ -42,18 +112,20 @@ static void _loading_error(const char* err_msg, const char* file_path,
 void align_scoring_load_matrix(gzFile file, const char* file_path,
                                scoring_t* scoring, char case_sensitive)
 {
-  StrBuf* sbuf = strbuf_new(500);
+  line_buf_t sbuf_val;
+  line_buf_t *sbuf = &sbuf_val;
+  line_buf_init(sbuf, 500);
   size_t read_length;
   int line_num = 0;
 
   // Read first line (column headings)
-  while((read_length = strbuf_reset_gzreadline(sbuf, file)) > 0)
+  while((read_length = line_buf_gzreadline(sbuf, file)) > 0)
   {
     line_num++;
-    strbuf_chomp(sbuf);
+    line_buf_chomp(sbuf);
 
     if(sbuf->end > 0 && sbuf->b[0] != '#' && // line is not empty, not comment
-       !string_is_all_whitespace(sbuf->b)) // and not whitespace
+       !str_is_all_whitespace(sbuf->b)) // and not whitespace
     {
       // Read first line
 
@@ -95,18 +167,18 @@ void align_scoring_load_matrix(gzFile file, const char* file_path,
   {
     char* next = sbuf->b;
 
-    while((next = string_next_nonwhitespace(next+1)) != NULL)
+    while((next = str_next_nonwhitespace(next+1)) != NULL)
     {
       characters[num_of_chars++] = lc(*next, case_sensitive);
     }
 
     // Now read lines below
-    while((read_length = strbuf_reset_gzreadline(sbuf, file)) > 0)
+    while((read_length = line_buf_gzreadline(sbuf, file)) > 0)
     {
       line_num++;
-      strbuf_chomp(sbuf);
+      line_buf_chomp(sbuf);
 
-      char* from_char_pos = string_next_nonwhitespace(sbuf->b);
+      char* from_char_pos = str_next_nonwhitespace(sbuf->b);
 
       if(from_char_pos == NULL || sbuf->b[0] == '#')
       {
@@ -136,7 +208,7 @@ void align_scoring_load_matrix(gzFile file, const char* file_path,
                          file_path, line_num, 1);
         }
 
-        score_txt = string_next_nonwhitespace(score_txt+1);
+        score_txt = str_next_nonwhitespace(score_txt+1);
 
         if(score_txt == NULL)
         {
@@ -160,7 +232,7 @@ void align_scoring_load_matrix(gzFile file, const char* file_path,
         score_txt = strtol_last_char_ptr;
       }
 
-      if(*score_txt != '\0' && !string_is_all_whitespace(score_txt))
+      if(*score_txt != '\0' && !str_is_all_whitespace(score_txt))
       {
         _loading_error("Too many columns on row", file_path, line_num, 1);
       }
@@ -190,12 +262,12 @@ void align_scoring_load_matrix(gzFile file, const char* file_path,
     int score;
 
     // Read rows: <char><sep><score><sep><score>...
-    while((read_length = strbuf_reset_gzreadline(sbuf, file)) > 0)
+    while((read_length = line_buf_gzreadline(sbuf, file)) > 0)
     {
       line_num++;
-      strbuf_chomp(sbuf);
+      line_buf_chomp(sbuf);
 
-      if(sbuf->b[0] == '#' || string_is_all_whitespace(sbuf->b))
+      if(sbuf->b[0] == '#' || str_is_all_whitespace(sbuf->b))
       {
         // skip this line
         continue;
@@ -251,14 +323,16 @@ void align_scoring_load_matrix(gzFile file, const char* file_path,
   }
 
   free(characters);
-  strbuf_free(sbuf);
+  line_buf_free(sbuf);
 }
 
 
 void align_scoring_load_pairwise(gzFile file, const char* file_path,
                                  scoring_t* scoring, char case_sensitive)
 {
-  StrBuf* sbuf = strbuf_new(200);
+  line_buf_t sbuf_val;
+  line_buf_t *sbuf = &sbuf_val;
+  line_buf_init(sbuf, 200);
   size_t read_length;
   int line_num = 0;
 
@@ -267,13 +341,13 @@ void align_scoring_load_pairwise(gzFile file, const char* file_path,
 
   int num_pairs_added = 0;
 
-  while((read_length = strbuf_reset_gzreadline(sbuf, file)) > 0)
+  while((read_length = line_buf_gzreadline(sbuf, file)) > 0)
   {
     line_num++;
-    strbuf_chomp(sbuf);
+    line_buf_chomp(sbuf);
 
     if(sbuf->end > 0 && sbuf->b[0] != '#' && // line is not empty, not comment
-       !string_is_all_whitespace(sbuf->b)) // and not whitespace
+       !str_is_all_whitespace(sbuf->b)) // and not whitespace
     {
       if(sbuf->end < 5)
       {
@@ -329,7 +403,7 @@ void align_scoring_load_pairwise(gzFile file, const char* file_path,
     }
   }
 
-  strbuf_free(sbuf);
+  line_buf_free(sbuf);
 
   if(num_pairs_added == 0)
   {
