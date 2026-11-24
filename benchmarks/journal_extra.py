@@ -72,10 +72,12 @@ def rescore_wfa_cig(sa, sb, cig):
             sc += -1 if prev == "I" else -5
             j += 1
             prev = "I"
-        else:
+        elif op == "D":
             sc += -1 if prev == "D" else -5
             i += 1
             prev = "D"
+        else:
+            raise ValueError(f"Unknown CIGAR op: {op!r}")
     assert i == len(sa) and j == len(sb)
     return sc
 

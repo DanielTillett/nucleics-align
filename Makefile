@@ -83,6 +83,9 @@ bin/lcs: src/tools/lcs_cmdline.c src/libalign.a $(HDRS) | bin
 bin/nucleics_align_tests: src/tools/tests.c src/libalign.a $(HDRS) | bin
 	$(CC) -o $@ $< $(CFLAGS) $(TGTFLAGS) $(INCS) $(LIBS) $(LINK)
 
+bin/test_v130: tests/test_v130.c src/libalign.a $(HDRS) | bin
+	$(CC) -o $@ $< $(CFLAGS) $(TGTFLAGS) $(INCS) $(LIBS) $(LINK)
+
 examples: src/libalign.a
 	cd examples; $(MAKE) LIBS_PATH=$(abspath $(LIBS_PATH)) SANFLAGS="$(TGTFLAGS)"
 
@@ -93,8 +96,9 @@ clean:
 	rm -rf bin src/*.o src/*.d src/libalign.a src/.build-flags
 	cd examples && $(MAKE) clean
 
-test: bin/nucleics_align_tests bin/needleman_wunsch bin/smith_waterman bin/lcs
+test: bin/nucleics_align_tests bin/test_v130 bin/needleman_wunsch bin/smith_waterman bin/lcs
 	./bin/nucleics_align_tests
+	./bin/test_v130
 	sh tests/cli/run.sh
 
 .PHONY: all clean examples test

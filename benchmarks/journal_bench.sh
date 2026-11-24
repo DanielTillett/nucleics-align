@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Journal-grade supplementary benchmark for Nucleics Align v1.2.0:
-#   1. Builds pinned parasail v2.6.2 (600fb26, AVX2 16-bit striped global traceback)
+# Journal-grade supplementary benchmark for Nucleics Align v1.3.0:
+#   1. Builds pinned parasail v2.6.2 (600fb26, AVX2 16-bit striped and scan global traceback)
 #   2. Benchmarks 5 real NCBI RefSeq protein pairs (BLOSUM62 -10/-1) with parasail
 #      + independent BLOSUM62 CIGAR/alignment re-scoring across tools (Table 5)
 #   3. Independently re-scores cross-tool 20 kb DNA alignments/CIGARs
 #      (Nucleics Align full/--linear/--wfa, ksw2, WFA2 BiWFA)
-#   4. Re-runs full 5 kb - 1 Mb scaling suite on v1.2.0 with score assertions
+#   4. Re-runs full 5 kb - 1 Mb scaling suite on v1.3.0 with score assertions
 #      and matched WFA2 BiWFA comparisons at 100 kb, 300 kb, and 1 Mb (Table 3)
 #
 # Usage: bash benchmarks/journal_bench.sh [work_dir] [threads]
@@ -116,6 +116,19 @@ gcc -O3 -mavx2 -I "$WORK/src" \
   "$WORK/src/parasail/src/cigar.c" \
   "$WORK/src/parasail/src/matrix_lookup.c" \
   -o "$WORK/bin/run_parasail_prot"
+
+sed 's/parasail_nw_trace_striped_avx2_256_16/parasail_nw_trace_scan_avx2_256_16/g' \
+  "$WORK/src/run_parasail_prot.c" > "$WORK/src/run_parasail_scan.c"
+
+gcc -O3 -mavx2 -I "$WORK/src" \
+  -I "$WORK/src/parasail" -I "$WORK/src/parasail/src" \
+  "$WORK/src/run_parasail_scan.c" \
+  "$WORK/src/parasail/src/nw_trace_scan_avx2_256_16.c" \
+  "$WORK/src/parasail/src/memory.c" \
+  "$WORK/src/parasail/src/memory_avx2.c" \
+  "$WORK/src/parasail/src/cigar.c" \
+  "$WORK/src/parasail/src/matrix_lookup.c" \
+  -o "$WORK/bin/run_parasail_scan"
 
 # Also build small CIGAR-printing wrappers for ksw2 and WFA2 BiWFA for independent re-scoring
 cat > "$WORK/src/run_ksw2_cigar.c" <<'EOF'
@@ -330,7 +343,7 @@ for div in ["1", "10", "rand"]:
     assert len(set(scores.values())) == 1, f"Cross-tool mismatch {div}: {scores}"
     print(f"  20 kb {div:4s}  ALL 5 TOOLS RE-SCORED & SPAN-VERIFIED: score={k_rsc} ({list(scores.keys())})")
 
-print("\n=== v1.2.0 SCALING TABLE 3 (5 kb - 1 Mb, 8 default threads, gen_pairs.py seed=11, score-asserted) ===")
+print("\n=== v1.3.0 SCALING TABLE 3 (5 kb - 1 Mb, 8 default threads, gen_pairs.py seed=11, score-asserted) ===")
 SCALE_DIR = os.path.join(WORK, "scale")
 GEN = os.path.join(ROOT, "benchmarks/gen_pairs.py")
 
