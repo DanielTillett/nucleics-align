@@ -31,16 +31,24 @@ CFLAGS ?= -Wall -Wextra
 # AVX; the SIMD helpers are always inlined, so no call passes one
 CFLAGS += -std=c11 $(OPT) -Wno-psabi
 OBJFLAGS = -fPIC
-LINKFLAGS = -lalign -lpthread -lz
 
-INCS=-I $(LIBS_PATH) -I src
-LIBS=-L src
-LINK=-lalign -lpthread -lz
+LIB_INCS = -I src/lib
+CLI_INCS = -I $(LIBS_PATH) -I src/lib -I src/cli
+LIBS = -L src
+LIB_LINK = -lalign -lpthread
+CLI_LINK = -lalign -lpthread -lz
 
-# Compile and bundle all non-main files into library
-SRCS=$(wildcard src/*.c)
-OBJS=$(SRCS:.c=.o)
-HDRS=$(wildcard src/*.h)
+# Core library sources (zero CLI, zero zlib, zero libs/ dependencies)
+LIB_SRCS = $(wildcard src/lib/*.c)
+LIB_OBJS = $(LIB_SRCS:.c=.o)
+LIB_HDRS = $(wildcard src/lib/*.h)
+
+# Shared CLI support objects (linked only into CLI tools & CLI-scoring tests)
+CLI_COMMON_SRCS = src/cli/alignment_cmdline.c src/cli/alignment_scoring_load.c
+CLI_COMMON_OBJS = $(CLI_COMMON_SRCS:.c=.o)
+CLI_HDRS = $(wildcard src/cli/*.h)
+
+ALL_OBJS = $(LIB_OBJS) $(CLI_COMMON_OBJS)
 
 all: bin/needleman_wunsch bin/smith_waterman bin/lcs src/libalign.a examples
 
@@ -48,8 +56,6 @@ all: bin/needleman_wunsch bin/smith_waterman bin/lcs src/libalign.a examples
 # after a plain build), rather than mixing objects built different ways
 FLAGS_STAMP = src/.build-flags
 BUILD_FLAGS = $(CC) $(CFLAGS) $(OBJFLAGS) $(TGTFLAGS)
-# Updated as the Makefile is read (not by a dry run, make -n), and written
-# again by the rule below if a target such as clean removes it
 ifeq (,$(findstring n,$(firstword -$(MAKEFLAGS))))
 ifneq ($(BUILD_FLAGS),$(shell cat $(FLAGS_STAMP) 2>/dev/null))
 $(shell echo '$(BUILD_FLAGS)' > $(FLAGS_STAMP))
@@ -58,40 +64,42 @@ endif
 $(FLAGS_STAMP):
 	echo '$(BUILD_FLAGS)' > $@
 
-src/libalign.a: $(OBJS)
+src/libalign.a: $(LIB_OBJS)
 	rm -f $@
-	ar -csr $@ $(OBJS)
+	ar -csr $@ $(LIB_OBJS)
 
-# -MMD -MP: each object also depends on the headers it includes (src/*.d)
-%.o: %.c $(FLAGS_STAMP)
-	$(CC) $(CFLAGS) $(OBJFLAGS) $(INCS) -MMD -MP -c $< -o $@
+# -MMD -MP: each object also depends on the headers it includes (*.d)
+src/lib/%.o: src/lib/%.c $(FLAGS_STAMP)
+	$(CC) $(CFLAGS) $(OBJFLAGS) $(LIB_INCS) -MMD -MP -c $< -o $@
 
--include $(OBJS:.o=.d)
+src/cli/%.o: src/cli/%.c $(FLAGS_STAMP)
+	$(CC) $(CFLAGS) $(OBJFLAGS) $(CLI_INCS) -MMD -MP -c $< -o $@
 
-# The tools and tests link the same library the tests check
-bin/needleman_wunsch: src/tools/nw_cmdline.c src/libalign.a $(HDRS) | bin
-	$(CC) -o $@ $< $(CFLAGS) $(TGTFLAGS) $(INCS) $(LIBS) $(LINKFLAGS)
+-include $(ALL_OBJS:.o=.d)
 
-bin/smith_waterman: src/tools/sw_cmdline.c src/libalign.a $(HDRS) | bin
-	$(CC) -o $@ $< $(CFLAGS) $(TGTFLAGS) $(INCS) $(LIBS) $(LINKFLAGS)
+bin/needleman_wunsch: src/cli/nw_cmdline.c $(CLI_COMMON_OBJS) src/libalign.a $(LIB_HDRS) $(CLI_HDRS) | bin
+	$(CC) -o $@ $< $(CLI_COMMON_OBJS) $(CFLAGS) $(TGTFLAGS) $(CLI_INCS) $(LIBS) $(CLI_LINK)
 
-bin/lcs: src/tools/lcs_cmdline.c src/libalign.a $(HDRS) | bin
-	$(CC) -o $@ $< $(CFLAGS) $(TGTFLAGS) $(INCS) $(LIBS) $(LINKFLAGS)
+bin/smith_waterman: src/cli/sw_cmdline.c $(CLI_COMMON_OBJS) src/libalign.a $(LIB_HDRS) $(CLI_HDRS) | bin
+	$(CC) -o $@ $< $(CLI_COMMON_OBJS) $(CFLAGS) $(TGTFLAGS) $(CLI_INCS) $(LIBS) $(CLI_LINK)
 
-bin/nucleics_align_tests: src/tools/tests.c src/libalign.a $(HDRS) | bin
-	$(CC) -o $@ $< $(CFLAGS) $(TGTFLAGS) $(INCS) $(LIBS) $(LINK)
+bin/lcs: src/cli/lcs_cmdline.c $(CLI_COMMON_OBJS) src/libalign.a $(LIB_HDRS) $(CLI_HDRS) | bin
+	$(CC) -o $@ $< $(CLI_COMMON_OBJS) $(CFLAGS) $(TGTFLAGS) $(CLI_INCS) $(LIBS) $(CLI_LINK)
 
-bin/test_v130: tests/test_v130.c src/libalign.a $(HDRS) | bin
-	$(CC) -o $@ $< $(CFLAGS) $(TGTFLAGS) $(INCS) $(LIBS) $(LINK)
+bin/nucleics_align_tests: tests/tests.c $(CLI_COMMON_OBJS) src/libalign.a $(LIB_HDRS) $(CLI_HDRS) | bin
+	$(CC) -o $@ $< $(CLI_COMMON_OBJS) $(CFLAGS) $(TGTFLAGS) $(CLI_INCS) $(LIBS) $(CLI_LINK)
+
+bin/test_v130: tests/test_v130.c src/libalign.a $(LIB_HDRS) | bin
+	$(CC) -o $@ $< $(CFLAGS) $(TGTFLAGS) $(LIB_INCS) $(LIBS) $(LIB_LINK)
 
 examples: src/libalign.a
-	cd examples; $(MAKE) LIBS_PATH=$(abspath $(LIBS_PATH)) SANFLAGS="$(TGTFLAGS)"
+	cd examples; $(MAKE) SANFLAGS="$(TGTFLAGS)"
 
 bin:
 	mkdir -p bin
 
 clean:
-	rm -rf bin src/*.o src/*.d src/libalign.a src/.build-flags
+	rm -rf bin src/*.o src/*.d src/lib/*.o src/lib/*.d src/cli/*.o src/cli/*.d src/libalign.a src/.build-flags
 	cd examples && $(MAKE) clean
 
 test: bin/nucleics_align_tests bin/test_v130 bin/needleman_wunsch bin/smith_waterman bin/lcs

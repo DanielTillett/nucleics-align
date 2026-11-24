@@ -1,10 +1,9 @@
-LIBS_PATH=../libs
 CFLAGS=-Wall -Wextra -std=c11 $(SANFLAGS)
 CXXFLAGS=-Wall -Wextra $(SANFLAGS)
 
-INCS=-I ../src
+INCS=-I ../src/lib
 LIBS=-L ../src
-LINK=-lalign -lpthread -lz
+LINK=-lalign -lpthread
 
 all: nw_example sw_example nw_cpp sw_cpp
 
