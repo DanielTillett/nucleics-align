@@ -1,10 +1,10 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 390" width="880" height="390">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 395" width="880" height="395">
   <defs>
     <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
       <path d="M 0 1.5 L 10 5 L 0 8.5 z" fill="#64748b"/>
     </marker>
   </defs>
-  <rect width="880" height="390" fill="#ffffff"/>
+  <rect width="880" height="395" fill="#ffffff"/>
   <style>
     text { font-family: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; fill: #0f172a; }
     .title { font-size: 13px; font-weight: 700; }
@@ -16,96 +16,132 @@
   </style>
 
   <text x="16" y="22" class="title">(a) Fresh-process 9-configuration ablation (20 kb DNA, 5 seeds)</text>
-  <text x="16" y="36" class="sub">Median library wall time (log scale, ms) with median peak RSS annotated</text>
-  <line x1="176.8" y1="58" x2="176.8" y2="336" stroke="#e2e8f0" stroke-width="1"/>
-  <text x="176.8" y="350" text-anchor="middle" class="tick">10</text>
-  <line x1="272.5" y1="58" x2="272.5" y2="336" stroke="#e2e8f0" stroke-width="1"/>
-  <text x="272.5" y="350" text-anchor="middle" class="tick">100</text>
-  <line x1="368.1" y1="58" x2="368.1" y2="336" stroke="#e2e8f0" stroke-width="1"/>
-  <text x="368.1" y="350" text-anchor="middle" class="tick">1000</text>
-  <line x1="148" y1="336" x2="435" y2="336" stroke="#94a3b8" stroke-width="1"/>
-  <text x="291.5" y="366" text-anchor="middle" class="lblb">Median wall time (ms, log scale)</text>
-  <text x="142" y="75.0" text-anchor="end" class="lbl">1. Scalar 3-mat (1t)</text>
-  <rect x="148" y="62.0" width="261.8" height="9" rx="2" fill="#0d9488"/>
-  <rect x="148" y="72.0" width="263.3" height="9" rx="2" fill="#2563eb"/>
-  <text x="407.3" y="70.0" text-anchor="end" class="small" style="fill:#fff">4.58 GiB</text>
-  <text x="142" y="105.88888888888889" text-anchor="end" class="lbl">2. Compact+32b SIMD</text>
-  <rect x="148" y="92.88888888888889" width="186.3" height="9" rx="2" fill="#0d9488"/>
-  <rect x="148" y="102.88888888888889" width="187.2" height="9" rx="2" fill="#2563eb"/>
-  <text x="339.2" y="105.88888888888889" class="small">386 MiB</text>
-  <text x="142" y="136.77777777777777" text-anchor="end" class="lbl">3. + 8-bit diff lanes</text>
-  <rect x="148" y="123.77777777777777" width="169.9" height="9" rx="2" fill="#0d9488"/>
-  <rect x="148" y="133.77777777777777" width="169.7" height="9" rx="2" fill="#2563eb"/>
-  <text x="321.9" y="136.77777777777777" class="small">385 MiB</text>
-  <text x="142" y="167.66666666666669" text-anchor="end" class="lbl">4. + Band (12-mer)</text>
-  <rect x="148" y="154.66666666666669" width="61.7" height="9" rx="2" fill="#0d9488"/>
-  <rect x="148" y="164.66666666666669" width="170.5" height="9" rx="2" fill="#2563eb"/>
-  <text x="322.5" y="167.66666666666669" class="small">17 / 385 MiB</text>
-  <text x="142" y="198.55555555555554" text-anchor="end" class="lbl">5. + Band (WFA probe)</text>
-  <rect x="148" y="185.55555555555554" width="65.7" height="9" rx="2" fill="#0d9488"/>
-  <rect x="148" y="195.55555555555554" width="170.6" height="9" rx="2" fill="#2563eb"/>
-  <text x="322.6" y="198.55555555555554" class="small">18 / 386 MiB</text>
-  <text x="142" y="229.44444444444446" text-anchor="end" class="lbl">6. + Multi-thread (8t)</text>
-  <rect x="148" y="216.44444444444446" width="65.5" height="9" rx="2" fill="#0d9488"/>
-  <rect x="148" y="226.44444444444446" width="114.6" height="9" rx="2" fill="#2563eb"/>
-  <text x="266.6" y="229.44444444444446" class="small">18 / 387 MiB</text>
-  <text x="142" y="260.33333333333337" text-anchor="end" class="lbl">7. --linear (1t)</text>
-  <rect x="148" y="247.33333333333334" width="86.0" height="9" rx="2" fill="#0d9488"/>
-  <rect x="148" y="257.33333333333337" width="144.2" height="9" rx="2" fill="#2563eb"/>
-  <text x="296.2" y="260.33333333333337" class="small">2.8 / 3.2 MiB</text>
-  <text x="142" y="291.22222222222223" text-anchor="end" class="lbl">8. --linear (8t)</text>
-  <rect x="148" y="278.22222222222223" width="72.5" height="9" rx="2" fill="#0d9488"/>
-  <rect x="148" y="288.22222222222223" width="107.1" height="9" rx="2" fill="#2563eb"/>
-  <text x="259.1" y="291.22222222222223" class="small">3.2 / 3.6 MiB</text>
-  <text x="142" y="322.1111111111111" text-anchor="end" class="lbl">9. --wfa BiWFA (1t)</text>
-  <rect x="148" y="309.1111111111111" width="18.5" height="9" rx="2" fill="#0d9488"/>
-  <rect x="148" y="319.1111111111111" width="174.4" height="9" rx="2" fill="#2563eb"/>
-  <text x="326.4" y="322.1111111111111" class="small">2.9 / 386 MiB</text>
-  <rect x="148" y="42" width="10" height="8" rx="1.5" fill="#0d9488"/>
-  <text x="162" y="49" class="small">1% sub.</text>
-  <rect x="214" y="42" width="10" height="8" rx="1.5" fill="#2563eb"/>
-  <text x="228" y="49" class="small">10% sub.</text>
+  <text x="16" y="36" class="sub">Median [min-max] library wall time (ms, log) with median peak RSS</text>
+  <line x1="176.7" y1="58" x2="176.7" y2="340" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="176.7" y="354" text-anchor="middle" class="tick">10</text>
+  <line x1="272.2" y1="58" x2="272.2" y2="340" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="272.2" y="354" text-anchor="middle" class="tick">100</text>
+  <line x1="367.7" y1="58" x2="367.7" y2="340" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="367.7" y="354" text-anchor="middle" class="tick">1000</text>
+  <rect x="148" y="58" width="294" height="282" fill="none" stroke="#94a3b8" stroke-width="1"/>
+  <text x="295.0" y="370" text-anchor="middle" class="lblb">Median wall time (ms, log scale)</text>
+  <line x1="148" y1="73.7" x2="442" y2="73.7" stroke="#f1f5f9" stroke-width="1"/>
+  <text x="142" y="77.2" text-anchor="end" class="lbl">1. Scalar 3-mat (1t)</text>
+  <line x1="409.2" y1="69.2" x2="409.4" y2="69.2" stroke="#0d9488" stroke-width="2"/>
+  <circle cx="409.3" cy="69.2" r="4.0" fill="#0d9488" stroke="#fff" stroke-width="0.9"/>
+  <line x1="410.7" y1="78.2" x2="411.2" y2="78.2" stroke="#2563eb" stroke-width="2"/>
+  <rect x="407.3" y="74.7" width="7" height="7" fill="#2563eb" stroke="#fff" stroke-width="0.9"/>
+  <text x="403.2" y="76.7" text-anchor="end" class="small">4.47 GiB</text>
+  <rect x="148.5" y="89.3" width="293" height="31.3" fill="#f8fafc"/>
+  <line x1="148" y1="105.0" x2="442" y2="105.0" stroke="#f1f5f9" stroke-width="1"/>
+  <text x="142" y="108.5" text-anchor="end" class="lbl">2. Compact+32b SIMD</text>
+  <line x1="333.7" y1="100.5" x2="335.4" y2="100.5" stroke="#0d9488" stroke-width="2"/>
+  <circle cx="334.0" cy="100.5" r="4.0" fill="#0d9488" stroke="#fff" stroke-width="0.9"/>
+  <line x1="332.5" y1="109.5" x2="335.5" y2="109.5" stroke="#2563eb" stroke-width="2"/>
+  <rect x="331.4" y="106.0" width="7" height="7" fill="#2563eb" stroke="#fff" stroke-width="0.9"/>
+  <text x="341.5" y="108.0" class="small">386 MiB</text>
+  <line x1="148" y1="136.3" x2="442" y2="136.3" stroke="#f1f5f9" stroke-width="1"/>
+  <text x="142" y="139.8" text-anchor="end" class="lbl">3. + 8-bit diff lanes</text>
+  <line x1="317.2" y1="131.8" x2="317.7" y2="131.8" stroke="#0d9488" stroke-width="2"/>
+  <circle cx="317.6" cy="131.8" r="4.0" fill="#0d9488" stroke="#fff" stroke-width="0.9"/>
+  <line x1="317.1" y1="140.8" x2="317.7" y2="140.8" stroke="#2563eb" stroke-width="2"/>
+  <rect x="313.8" y="137.3" width="7" height="7" fill="#2563eb" stroke="#fff" stroke-width="0.9"/>
+  <text x="323.7" y="139.3" class="small">385 MiB</text>
+  <rect x="148.5" y="152.0" width="293" height="31.3" fill="#f8fafc"/>
+  <line x1="148" y1="167.7" x2="442" y2="167.7" stroke="#f1f5f9" stroke-width="1"/>
+  <text x="142" y="171.2" text-anchor="end" class="lbl">4. + Band (12-mer)</text>
+  <line x1="205.7" y1="163.2" x2="211.5" y2="163.2" stroke="#0d9488" stroke-width="2"/>
+  <circle cx="209.6" cy="163.2" r="4.0" fill="#0d9488" stroke="#fff" stroke-width="0.9"/>
+  <line x1="318.1" y1="172.2" x2="318.3" y2="172.2" stroke="#2563eb" stroke-width="2"/>
+  <rect x="314.7" y="168.7" width="7" height="7" fill="#2563eb" stroke="#fff" stroke-width="0.9"/>
+  <text x="324.3" y="170.7" class="small">17 / 385 MiB</text>
+  <line x1="148" y1="199.0" x2="442" y2="199.0" stroke="#f1f5f9" stroke-width="1"/>
+  <text x="142" y="202.5" text-anchor="end" class="lbl">5. + Band (WFA probe)</text>
+  <line x1="210.2" y1="194.5" x2="215.2" y2="194.5" stroke="#0d9488" stroke-width="2"/>
+  <circle cx="213.6" cy="194.5" r="4.0" fill="#0d9488" stroke="#fff" stroke-width="0.9"/>
+  <line x1="318.0" y1="203.5" x2="318.5" y2="203.5" stroke="#2563eb" stroke-width="2"/>
+  <rect x="314.7" y="200.0" width="7" height="7" fill="#2563eb" stroke="#fff" stroke-width="0.9"/>
+  <text x="324.5" y="202.0" class="small">18 / 386 MiB</text>
+  <rect x="148.5" y="214.7" width="293" height="31.3" fill="#f8fafc"/>
+  <line x1="148" y1="230.3" x2="442" y2="230.3" stroke="#f1f5f9" stroke-width="1"/>
+  <text x="142" y="233.8" text-anchor="end" class="lbl">6. + Multi-thread (8t)</text>
+  <line x1="209.6" y1="225.8" x2="214.6" y2="225.8" stroke="#0d9488" stroke-width="2"/>
+  <circle cx="213.4" cy="225.8" r="4.0" fill="#0d9488" stroke="#fff" stroke-width="0.9"/>
+  <line x1="260.9" y1="234.8" x2="266.1" y2="234.8" stroke="#2563eb" stroke-width="2"/>
+  <rect x="258.9" y="231.3" width="7" height="7" fill="#2563eb" stroke="#fff" stroke-width="0.9"/>
+  <text x="272.1" y="233.3" class="small">18 / 387 MiB</text>
+  <line x1="148" y1="261.7" x2="442" y2="261.7" stroke="#f1f5f9" stroke-width="1"/>
+  <text x="142" y="265.2" text-anchor="end" class="lbl">7. --linear (1t)</text>
+  <line x1="232.5" y1="257.2" x2="234.7" y2="257.2" stroke="#0d9488" stroke-width="2"/>
+  <circle cx="233.8" cy="257.2" r="4.0" fill="#0d9488" stroke="#fff" stroke-width="0.9"/>
+  <line x1="286.9" y1="266.2" x2="294.0" y2="266.2" stroke="#2563eb" stroke-width="2"/>
+  <rect x="288.4" y="262.7" width="7" height="7" fill="#2563eb" stroke="#fff" stroke-width="0.9"/>
+  <text x="300.0" y="264.7" class="small">2.8 / 3.2 MiB</text>
+  <rect x="148.5" y="277.3" width="293" height="31.3" fill="#f8fafc"/>
+  <line x1="148" y1="293.0" x2="442" y2="293.0" stroke="#f1f5f9" stroke-width="1"/>
+  <text x="142" y="296.5" text-anchor="end" class="lbl">8. --linear (8t)</text>
+  <line x1="219.3" y1="288.5" x2="221.6" y2="288.5" stroke="#0d9488" stroke-width="2"/>
+  <circle cx="220.3" cy="288.5" r="4.0" fill="#0d9488" stroke="#fff" stroke-width="0.9"/>
+  <line x1="253.8" y1="297.5" x2="256.2" y2="297.5" stroke="#2563eb" stroke-width="2"/>
+  <rect x="251.4" y="294.0" width="7" height="7" fill="#2563eb" stroke="#fff" stroke-width="0.9"/>
+  <text x="262.2" y="296.0" class="small">3.2 / 3.6 MiB</text>
+  <line x1="148" y1="324.3" x2="442" y2="324.3" stroke="#f1f5f9" stroke-width="1"/>
+  <text x="142" y="327.8" text-anchor="end" class="lbl">9. --wfa BiWFA (1t)</text>
+  <line x1="162.5" y1="319.8" x2="171.4" y2="319.8" stroke="#0d9488" stroke-width="2"/>
+  <circle cx="166.4" cy="319.8" r="4.0" fill="#0d9488" stroke="#fff" stroke-width="0.9"/>
+  <line x1="321.8" y1="328.8" x2="322.8" y2="328.8" stroke="#2563eb" stroke-width="2"/>
+  <rect x="318.6" y="325.3" width="7" height="7" fill="#fff" stroke="#2563eb" stroke-width="1.6"/>
+  <text x="328.8" y="327.3" class="small">2.9 / 386 MiB†</text>
+  <circle cx="153" cy="46" r="3.8" fill="#0d9488"/>
+  <text x="161" y="49" class="small">1% sub.</text>
+  <rect x="208" y="42.5" width="7" height="7" fill="#2563eb"/>
+  <text x="219" y="49" class="small">10% sub.</text>
+  <rect x="272" y="42.5" width="7" height="7" fill="#fff" stroke="#2563eb" stroke-width="1.5"/>
+  <text x="283" y="49" class="small">† budget fallback</text>
   <text x="480" y="22" class="title">(b) 50 kb global comparators: wall time vs peak RSS</text>
-  <text x="480" y="36" class="sub">Bottom-left is faster and smaller (5-seed medians, log-log)</text>
-  <line x1="520.0" y1="58" x2="520.0" y2="336" stroke="#e2e8f0" stroke-width="1"/>
-  <text x="520.0" y="350" text-anchor="middle" class="tick">10</text>
-  <line x1="637.1" y1="58" x2="637.1" y2="336" stroke="#e2e8f0" stroke-width="1"/>
-  <text x="637.1" y="350" text-anchor="middle" class="tick">100</text>
-  <line x1="754.2" y1="58" x2="754.2" y2="336" stroke="#e2e8f0" stroke-width="1"/>
-  <text x="754.2" y="350" text-anchor="middle" class="tick">1000</text>
-  <line x1="520" y1="314.4" x2="860" y2="314.4" stroke="#e2e8f0" stroke-width="1"/>
-  <text x="514" y="317.4" text-anchor="end" class="tick">4</text>
-  <line x1="520" y1="271.2" x2="860" y2="271.2" stroke="#e2e8f0" stroke-width="1"/>
-  <text x="514" y="274.2" text-anchor="end" class="tick">16</text>
-  <line x1="520" y1="228.0" x2="860" y2="228.0" stroke="#e2e8f0" stroke-width="1"/>
-  <text x="514" y="231.0" text-anchor="end" class="tick">64</text>
-  <line x1="520" y1="184.8" x2="860" y2="184.8" stroke="#e2e8f0" stroke-width="1"/>
-  <text x="514" y="187.8" text-anchor="end" class="tick">256</text>
-  <line x1="520" y1="141.6" x2="860" y2="141.6" stroke="#e2e8f0" stroke-width="1"/>
-  <text x="514" y="144.6" text-anchor="end" class="tick">1 GiB</text>
-  <line x1="520" y1="98.4" x2="860" y2="98.4" stroke="#e2e8f0" stroke-width="1"/>
-  <text x="514" y="101.4" text-anchor="end" class="tick">4 GiB</text>
-  <rect x="520" y="58" width="340" height="278" fill="none" stroke="#94a3b8" stroke-width="1"/>
-  <text x="690.0" y="366" text-anchor="middle" class="lblb">Median wall time (ms, log scale)</text>
-  <text x="476" y="197.0" text-anchor="middle" class="lblb" transform="rotate(-90 476 197.0)">Peak RSS (MiB, log)</text>
-  <circle cx="588.8" cy="319.5" r="4.5" fill="#0d9488" stroke="#fff" stroke-width="1"/>
-  <text x="594.8" y="331.5" class="small" style="fill:#0d9488;font-weight:600">NA --wfa (1%,1t)</text>
-  <circle cx="660.5" cy="313.6" r="4.5" fill="#2563eb" stroke="#fff" stroke-width="1"/>
-  <text x="667.5" y="317.6" class="small" style="fill:#2563eb;font-weight:600">NA --lin (1%,1t)</text>
-  <rect x="741.1" y="304.1" width="8" height="8" fill="#2563eb" stroke="#fff" stroke-width="1"/>
-  <text x="752.1" y="312.1" class="small" style="fill:#2563eb;font-weight:600">NA --lin (10%,1t)</text>
-  <rect x="674.1" y="295.8" width="8" height="8" fill="#7c3aed" stroke="#fff" stroke-width="1"/>
-  <text x="685.1" y="293.8" class="small" style="fill:#7c3aed;font-weight:600">NA --lin (10%,8t)</text>
-  <polygon points="551.6,299.5 547.1,308.5 556.1,308.5" fill="#d97706" stroke="#fff" stroke-width="0.8"/>
-  <text x="557.6" y="299.5" class="small" style="fill:#d97706;font-weight:600">WFA2 BiWFA (1%)</text>
-  <polygon points="746.6,261.5 742.1,270.5 751.1,270.5" fill="#d97706" stroke="#fff" stroke-width="0.8"/>
-  <text x="714.6" y="257.5" class="small" style="fill:#d97706;font-weight:600">WFA2 BiWFA (10%)</text>
-  <polygon points="617.9,203.2 613.4,212.2 622.4,212.2" fill="#dc2626" stroke="#fff" stroke-width="0.8"/>
-  <text x="623.9" y="211.2" class="small" style="fill:#dc2626;font-weight:600">WFA2 high (1%)</text>
-  <polygon points="836.8,68.1 832.3,77.1 841.3,77.1" fill="#dc2626" stroke="#fff" stroke-width="0.8"/>
-  <text x="750.8" y="87.1" class="small" style="fill:#dc2626;font-weight:600">WFA2 high (10%)</text>
-  <polygon points="797.9,105.7 802.9,110.7 797.9,115.7 792.9,110.7" fill="#64748b" stroke="#fff" stroke-width="0.8"/>
-  <text x="755.9" y="126.7" class="small" style="fill:#64748b;font-weight:600">ksw2 (1% &amp; 10%)</text>
-  <rect x="707.3" y="111.2" width="8" height="8" fill="#1b365d" stroke="#fff" stroke-width="1"/>
-  <text x="627.3" y="119.2" class="small" style="fill:#1b365d;font-weight:600">NA full (10%,8t)</text>
+  <text x="480" y="36" class="sub">Bottom-left is faster and smaller (5-seed medians; 1% circles, 10% squares)</text>
+  <line x1="524.0" y1="58" x2="524.0" y2="340" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="524.0" y="354" text-anchor="middle" class="tick">10</text>
+  <line x1="641.1" y1="58" x2="641.1" y2="340" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="641.1" y="354" text-anchor="middle" class="tick">100</text>
+  <line x1="758.2" y1="58" x2="758.2" y2="340" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="758.2" y="354" text-anchor="middle" class="tick">1000</text>
+  <line x1="524" y1="318.3" x2="864" y2="318.3" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="518" y="321.3" text-anchor="end" class="tick">4</text>
+  <line x1="524" y1="274.8" x2="864" y2="274.8" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="518" y="277.8" text-anchor="end" class="tick">16</text>
+  <line x1="524" y1="231.3" x2="864" y2="231.3" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="518" y="234.3" text-anchor="end" class="tick">64</text>
+  <line x1="524" y1="187.8" x2="864" y2="187.8" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="518" y="190.8" text-anchor="end" class="tick">256</text>
+  <line x1="524" y1="144.3" x2="864" y2="144.3" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="518" y="147.3" text-anchor="end" class="tick">1 GiB</text>
+  <line x1="524" y1="100.8" x2="864" y2="100.8" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="518" y="103.8" text-anchor="end" class="tick">4 GiB</text>
+  <rect x="524" y="58" width="340" height="282" fill="none" stroke="#94a3b8" stroke-width="1"/>
+  <text x="694.0" y="370" text-anchor="middle" class="lblb">Median wall time (ms, log scale)</text>
+  <text x="478" y="199.0" text-anchor="middle" class="lblb" transform="rotate(-90 478 199.0)">Peak RSS (MiB, log)</text>
+  <line x1="555.6" y1="308.3" x2="592.8" y2="323.3" stroke="#0d9488" stroke-width="1.2" stroke-dasharray="3,2"/>
+  <line x1="682.1" y1="303.5" x2="749.1" y2="311.9" stroke="#7c3aed" stroke-width="1.2" stroke-dasharray="3,2"/>
+  <circle cx="592.8" cy="323.3" r="4.3" fill="#0d9488" stroke="#fff" stroke-width="1"/>
+  <text x="598.8" y="335.3" class="small" style="fill:#0d9488;font-weight:600">Nucleics --wfa (1%,1t)</text>
+  <circle cx="664.5" cy="317.5" r="4.3" fill="#2563eb" stroke="#fff" stroke-width="1"/>
+  <text x="671.5" y="329.5" class="small" style="fill:#2563eb;font-weight:600">Nucleics --lin (1%,1t)</text>
+  <rect x="745.3" y="308.1" width="7.6" height="7.6" fill="#2563eb" stroke="#fff" stroke-width="1"/>
+  <text x="756.1" y="315.9" class="small" style="fill:#2563eb;font-weight:600">Nucleics --lin (10%,1t)</text>
+  <rect x="678.3" y="299.7" width="7.6" height="7.6" fill="#7c3aed" stroke="#fff" stroke-width="1"/>
+  <text x="689.1" y="297.5" class="small" style="fill:#7c3aed;font-weight:600">Nucleics --lin (10%,8t)</text>
+  <circle cx="555.6" cy="308.3" r="4.3" fill="#d97706" stroke="#fff" stroke-width="1"/>
+  <text x="561.6" y="302.3" class="small" style="fill:#d97706;font-weight:600">WFA2 BiWFA (1%,1t)</text>
+  <rect x="746.8" y="266.2" width="7.6" height="7.6" fill="#d97706" stroke="#fff" stroke-width="1"/>
+  <text x="712.6" y="261.0" class="small" style="fill:#d97706;font-weight:600">WFA2 BiWFA (10%,1t)</text>
+  <circle cx="621.9" cy="211.3" r="4.3" fill="#dc2626" stroke="#fff" stroke-width="1"/>
+  <text x="627.9" y="214.3" class="small" style="fill:#dc2626;font-weight:600">WFA2 high (1%,1t)</text>
+  <rect x="837.0" y="71.5" width="7.6" height="7.6" fill="#dc2626" stroke="#fff" stroke-width="1"/>
+  <text x="748.8" y="89.3" class="small" style="fill:#dc2626;font-weight:600">WFA2 high (10%,1t)</text>
+  <circle cx="802.1" cy="113.1" r="4.3" fill="#64748b" stroke="#fff" stroke-width="1"/>
+  <rect x="798.1" y="109.3" width="7.6" height="7.6" fill="#64748b" stroke="#fff" stroke-width="1"/>
+  <text x="749.9" y="129.1" class="small" style="fill:#64748b;font-weight:600">ksw2 (1% &amp; 10%,1t)</text>
+  <rect x="711.5" y="113.8" width="7.6" height="7.6" fill="#1b365d" stroke="#fff" stroke-width="1"/>
+  <text x="615.3" y="121.6" class="small" style="fill:#1b365d;font-weight:600">Nucleics full (10%,8t)</text>
 </svg>

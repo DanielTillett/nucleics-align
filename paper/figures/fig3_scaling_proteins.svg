@@ -1,10 +1,10 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 380" width="880" height="380">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 385" width="880" height="385">
   <defs>
     <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
       <path d="M 0 1.5 L 10 5 L 0 8.5 z" fill="#64748b"/>
     </marker>
   </defs>
-  <rect width="880" height="380" fill="#ffffff"/>
+  <rect width="880" height="385" fill="#ffffff"/>
   <style>
     text { font-family: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; fill: #0f172a; }
     .title { font-size: 13px; font-weight: 700; }
@@ -15,134 +15,148 @@
     .small { font-size: 8.8px; fill: #475569; }
   </style>
 
-  <text x="16" y="22" class="title">(a) Scaling from 5 kb to 1 Mb (v1.3.0, Table 3)</text>
+  <text x="16" y="22" class="title">(a) Scaling from 5 kb to 1 Mb (Table 3)</text>
   <text x="16" y="36" class="sub">Wall time vs sequence length (log-log; 1% solid, 0.1% dashed)</text>
-  <line x1="75.8" y1="58" x2="75.8" y2="326" stroke="#e2e8f0" stroke-width="1"/>
-  <text x="75.8" y="340" text-anchor="middle" class="tick">5k</text>
-  <line x1="161.6" y1="58" x2="161.6" y2="326" stroke="#e2e8f0" stroke-width="1"/>
-  <text x="161.6" y="340" text-anchor="middle" class="tick">20k</text>
-  <line x1="218.3" y1="58" x2="218.3" y2="326" stroke="#e2e8f0" stroke-width="1"/>
-  <text x="218.3" y="340" text-anchor="middle" class="tick">50k</text>
-  <line x1="261.2" y1="58" x2="261.2" y2="326" stroke="#e2e8f0" stroke-width="1"/>
-  <text x="261.2" y="340" text-anchor="middle" class="tick">100k</text>
-  <line x1="329.2" y1="58" x2="329.2" y2="326" stroke="#e2e8f0" stroke-width="1"/>
-  <text x="329.2" y="340" text-anchor="middle" class="tick">300k</text>
-  <line x1="403.8" y1="58" x2="403.8" y2="326" stroke="#e2e8f0" stroke-width="1"/>
-  <text x="403.8" y="340" text-anchor="middle" class="tick">1M</text>
-  <line x1="62" y1="277.7" x2="420" y2="277.7" stroke="#e2e8f0" stroke-width="1"/>
+  <line x1="76.0" y1="58" x2="76.0" y2="326" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="76.0" y="340" text-anchor="middle" class="tick">5k</text>
+  <line x1="162.7" y1="58" x2="162.7" y2="326" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="162.7" y="340" text-anchor="middle" class="tick">20k</text>
+  <line x1="220.1" y1="58" x2="220.1" y2="326" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="220.1" y="340" text-anchor="middle" class="tick">50k</text>
+  <line x1="263.5" y1="58" x2="263.5" y2="326" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="263.5" y="340" text-anchor="middle" class="tick">100k</text>
+  <line x1="332.2" y1="58" x2="332.2" y2="326" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="332.2" y="340" text-anchor="middle" class="tick">300k</text>
+  <line x1="407.6" y1="58" x2="407.6" y2="326" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="407.6" y="340" text-anchor="middle" class="tick">1M</text>
+  <line x1="62" y1="277.7" x2="424" y2="277.7" stroke="#e2e8f0" stroke-width="1"/>
   <text x="56" y="280.7" text-anchor="end" class="tick">10 ms</text>
-  <line x1="62" y1="208.5" x2="420" y2="208.5" stroke="#e2e8f0" stroke-width="1"/>
+  <line x1="62" y1="208.5" x2="424" y2="208.5" stroke="#e2e8f0" stroke-width="1"/>
   <text x="56" y="211.5" text-anchor="end" class="tick">100 ms</text>
-  <line x1="62" y1="139.3" x2="420" y2="139.3" stroke="#e2e8f0" stroke-width="1"/>
+  <line x1="62" y1="139.3" x2="424" y2="139.3" stroke="#e2e8f0" stroke-width="1"/>
   <text x="56" y="142.3" text-anchor="end" class="tick">1 s</text>
-  <line x1="62" y1="70.2" x2="420" y2="70.2" stroke="#e2e8f0" stroke-width="1"/>
+  <line x1="62" y1="70.2" x2="424" y2="70.2" stroke="#e2e8f0" stroke-width="1"/>
   <text x="56" y="73.2" text-anchor="end" class="tick">10 s</text>
-  <rect x="62" y="58" width="358" height="268" fill="none" stroke="#94a3b8" stroke-width="1"/>
-  <text x="241.0" y="356" text-anchor="middle" class="lblb">Sequence length (bp, log scale)</text>
+  <line x1="241.8" y1="58" x2="241.8" y2="326" stroke="#94a3b8" stroke-width="1" stroke-dasharray="3,3"/>
+  <text x="237.8" y="320" text-anchor="end" class="small">min of 3</text>
+  <text x="245.8" y="320" text-anchor="start" class="small">1 run</text>
+  <rect x="62" y="58" width="362" height="268" fill="none" stroke="#94a3b8" stroke-width="1"/>
+  <text x="243.0" y="356" text-anchor="middle" class="lblb">Sequence length (bp, log scale)</text>
   <text x="16" y="192.0" text-anchor="middle" class="lblb" transform="rotate(-90 16 192.0)">Wall time (log)</text>
-  <path d="M 75.8 291.5 L 161.6 249.4 L 218.3 201.6 L 261.2 161.6 L 329.2 140.3 L 403.8 72.2" fill="none" stroke="#1b365d" stroke-width="2"/>
-  <circle cx="75.8" cy="291.5" r="3.2" fill="#1b365d" stroke="#fff" stroke-width="0.8"/>
-  <circle cx="161.6" cy="249.4" r="3.2" fill="#1b365d" stroke="#fff" stroke-width="0.8"/>
-  <circle cx="218.3" cy="201.6" r="3.2" fill="#1b365d" stroke="#fff" stroke-width="0.8"/>
-  <circle cx="261.2" cy="161.6" r="3.2" fill="#1b365d" stroke="#fff" stroke-width="0.8"/>
-  <circle cx="329.2" cy="140.3" r="3.2" fill="#1b365d" stroke="#fff" stroke-width="0.8"/>
-  <circle cx="403.8" cy="72.2" r="3.2" fill="#1b365d" stroke="#fff" stroke-width="0.8"/>
-  <path d="M 75.8 287.9 L 161.6 244.6 L 218.3 206.9 L 261.2 175.0 L 329.2 134.6 L 403.8 79.7" fill="none" stroke="#2563eb" stroke-width="2"/>
-  <circle cx="75.8" cy="287.9" r="3.2" fill="#2563eb" stroke="#fff" stroke-width="0.8"/>
-  <circle cx="161.6" cy="244.6" r="3.2" fill="#2563eb" stroke="#fff" stroke-width="0.8"/>
-  <circle cx="218.3" cy="206.9" r="3.2" fill="#2563eb" stroke="#fff" stroke-width="0.8"/>
-  <circle cx="261.2" cy="175.0" r="3.2" fill="#2563eb" stroke="#fff" stroke-width="0.8"/>
-  <circle cx="329.2" cy="134.6" r="3.2" fill="#2563eb" stroke="#fff" stroke-width="0.8"/>
-  <circle cx="403.8" cy="79.7" r="3.2" fill="#2563eb" stroke="#fff" stroke-width="0.8"/>
-  <path d="M 75.8 315.9 L 161.6 279.2 L 218.3 236.5 L 261.2 199.2" fill="none" stroke="#0d9488" stroke-width="2"/>
-  <circle cx="75.8" cy="315.9" r="3.2" fill="#0d9488" stroke="#fff" stroke-width="0.8"/>
-  <circle cx="161.6" cy="279.2" r="3.2" fill="#0d9488" stroke="#fff" stroke-width="0.8"/>
-  <circle cx="218.3" cy="236.5" r="3.2" fill="#0d9488" stroke="#fff" stroke-width="0.8"/>
-  <circle cx="261.2" cy="199.2" r="3.2" fill="#0d9488" stroke="#fff" stroke-width="0.8"/>
-  <path d="M 261.2 278.0 L 329.2 251.2 L 403.8 194.3" fill="none" stroke="#0d9488" stroke-width="2" stroke-dasharray="5,3"/>
-  <circle cx="261.2" cy="278.0" r="3.2" fill="#0d9488" stroke="#fff" stroke-width="0.8"/>
-  <circle cx="329.2" cy="251.2" r="3.2" fill="#0d9488" stroke="#fff" stroke-width="0.8"/>
-  <circle cx="403.8" cy="194.3" r="3.2" fill="#0d9488" stroke="#fff" stroke-width="0.8"/>
-  <path d="M 261.2 224.9 L 329.2 167.6 L 403.8 97.6" fill="none" stroke="#d97706" stroke-width="2"/>
-  <circle cx="261.2" cy="224.9" r="3.2" fill="#d97706" stroke="#fff" stroke-width="0.8"/>
-  <circle cx="329.2" cy="167.6" r="3.2" fill="#d97706" stroke="#fff" stroke-width="0.8"/>
-  <circle cx="403.8" cy="97.6" r="3.2" fill="#d97706" stroke="#fff" stroke-width="0.8"/>
-  <path d="M 261.2 288.8 L 329.2 271.9 L 403.8 216.7" fill="none" stroke="#d97706" stroke-width="2" stroke-dasharray="5,3"/>
-  <circle cx="261.2" cy="288.8" r="3.2" fill="#d97706" stroke="#fff" stroke-width="0.8"/>
-  <circle cx="329.2" cy="271.9" r="3.2" fill="#d97706" stroke="#fff" stroke-width="0.8"/>
-  <circle cx="403.8" cy="216.7" r="3.2" fill="#d97706" stroke="#fff" stroke-width="0.8"/>
-  <rect x="66" y="64" width="142" height="90" rx="4" fill="#ffffff" fill-opacity="0.92" stroke="#e2e8f0"/>
+  <path d="M 76.0 291.5 L 162.7 249.4 L 220.1 201.6 L 263.5 161.6 L 332.2 140.3 L 407.6 72.2" fill="none" stroke="#1b365d" stroke-width="2"/>
+  <circle cx="76.0" cy="291.5" r="3.2" fill="#1b365d" stroke="#fff" stroke-width="0.8"/>
+  <circle cx="162.7" cy="249.4" r="3.2" fill="#1b365d" stroke="#fff" stroke-width="0.8"/>
+  <circle cx="220.1" cy="201.6" r="3.2" fill="#1b365d" stroke="#fff" stroke-width="0.8"/>
+  <circle cx="263.5" cy="161.6" r="3.2" fill="#1b365d" stroke="#fff" stroke-width="0.8"/>
+  <circle cx="332.2" cy="140.3" r="3.2" fill="#1b365d" stroke="#fff" stroke-width="0.8"/>
+  <circle cx="407.6" cy="72.2" r="3.2" fill="#1b365d" stroke="#fff" stroke-width="0.8"/>
+  <path d="M 76.0 287.9 L 162.7 244.6 L 220.1 206.9 L 263.5 175.0 L 332.2 134.6 L 407.6 79.7" fill="none" stroke="#2563eb" stroke-width="2"/>
+  <circle cx="76.0" cy="287.9" r="3.2" fill="#2563eb" stroke="#fff" stroke-width="0.8"/>
+  <circle cx="162.7" cy="244.6" r="3.2" fill="#2563eb" stroke="#fff" stroke-width="0.8"/>
+  <circle cx="220.1" cy="206.9" r="3.2" fill="#2563eb" stroke="#fff" stroke-width="0.8"/>
+  <circle cx="263.5" cy="175.0" r="3.2" fill="#2563eb" stroke="#fff" stroke-width="0.8"/>
+  <circle cx="332.2" cy="134.6" r="3.2" fill="#2563eb" stroke="#fff" stroke-width="0.8"/>
+  <circle cx="407.6" cy="79.7" r="3.2" fill="#2563eb" stroke="#fff" stroke-width="0.8"/>
+  <path d="M 76.0 315.9 L 162.7 279.2 L 220.1 236.5 L 263.5 199.2" fill="none" stroke="#0d9488" stroke-width="2"/>
+  <circle cx="76.0" cy="315.9" r="3.2" fill="#0d9488" stroke="#fff" stroke-width="0.8"/>
+  <circle cx="162.7" cy="279.2" r="3.2" fill="#0d9488" stroke="#fff" stroke-width="0.8"/>
+  <circle cx="220.1" cy="236.5" r="3.2" fill="#0d9488" stroke="#fff" stroke-width="0.8"/>
+  <circle cx="263.5" cy="199.2" r="3.2" fill="#0d9488" stroke="#fff" stroke-width="0.8"/>
+  <path d="M 263.5 278.0 L 332.2 251.2 L 407.6 194.3" fill="none" stroke="#0d9488" stroke-width="2" stroke-dasharray="5,3"/>
+  <circle cx="263.5" cy="278.0" r="3.2" fill="#0d9488" stroke="#fff" stroke-width="0.8"/>
+  <circle cx="332.2" cy="251.2" r="3.2" fill="#0d9488" stroke="#fff" stroke-width="0.8"/>
+  <circle cx="407.6" cy="194.3" r="3.2" fill="#0d9488" stroke="#fff" stroke-width="0.8"/>
+  <path d="M 263.5 224.9 L 332.2 167.6 L 407.6 97.6" fill="none" stroke="#d97706" stroke-width="2"/>
+  <circle cx="263.5" cy="224.9" r="3.2" fill="#d97706" stroke="#fff" stroke-width="0.8"/>
+  <circle cx="332.2" cy="167.6" r="3.2" fill="#d97706" stroke="#fff" stroke-width="0.8"/>
+  <circle cx="407.6" cy="97.6" r="3.2" fill="#d97706" stroke="#fff" stroke-width="0.8"/>
+  <path d="M 263.5 288.8 L 332.2 271.9 L 407.6 216.7" fill="none" stroke="#d97706" stroke-width="2" stroke-dasharray="5,3"/>
+  <circle cx="263.5" cy="288.8" r="3.2" fill="#d97706" stroke="#fff" stroke-width="0.8"/>
+  <circle cx="332.2" cy="271.9" r="3.2" fill="#d97706" stroke="#fff" stroke-width="0.8"/>
+  <circle cx="407.6" cy="216.7" r="3.2" fill="#d97706" stroke="#fff" stroke-width="0.8"/>
+  <text x="269.5" y="196.2" text-anchor="start" class="small" style="fill:#0d9488;font-weight:600">† fallback (&gt;=300k)</text>
+  <rect x="66" y="64" width="160" height="90" rx="4" fill="#ffffff" fill-opacity="0.93" stroke="#e2e8f0"/>
   <line x1="70" y1="76" x2="88" y2="76" stroke="#1b365d" stroke-width="2"/>
-  <text x="93" y="79" class="small">full 1% (8t)</text>
+  <text x="93" y="79" class="small">Nucleics full 1% (8t)</text>
   <line x1="70" y1="90" x2="88" y2="90" stroke="#2563eb" stroke-width="2"/>
-  <text x="93" y="93" class="small">--linear 1% (8t)</text>
+  <text x="93" y="93" class="small">Nucleics --linear 1% (8t)</text>
   <line x1="70" y1="104" x2="88" y2="104" stroke="#0d9488" stroke-width="2"/>
-  <text x="93" y="107" class="small">--wfa 1% (1t)</text>
+  <text x="93" y="107" class="small">Nucleics --wfa 1% (1t)</text>
   <line x1="70" y1="118" x2="88" y2="118" stroke="#0d9488" stroke-width="2" stroke-dasharray="5,3"/>
-  <text x="93" y="121" class="small">--wfa 0.1% (1t)</text>
+  <text x="93" y="121" class="small">Nucleics --wfa 0.1% (1t)</text>
   <line x1="70" y1="132" x2="88" y2="132" stroke="#d97706" stroke-width="2"/>
   <text x="93" y="135" class="small">WFA2 BiWFA 1% (1t)</text>
   <line x1="70" y1="146" x2="88" y2="146" stroke="#d97706" stroke-width="2" stroke-dasharray="5,3"/>
   <text x="93" y="149" class="small">WFA2 BiWFA 0.1% (1t)</text>
-  <text x="465" y="22" class="title">(b) Real protein benchmark (BLOSUM62, Table 5)</text>
-  <text x="465" y="36" class="sub">Median wall time (ms, log scale); 5 NCBI RefSeq orthologues</text>
-  <line x1="505" y1="326.0" x2="860" y2="326.0" stroke="#e2e8f0" stroke-width="1"/>
-  <text x="499" y="329.0" text-anchor="end" class="tick">1</text>
-  <line x1="505" y1="278.7" x2="860" y2="278.7" stroke="#e2e8f0" stroke-width="1"/>
-  <text x="499" y="281.7" text-anchor="end" class="tick">3</text>
-  <line x1="505" y1="226.9" x2="860" y2="226.9" stroke="#e2e8f0" stroke-width="1"/>
-  <text x="499" y="229.9" text-anchor="end" class="tick">10</text>
-  <line x1="505" y1="179.7" x2="860" y2="179.7" stroke="#e2e8f0" stroke-width="1"/>
-  <text x="499" y="182.7" text-anchor="end" class="tick">30</text>
-  <line x1="505" y1="127.9" x2="860" y2="127.9" stroke="#e2e8f0" stroke-width="1"/>
-  <text x="499" y="130.9" text-anchor="end" class="tick">100</text>
-  <line x1="505" y1="80.6" x2="860" y2="80.6" stroke="#e2e8f0" stroke-width="1"/>
-  <text x="499" y="83.6" text-anchor="end" class="tick">300</text>
-  <line x1="505" y1="326" x2="860" y2="326" stroke="#94a3b8" stroke-width="1"/>
-  <text x="468" y="200.0" text-anchor="middle" class="lblb" transform="rotate(-90 468 200.0)">Wall time (ms, log)</text>
-  <rect x="513.0" y="251.9" width="10" height="74.1" rx="1.5" fill="#64748b"/>
-  <rect x="524.0" y="296.2" width="10" height="29.8" rx="1.5" fill="#d97706"/>
-  <rect x="535.0" y="294.1" width="10" height="31.9" rx="1.5" fill="#1b365d"/>
-  <rect x="546.0" y="296.2" width="10" height="29.8" rx="1.5" fill="#2563eb"/>
-  <rect x="557.0" y="294.1" width="10" height="31.9" rx="1.5" fill="#0d9488"/>
-  <text x="540.5" y="340" text-anchor="middle" class="small">TP53</text>
-  <text x="540.5" y="351" text-anchor="middle" class="small">(393 aa)</text>
-  <rect x="584.0" y="134.4" width="10" height="191.6" rx="1.5" fill="#64748b"/>
-  <rect x="595.0" y="247.5" width="10" height="78.5" rx="1.5" fill="#d97706"/>
-  <rect x="606.0" y="248.9" width="10" height="77.1" rx="1.5" fill="#1b365d"/>
-  <rect x="617.0" y="249.6" width="10" height="76.4" rx="1.5" fill="#2563eb"/>
-  <rect x="628.0" y="249.6" width="10" height="76.4" rx="1.5" fill="#0d9488"/>
-  <text x="611.5" y="340" text-anchor="middle" class="small">POLR2A</text>
-  <text x="611.5" y="351" text-anchor="middle" class="small">(1,970 aa)</text>
-  <rect x="655.0" y="134.5" width="10" height="191.5" rx="1.5" fill="#64748b"/>
-  <rect x="666.0" y="242.9" width="10" height="83.1" rx="1.5" fill="#d97706"/>
-  <rect x="677.0" y="247.5" width="10" height="78.5" rx="1.5" fill="#1b365d"/>
-  <rect x="688.0" y="250.4" width="10" height="75.6" rx="1.5" fill="#2563eb"/>
-  <rect x="699.0" y="249.6" width="10" height="76.4" rx="1.5" fill="#0d9488"/>
-  <text x="682.5" y="340" text-anchor="middle" class="small">BRCA1</text>
-  <text x="682.5" y="351" text-anchor="middle" class="small">(1,863 aa)</text>
-  <rect x="726.0" y="109.9" width="10" height="216.1" rx="1.5" fill="#64748b"/>
-  <rect x="737.0" y="227.4" width="10" height="98.6" rx="1.5" fill="#d97706"/>
-  <rect x="748.0" y="229.2" width="10" height="96.8" rx="1.5" fill="#1b365d"/>
-  <rect x="759.0" y="235.0" width="10" height="91.0" rx="1.5" fill="#2563eb"/>
-  <rect x="770.0" y="245.5" width="10" height="80.5" rx="1.5" fill="#0d9488"/>
-  <text x="753.5" y="340" text-anchor="middle" class="small">MTOR</text>
-  <text x="753.5" y="351" text-anchor="middle" class="small">(2,549 aa)</text>
-  <rect x="797.0" y="92.7" width="10" height="233.3" rx="1.5" fill="#64748b"/>
-  <rect x="808.0" y="215.3" width="10" height="110.7" rx="1.5" fill="#d97706"/>
-  <rect x="819.0" y="217.7" width="10" height="108.3" rx="1.5" fill="#1b365d"/>
-  <rect x="830.0" y="225.3" width="10" height="100.7" rx="1.5" fill="#2563eb"/>
-  <rect x="841.0" y="236.0" width="10" height="90.0" rx="1.5" fill="#0d9488"/>
-  <text x="824.5" y="340" text-anchor="middle" class="small">ATM</text>
-  <text x="824.5" y="351" text-anchor="middle" class="small">(3,056 aa)</text>
-  <rect x="505" y="45" width="9" height="7" rx="1.5" fill="#64748b"/>
-  <text x="517" y="52" class="small">seq-align (1t)</text>
-  <rect x="621" y="45" width="9" height="7" rx="1.5" fill="#d97706"/>
-  <text x="633" y="52" class="small">parasail scan (1t)</text>
-  <rect x="737" y="45" width="9" height="7" rx="1.5" fill="#1b365d"/>
-  <text x="749" y="52" class="small">NA full (1t)</text>
-  <rect x="505" y="57" width="9" height="7" rx="1.5" fill="#2563eb"/>
-  <text x="517" y="64" class="small">NA --lin (1t)</text>
-  <rect x="621" y="57" width="9" height="7" rx="1.5" fill="#0d9488"/>
-  <text x="633" y="64" class="small">NA --lin (8t)</text>
+  <text x="468" y="22" class="title">(b) Real protein benchmark (BLOSUM62, Table 5)</text>
+  <text x="468" y="36" class="sub">Median wall time (ms, log scale); 5 NCBI RefSeq orthologues</text>
+  <line x1="508" y1="303.3" x2="864" y2="303.3" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="502" y="306.3" text-anchor="end" class="tick">2</text>
+  <line x1="508" y1="262.6" x2="864" y2="262.6" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="502" y="265.6" text-anchor="end" class="tick">5</text>
+  <line x1="508" y1="231.9" x2="864" y2="231.9" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="502" y="234.9" text-anchor="end" class="tick">10</text>
+  <line x1="508" y1="183.1" x2="864" y2="183.1" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="502" y="186.1" text-anchor="end" class="tick">30</text>
+  <line x1="508" y1="129.6" x2="864" y2="129.6" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="502" y="132.6" text-anchor="end" class="tick">100</text>
+  <line x1="508" y1="80.8" x2="864" y2="80.8" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="502" y="83.8" text-anchor="end" class="tick">300</text>
+  <rect x="508" y="74" width="356" height="252" fill="none" stroke="#94a3b8" stroke-width="1"/>
+  <text x="470" y="200.0" text-anchor="middle" class="lblb" transform="rotate(-90 470 200.0)">Median wall time (ms, log)</text>
+  <line x1="543.6" y1="74" x2="543.6" y2="326" stroke="#f1f5f9" stroke-width="1"/>
+  <line x1="543.6" y1="257.6" x2="543.6" y2="303.3" stroke="#cbd5e1" stroke-width="1.2"/>
+  <polygon points="529.6,253.4 533.8,257.6 529.6,261.8 525.4,257.6" fill="#64748b" stroke="#fff" stroke-width="0.8"/>
+  <polygon points="536.6,298.8 532.4,307.1 540.8,307.1" fill="#d97706" stroke="#fff" stroke-width="0.8"/>
+  <circle cx="543.6" cy="301.2" r="4.0" fill="#1b365d" stroke="#fff" stroke-width="0.8"/>
+  <circle cx="550.6" cy="303.3" r="4.0" fill="#2563eb" stroke="#fff" stroke-width="0.8"/>
+  <circle cx="557.6" cy="301.2" r="4.0" fill="#0d9488" stroke="#fff" stroke-width="0.8"/>
+  <text x="543.6" y="340" text-anchor="middle" class="small">TP53</text>
+  <text x="543.6" y="351" text-anchor="middle" class="small">393/390 aa</text>
+  <line x1="614.8" y1="74" x2="614.8" y2="326" stroke="#f1f5f9" stroke-width="1"/>
+  <line x1="614.8" y1="136.4" x2="614.8" y2="255.3" stroke="#cbd5e1" stroke-width="1.2"/>
+  <polygon points="600.8,132.2 605.0,136.4 600.8,140.6 596.6,136.4" fill="#64748b" stroke="#fff" stroke-width="0.8"/>
+  <polygon points="607.8,248.6 603.6,256.9 612.0,256.9" fill="#d97706" stroke="#fff" stroke-width="0.8"/>
+  <circle cx="614.8" cy="254.5" r="4.0" fill="#1b365d" stroke="#fff" stroke-width="0.8"/>
+  <circle cx="621.8" cy="255.3" r="4.0" fill="#2563eb" stroke="#fff" stroke-width="0.8"/>
+  <circle cx="628.8" cy="255.3" r="4.0" fill="#0d9488" stroke="#fff" stroke-width="0.8"/>
+  <text x="614.8" y="340" text-anchor="middle" class="small">POLR2A</text>
+  <text x="614.8" y="351" text-anchor="middle" class="small">1,970/1,733</text>
+  <line x1="686.0" y1="74" x2="686.0" y2="326" stroke="#f1f5f9" stroke-width="1"/>
+  <line x1="686.0" y1="136.4" x2="686.0" y2="256.0" stroke="#cbd5e1" stroke-width="1.2"/>
+  <polygon points="672.0,132.2 676.2,136.4 672.0,140.6 667.8,136.4" fill="#64748b" stroke="#fff" stroke-width="0.8"/>
+  <polygon points="679.0,243.8 674.8,252.1 683.2,252.1" fill="#d97706" stroke="#fff" stroke-width="0.8"/>
+  <circle cx="686.0" cy="253.1" r="4.0" fill="#1b365d" stroke="#fff" stroke-width="0.8"/>
+  <circle cx="693.0" cy="256.0" r="4.0" fill="#2563eb" stroke="#fff" stroke-width="0.8"/>
+  <circle cx="700.0" cy="255.3" r="4.0" fill="#0d9488" stroke="#fff" stroke-width="0.8"/>
+  <text x="686.0" y="340" text-anchor="middle" class="small">BRCA1</text>
+  <text x="686.0" y="351" text-anchor="middle" class="small">1,863/1,812</text>
+  <line x1="757.2" y1="74" x2="757.2" y2="326" stroke="#f1f5f9" stroke-width="1"/>
+  <line x1="757.2" y1="111.0" x2="757.2" y2="251.0" stroke="#cbd5e1" stroke-width="1.2"/>
+  <polygon points="743.2,106.8 747.4,111.0 743.2,115.2 739.0,111.0" fill="#64748b" stroke="#fff" stroke-width="0.8"/>
+  <polygon points="750.2,227.8 746.0,236.1 754.4,236.1" fill="#d97706" stroke="#fff" stroke-width="0.8"/>
+  <circle cx="757.2" cy="234.1" r="4.0" fill="#1b365d" stroke="#fff" stroke-width="0.8"/>
+  <circle cx="764.2" cy="240.1" r="4.0" fill="#2563eb" stroke="#fff" stroke-width="0.8"/>
+  <circle cx="771.2" cy="251.0" r="4.0" fill="#0d9488" stroke="#fff" stroke-width="0.8"/>
+  <text x="757.2" y="340" text-anchor="middle" class="small">MTOR</text>
+  <text x="757.2" y="351" text-anchor="middle" class="small">2,549/2,549</text>
+  <line x1="828.4" y1="74" x2="828.4" y2="326" stroke="#f1f5f9" stroke-width="1"/>
+  <line x1="828.4" y1="93.3" x2="828.4" y2="241.2" stroke="#cbd5e1" stroke-width="1.2"/>
+  <polygon points="814.4,89.1 818.6,93.3 814.4,97.5 810.2,93.3" fill="#64748b" stroke="#fff" stroke-width="0.8"/>
+  <polygon points="821.4,215.4 817.2,223.7 825.6,223.7" fill="#d97706" stroke="#fff" stroke-width="0.8"/>
+  <circle cx="828.4" cy="222.3" r="4.0" fill="#1b365d" stroke="#fff" stroke-width="0.8"/>
+  <circle cx="835.4" cy="230.1" r="4.0" fill="#2563eb" stroke="#fff" stroke-width="0.8"/>
+  <circle cx="842.4" cy="241.2" r="4.0" fill="#0d9488" stroke="#fff" stroke-width="0.8"/>
+  <text x="828.4" y="340" text-anchor="middle" class="small">ATM</text>
+  <text x="828.4" y="351" text-anchor="middle" class="small">3,056/3,066</text>
+  <polygon points="512,45 516,49 512,53 508,49" fill="#64748b"/>
+  <text x="520" y="52" class="small">seq-align (1t)</text>
+  <polygon points="632,45 628,53 636,53" fill="#d97706"/>
+  <text x="640" y="52" class="small">parasail scan (1t)</text>
+  <circle cx="752" cy="49" r="3.6" fill="#1b365d"/>
+  <text x="760" y="52" class="small">Nucleics full (1t)</text>
+  <circle cx="512" cy="61" r="3.6" fill="#2563eb"/>
+  <text x="520" y="64" class="small">Nucleics --lin (1t)</text>
+  <circle cx="632" cy="61" r="3.6" fill="#0d9488"/>
+  <text x="640" y="64" class="small">Nucleics --lin (8t)</text>
 </svg>

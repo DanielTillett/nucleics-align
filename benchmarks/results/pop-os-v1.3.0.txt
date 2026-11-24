@@ -50,9 +50,7 @@ Human vs Mouse BRCA1 (BLOSUM62)       1863    1812 linear           6.44       0
 Human vs Mouse BRCA1 (BLOSUM62)       1863    1812 scoreonly        4.23       0.0      2.4       4827
 Human vs Mouse BRCA1 (BLOSUM62)       1863    1812 local1           7.93       0.0      7.1       4844
   IDENTITY: 55.76% (matches=1046, mismatches=753, gap_cols=77)
-=== ABLATION ===
-20000: No such file or directory
-=== COMPARE ===
+=== COMPARE (includes fresh-process ablation below) ===
 # host: Linux pop-os 7.2.15-76070215-generic #202611011338~1794956660~24.04~3bf1542 SMP PREEMPT_DYNAMIC Tue N x86_64 x86_64 x86_64 GNU/Linux
 # cpu:  AMD Ryzen 7 5700G with Radeon Graphics
 # governor: powersave

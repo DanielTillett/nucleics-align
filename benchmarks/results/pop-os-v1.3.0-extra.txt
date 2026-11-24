@@ -1,0 +1,131 @@
+# host: Linux pop-os 7.2.15-76070215-generic #202611011338~1794956660~24.04~3bf1542 SMP PREEMPT_DYNAMIC Tue N x86_64 x86_64 x86_64 GNU/Linux
+# cpu:  AMD Ryzen 7 5700G with Radeon Graphics
+# governor: powersave
+# smt:  1
+# gcc:  gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0
+# nucleics-align: 6e84653
+# nw_sha256: f948a01fc4864eafdcbb9487991a2bacf20a6e384605f4fc3f12835b5365372b
+# sw_sha256: 97141a6b6ccf1ab38ca4bcde570ce9b6350f29a855647e66d49b4fdf287b543a
+
+=== A. IN-PROCESS PROTEIN BENCHMARK (BLOSUM62 -10/-1, ZERO STARTUP OVERHEAD) ===
+-- Human/Mouse TP53 (393 / 390 aa, 15 in-process reps) --
+  parasail_scan_1t       med=  0.063 ms [ 0.063- 0.224]  score=1540
+  parasail_striped_1t    med=  0.396 ms [ 0.390- 0.401]  score=1540
+  na_full_1t             med=  0.213 ms [ 0.213- 0.218]  score=1540
+  na_linear_1t           med=  0.236 ms [ 0.232- 0.329]  score=1540
+  na_linear_8t           med=  0.232 ms [ 0.230- 0.318]  score=1540
+-- Human POLR2A/Yeast Rpo21 (1970 / 1733 aa, 15 in-process reps) --
+  parasail_scan_1t       med=  1.039 ms [ 0.933- 3.467]  score=4630
+  parasail_striped_1t    med=  8.462 ms [ 8.381- 8.781]  score=4630
+  na_full_1t             med=  4.163 ms [ 4.153- 4.204]  score=4630
+  na_linear_1t           med=  2.984 ms [ 2.789- 3.031]  score=4630
+  na_linear_8t           med=  2.932 ms [ 2.850- 3.519]  score=4630
+-- Human/Mouse BRCA1 (1863 / 1812 aa, 15 in-process reps) --
+  parasail_scan_1t       med=  1.100 ms [ 1.093- 3.450]  score=4827
+  parasail_striped_1t    med=  7.711 ms [ 7.575- 7.764]  score=4827
+  na_full_1t             med=  4.064 ms [ 4.017- 4.293]  score=4827
+  na_linear_1t           med=  2.886 ms [ 2.787- 3.237]  score=4827
+  na_linear_8t           med=  2.889 ms [ 2.767- 3.270]  score=4827
+-- Human/Mouse MTOR (2549 / 2549 aa, 15 in-process reps) --
+  parasail_scan_1t       med=  1.484 ms [ 1.456- 6.974]  score=13042
+  parasail_striped_1t    med= 15.093 ms [15.038-15.165]  score=13042
+  na_full_1t             med=  7.382 ms [ 7.361- 7.400]  score=13042
+  na_linear_1t           med=  4.557 ms [ 4.260- 4.845]  score=13042
+  na_linear_8t           med=  4.449 ms [ 4.351- 4.566]  score=13042
+-- Human/Mouse ATM (3056 / 3066 aa, 15 in-process reps) --
+  parasail_scan_1t       med=  2.626 ms [ 2.578- 9.349]  score=13333
+  parasail_striped_1t    med= 22.134 ms [21.965-23.546]  score=13333
+  na_full_1t             med= 10.491 ms [10.420-10.710]  score=13333
+  na_linear_1t           med=  6.024 ms [ 5.955- 6.440]  score=13333
+  na_linear_8t           med=  5.975 ms [ 5.937- 6.295]  score=13333
+
+=== B. PARASAIL AVX2 32-BIT GLOBAL DNA (20 kb & 50 kb, 5 SEEDS, +1/-2/-4/-1) ===
+-- Global 20 kb 1 --
+  parasail_scan32_1t   wall=  908.99 ms [ 893.22- 931.81]  cpu=  890.0 ms  rss= 1527.2 MiB  scores=[18934, 18888, 18933, 18885, 18994]
+-- Global 20 kb 10 --
+  parasail_scan32_1t   wall=  909.81 ms [ 908.23- 916.76]  cpu=  900.0 ms  rss= 1527.8 MiB  scores=[10215, 10362, 10078, 9703, 10292]
+-- Global 20 kb rand --
+  parasail_scan32_1t   wall=  927.66 ms [ 914.16- 953.11]  cpu=  920.0 ms  rss= 1528.1 MiB  scores=[-13508, -13434, -13459, -13375, -13482]
+-- Global 50 kb 1 --
+  parasail_scan32_1t   wall= 5748.60 ms [5627.84-5918.39]  cpu= 5740.0 ms  rss= 9541.0 MiB  scores=[47508, 47357, 47211, 47340, 47450]
+-- Global 50 kb 10 --
+  parasail_scan32_1t   wall= 5979.59 ms [5780.92-6241.87]  cpu= 5970.0 ms  rss= 9534.7 MiB  scores=[25476, 25374, 24875, 25693, 25462]
+-- Global 50 kb rand --
+  parasail_scan32_1t   wall= 5906.42 ms [5699.64-6149.25]  cpu= 5890.0 ms  rss= 9540.2 MiB  scores=[-33535, -33414, -33427, -33548, -33440]
+
+=== C. BANDED KSW2 AT CERTIFIED BAND WIDTH (20 kb & 50 kb 1%, 5 SEEDS) ===
+-- Banded ksw2 20 kb 1% --
+  certified_bands=[346, 364, 353, 363, 334]
+  ksw2_banded_1t       wall=   15.30 ms [  14.53-  15.58]  cpu=    0.0 ms  rss=   16.4 MiB  scores=[18934, 18888, 18933, 18885, 18994]
+-- Banded ksw2 50 kb 1% --
+  certified_bands=[829, 879, 926, 876, 843]
+  ksw2_banded_1t       wall=   79.34 ms [  76.94-  84.14]  cpu=   70.0 ms  rss=   87.9 MiB  scores=[47508, 47357, 47211, 47340, 47450]
+
+=== D. PARASAIL 32-BIT LOCAL & NUCLEICS --fastlocal (20 kb, 5 SEEDS, +2/-2/-2/-1) ===
+-- Local 20 kb 1 --
+  parasail_sw32_1t     wall= 1399.49 ms [1381.78-1447.36]  cpu= 1380.0 ms  rss= 1527.5 MiB  scores=[38845, 38804, 38872, 38776, 38940]
+  sw_fastlocal_1t      wall=  509.16 ms [ 508.21- 514.57]  cpu=  500.0 ms  rss=    3.6 MiB  scores=[38845, 38804, 38872, 38776, 38940]
+  sw_fastlocal_8t      wall=   91.72 ms [  84.09- 102.93]  cpu=  570.0 ms  rss=    6.3 MiB  scores=[38845, 38804, 38872, 38776, 38940]
+-- Local 20 kb 10 --
+  parasail_sw32_1t     wall= 1044.93 ms [1040.60-1081.77]  cpu= 1030.0 ms  rss= 1528.2 MiB  scores=[29304, 29521, 29069, 28686, 29293]
+  sw_fastlocal_1t      wall=  488.57 ms [ 480.97- 491.53]  cpu=  480.0 ms  rss=    3.8 MiB  scores=[29304, 29521, 29069, 28686, 29293]
+  sw_fastlocal_8t      wall=  160.49 ms [ 152.53- 161.86]  cpu=  600.0 ms  rss=    6.3 MiB  scores=[29304, 29521, 29069, 28686, 29293]
+-- Local 20 kb rand --
+  parasail_sw32_1t     wall=  991.00 ms [ 987.92-1024.56]  cpu=  980.0 ms  rss= 1528.2 MiB  scores=[3241, 3332, 3321, 3307, 3300]
+  sw_fastlocal_1t      wall=  471.86 ms [ 464.12- 479.59]  cpu=  460.0 ms  rss=    4.4 MiB  scores=[3241, 3332, 3321, 3307, 3300]
+  sw_fastlocal_8t      wall=  134.84 ms [ 130.02- 140.28]  cpu=  540.0 ms  rss=    6.6 MiB  scores=[3241, 3332, 3321, 3307, 3300]
+
+=== E. PREVIOUSLY SKIPPED 50 kb CELLS (5 SEEDS, +1/-2/-4/-1) ===
+-- 50 kb 10 --
+  nw_wfa_1t            wall= 1611.31 ms [1579.59-1638.51]  cpu= 1600.0 ms  rss= 2389.8 MiB  scores=[25476, 25374, 24875, 25693, 25462]
+-- 50 kb rand --
+  nw_wfa_1t            wall= 1421.89 ms [1416.82-1435.63]  cpu= 1410.0 ms  rss= 2391.6 MiB  scores=[-33535, -33414, -33427, -33548, -33440]
+  wfa2_biwfa_1t        wall=10254.55 ms [10070.20-10927.54]  cpu=10240.0 ms  rss=   44.6 MiB  scores=[-33535, -33414, -33427, -33548, -33440]
+
+=== F. THREAD SCALING CURVE (1, 2, 4, 8, 16 THREADS, SEED 1, MEDIAN OF 3) ===
+-- Thread scaling 20 kb 10 --
+  full    1t  wall=  252.34 ms [ 249.46- 254.33]  cpu=  240.0 ms  rss=  387.7 MiB  speedup= 1.00x  score=10215
+  full    2t  wall=  140.14 ms [ 139.65- 146.93]  cpu=  260.0 ms  rss=  387.9 MiB  speedup= 1.80x  score=10215
+  full    4t  wall=   93.34 ms [  91.53-  94.28]  cpu=  290.0 ms  rss=  388.2 MiB  speedup= 2.70x  score=10215
+  full    8t  wall=   74.32 ms [  73.35-  76.78]  cpu=  440.0 ms  rss=  388.8 MiB  speedup= 3.40x  score=10215
+  full   16t  wall=   73.45 ms [  70.07-  73.56]  cpu=  500.0 ms  rss=  389.0 MiB  speedup= 3.44x  score=10215
+  linear  1t  wall=  170.65 ms [ 161.47- 172.43]  cpu=  160.0 ms  rss=    3.2 MiB  speedup= 1.00x  score=10215
+  linear  2t  wall=   88.33 ms [  88.27-  91.24]  cpu=  150.0 ms  rss=    3.4 MiB  speedup= 1.93x  score=10215
+  linear  4t  wall=   74.63 ms [  74.60-  76.52]  cpu=  140.0 ms  rss=    3.7 MiB  speedup= 2.29x  score=10215
+  linear  8t  wall=   68.17 ms [  65.33-  68.63]  cpu=  150.0 ms  rss=    3.7 MiB  speedup= 2.50x  score=10215
+  linear 16t  wall=   67.69 ms [  67.04-  68.29]  cpu=  170.0 ms  rss=    3.7 MiB  speedup= 2.52x  score=10215
+-- Thread scaling 50 kb 10 --
+  full    1t  wall= 1508.20 ms [1504.25-1513.65]  cpu= 1500.0 ms  rss= 2389.7 MiB  speedup= 1.00x  score=25476
+  full    2t  wall=  828.44 ms [ 823.37- 829.89]  cpu= 1580.0 ms  rss= 2390.0 MiB  speedup= 1.82x  score=25476
+  full    4t  wall=  506.01 ms [ 502.98- 514.71]  cpu= 1720.0 ms  rss= 2391.0 MiB  speedup= 2.98x  score=25476
+  full    8t  wall=  424.40 ms [ 414.13- 443.45]  cpu= 2470.0 ms  rss= 2393.0 MiB  speedup= 3.55x  score=25476
+  full   16t  wall=  409.53 ms [ 406.39- 431.80]  cpu= 3890.0 ms  rss= 2397.5 MiB  speedup= 3.68x  score=25476
+  linear  1t  wall=  831.31 ms [ 830.42- 929.05]  cpu=  820.0 ms  rss=    5.0 MiB  speedup= 1.00x  score=25476
+  linear  2t  wall=  458.04 ms [ 456.49- 459.02]  cpu=  850.0 ms  rss=    5.4 MiB  speedup= 1.81x  score=25476
+  linear  4t  wall=  313.62 ms [ 312.29- 313.64]  cpu=  790.0 ms  rss=    6.3 MiB  speedup= 2.65x  score=25476
+  linear  8t  wall=  222.05 ms [ 218.71- 223.76]  cpu=  800.0 ms  rss=    6.4 MiB  speedup= 3.74x  score=25476
+  linear 16t  wall=  217.77 ms [ 217.12- 217.80]  cpu= 1050.0 ms  rss=    6.8 MiB  speedup= 3.82x  score=25476
+-- Thread scaling 50 kb rand --
+  full    1t  wall= 1368.79 ms [1362.06-1383.02]  cpu= 1350.0 ms  rss= 2391.4 MiB  speedup= 1.00x  score=-33535
+  full    2t  wall=  770.89 ms [ 767.86- 772.04]  cpu= 1460.0 ms  rss= 2391.8 MiB  speedup= 1.78x  score=-33535
+  full    4t  wall=  488.55 ms [ 488.48- 490.60]  cpu= 1660.0 ms  rss= 2392.6 MiB  speedup= 2.80x  score=-33535
+  full    8t  wall=  407.27 ms [ 400.54- 420.83]  cpu= 2470.0 ms  rss= 2394.8 MiB  speedup= 3.36x  score=-33535
+  full   16t  wall=  399.84 ms [ 395.62- 410.13]  cpu= 3800.0 ms  rss= 2399.3 MiB  speedup= 3.42x  score=-33535
+  linear  1t  wall=  957.13 ms [ 954.48-1041.37]  cpu=  950.0 ms  rss=    6.3 MiB  speedup= 1.00x  score=-33535
+  linear  2t  wall=  575.12 ms [ 571.82- 575.17]  cpu=  990.0 ms  rss=    6.8 MiB  speedup= 1.66x  score=-33535
+  linear  4t  wall=  393.95 ms [ 392.32- 394.22]  cpu= 1050.0 ms  rss=    6.4 MiB  speedup= 2.43x  score=-33535
+  linear  8t  wall=  276.18 ms [ 275.37- 283.92]  cpu= 1140.0 ms  rss=    7.8 MiB  speedup= 3.47x  score=-33535
+  linear 16t  wall=  268.34 ms [ 267.46- 269.39]  cpu= 1780.0 ms  rss=    8.6 MiB  speedup= 3.57x  score=-33535
+
+=== G. LONG-INDEL & UNEQUAL-LENGTH WORKLOAD (20 kb vs ~18.5 kb, 50-200 bp BLOCK INDELS, 3 SEEDS) ===
+  seed 1: len_a=20000, len_b=19306
+  seed 2: len_a=20000, len_b=18934
+  seed 3: len_a=20000, len_b=18983
+  nw_full_1t           wall=   83.61 ms [  79.17-  88.54]  cpu=   70.0 ms  rss=   41.8 MiB  scores=[16763, 15923, 16075]
+  nw_full_8t           wall=  103.56 ms [  97.21- 111.26]  cpu=  480.0 ms  rss=  368.9 MiB  scores=[16763, 15923, 16075]
+  nw_linear_1t         wall=   83.92 ms [  76.31-  86.86]  cpu=   80.0 ms  rss=    3.0 MiB  scores=[16763, 15923, 16075]
+  nw_linear_8t         wall=   51.78 ms [  50.29-  52.92]  cpu=   80.0 ms  rss=    3.2 MiB  scores=[16763, 15923, 16075]
+  nw_wfa_1t            wall=  116.28 ms [ 111.48- 116.30]  cpu=  100.0 ms  rss=   41.8 MiB  scores=[16763, 15923, 16075]
+  ksw2_1t              wall=  395.16 ms [ 390.71- 408.90]  cpu=  390.0 ms  rss=  496.0 MiB  scores=[16763, 15923, 16075]
+  wfa2_biwfa_1t        wall=   33.42 ms [  27.44-  35.36]  cpu=   20.0 ms  rss=    6.8 MiB  scores=[16763, 15923, 16075]
+  parasail_scan32_1t   wall=  858.32 ms [ 849.22- 868.27]  cpu=  840.0 ms  rss= 1450.6 MiB  scores=[16763, 15923, 16075]

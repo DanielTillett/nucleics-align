@@ -45,7 +45,8 @@ cat > "$WORK/src/inproc_prot.c" <<'EOF'
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include "nucleics_align.h"
+#include "needleman_wunsch.h"
+#include "hirschberg.h"
 #include "parasail.h"
 #include "parasail/matrices/blosum62.h"
 
@@ -135,15 +136,20 @@ int main(int argc, char **argv) {
 
   scoring_t scoring;
   scoring_system_BLOSUM62(&scoring);
+  alignment_options_t o1, o8;
+  alignment_options_default(&o1); o1.max_threads = 1;
+  alignment_options_default(&o8); o8.max_threads = 8;
+  aln_error_t err;
 
   /* 3. Nucleics full (1t) */
   int sc_na = 0;
   for (int r = -1; r < reps; r++) {
-    alignment_set_threads(1);
     nw_aligner_t *nw = needleman_wunsch_new();
+    nw->compact = true;
+    nw->options = &o1;
     alignment_t *aln = alignment_create(la + lb + 16);
     double t0 = now_ms();
-    needleman_wunsch_align_checked(a, b, &scoring, nw, aln);
+    if (needleman_wunsch_align_checked(a, b, la, lb, &scoring, nw, aln, &err) != ALN_OK) return 3;
     sc_na = aln->score;
     double dt = now_ms() - t0;
     alignment_free(aln);
@@ -156,10 +162,9 @@ int main(int argc, char **argv) {
   /* 4. Nucleics --linear (1t) */
   int sc_lin1 = 0;
   for (int r = -1; r < reps; r++) {
-    alignment_set_threads(1);
     alignment_t *aln = alignment_create(la + lb + 16);
     double t0 = now_ms();
-    hirschberg_align_checked(a, b, &scoring, aln);
+    if (hirschberg_align_checked(a, b, la, lb, &scoring, &o1, aln, &err) != ALN_OK) return 3;
     sc_lin1 = aln->score;
     double dt = now_ms() - t0;
     alignment_free(aln);
@@ -171,10 +176,9 @@ int main(int argc, char **argv) {
   /* 5. Nucleics --linear (8t) */
   int sc_lin8 = 0;
   for (int r = -1; r < reps; r++) {
-    alignment_set_threads(8);
     alignment_t *aln = alignment_create(la + lb + 16);
     double t0 = now_ms();
-    hirschberg_align_checked(a, b, &scoring, aln);
+    if (hirschberg_align_checked(a, b, la, lb, &scoring, &o8, aln, &err) != ALN_OK) return 3;
     sc_lin8 = aln->score;
     double dt = now_ms() - t0;
     alignment_free(aln);
@@ -188,7 +192,7 @@ int main(int argc, char **argv) {
 }
 EOF
 
-gcc -O3 -mavx2 -std=c11 \
+gcc -O3 -mavx2 -std=c11 -D_POSIX_C_SOURCE=200809L \
   -I "$WORK/src" -I "$WORK/src/parasail" -I "$WORK/src/parasail/src" \
   -I "$ROOT/src" -I "$ROOT/libs" \
   "$WORK/src/inproc_prot.c" \
@@ -265,7 +269,6 @@ gcc -O3 -mavx2 -I "$WORK/src" \
   "$WORK/src/parasail/src/memory_avx2.c" \
   "$WORK/src/parasail/src/cigar.c" \
   "$WORK/src/parasail/src/matrix_lookup.c" \
-  "$WORK/src/parasail/src/matrix_create.c" \
   -o "$WORK/bin/run_parasail_dna"
 
 # --- Build C: Banded ksw2 wrapper (accepts explicit band width w) ---

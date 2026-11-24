@@ -23,7 +23,7 @@
   20 kb 10    ALL 5 TOOLS RE-SCORED & SPAN-VERIFIED: score=10215 (['nw_full', 'nw_linear', 'nw_wfa', 'ksw2', 'biwfa'])
   20 kb rand  ALL 5 TOOLS RE-SCORED & SPAN-VERIFIED: score=-13508 (['nw_full', 'nw_linear', 'nw_wfa', 'ksw2', 'biwfa'])
 
-=== v1.2.0 SCALING TABLE 3 (5 kb - 1 Mb, 8 default threads, gen_pairs.py seed=11, score-asserted) ===
+=== v1.3.0 SCALING TABLE 3 (5 kb - 1 Mb, 8 default threads, gen_pairs.py seed=11, score-asserted) ===
 # sha256 5000_1_s11.fa = c3b7baf393ea5783faeac42199756716c775466234bf16a69105ef11b4166091
   5 kb   1    | full=    6.3/    4 | wfa=    2.8/    2 | linear=    7.1/    2 | scoreonly=    3.1/    2 | loc1=  23.5/ 30 | score=4743
 # sha256 5000_10_s11.fa = 2fec750360a03c2b872e484a0b1696adf32955b0391fcc96c297c67e3e79170d
