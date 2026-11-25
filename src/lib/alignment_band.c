@@ -14,6 +14,7 @@
 #include <unistd.h>
 
 #include "alignment_fill_internal.h"
+#include "alignment_seeds.h"
 #include "alignment_macros.h"
 #include "alignment_alloc.h"
 #include "alignment_testing.h"
@@ -116,7 +117,8 @@ static bool alignment_score_guess(const sub_table_t *t,
 // columns c0[s] .. c1, is kept at rows + off[s], 3 x (c1 - c0[s] + 1) as
 // MATCH, GAP_A, GAP_B
 typedef struct {
-  size_t strip, nstrips;
+  size_t strip, nstrips; // strip: the most rows in one
+  size_t *y0s; // strip s holds rows y0s[s] .. y0s[s+1] - 1
   size_t *c0;
   score_t min;
   size_t *off;
@@ -134,6 +136,7 @@ void trace_strips_free(void *ts_ptr)
   trace_strips_t *ts = ts_ptr;
   if(ts == NULL) return;
   free(ts->off);
+  free(ts->y0s);
   free(ts->c0);
   free(ts->rows);
   free(ts->col0);
@@ -150,7 +153,7 @@ static bool trace_strips_fill(aligner_t *aligner, trace_strips_t *ts,
 {
   const size_t w = aligner->score_width, h = aligner->score_height;
   const size_t len_i = w - 1, len_j = h - 1;
-  const size_t y0 = 1 + s * ts->strip, span = ts->off[s+1] - ts->off[s];
+  const size_t y0 = ts->y0s[s], span = ts->off[s+1] - ts->off[s];
   const size_t c0 = ts->c0[s], c1 = MIN2(c0 + span / 3 - 1, x);
   const size_t width = c1 - c0;
   size_t r, m;
@@ -200,7 +203,13 @@ bool alignment_trace_load(aligner_t *aligner, size_t x, size_t y)
 {
   trace_strips_t *ts = aligner->trace_strips;
   if(ts == NULL || y == 0) return true;
-  const size_t s = (y - 1) / ts->strip;
+  // The strip holding row y: the last starting at or above it
+  size_t lo = 0, hi = ts->nstrips - 1;
+  while(lo < hi) {
+    const size_t mid = (lo + hi + 1) / 2;
+    if(ts->y0s[mid] <= y) lo = mid; else hi = mid - 1;
+  }
+  const size_t s = lo;
   if(s == ts->loaded && y <= ts->loaded_y && x <= ts->loaded_x) return true;
   return trace_strips_fill(aligner, ts, s, y, x);
 }
@@ -366,6 +375,10 @@ fill_result_t alignment_fill_banded(aligner_t *aligner,
   score_t *top = NULL, *lcol = NULL;
   fill_result_t done = FILL_SKIPPED;
   int widened = 0; // times this band was widened to get more threads
+  // Seeds narrow strips further (alignment_seeds.c), built once a lower
+  // bound is known
+  seeds_t *seeds = NULL;
+  bool seeds_tried = false;
 
   while(done == FILL_SKIPPED)
   {
@@ -395,6 +408,12 @@ fill_result_t alignment_fill_banded(aligner_t *aligner,
       for(most = 64; most * most < 12 * len_j; most++) {}
       strip = MIN2(strip, most);
     }
+    // A strip's own rows add as many columns to its band as its diagonals
+    // span, so once narrowing leaves few diagonals, strips get shorter
+    // (about half the diagonals, at least min_rows): the most strips there
+    // can be sizes the kept strips' tables
+    const size_t min_rows = MIN2((size_t)32, strip);
+    const size_t max_strips = len_j / min_rows + 2;
     // A fill on t threads runs about max(1, t/2) times faster (16 threads:
     // 6-8x); a narrow band runs on one
     const double band_threads =
@@ -431,8 +450,8 @@ fill_result_t alignment_fill_banded(aligner_t *aligner,
     // Room for every strip's bytes, or kept strips: the biggest strip's
     // bytes, and every strip's top row (with column 0, which the first
     // strips use). Strips narrowed by a lower bound (below) need less
-    size_t cells = 0, kept = 0, nstrips = 0;
-    for(y0 = 1; y0 <= len_j; y0 = y1 + 1, nstrips++) {
+    size_t cells = 0, kept = 0;
+    for(y0 = 1; y0 <= len_j; y0 = y1 + 1) {
       alignment_strip(y0, strip, len_i, len_j, dlo, dhi, &y1, &c0, &c1);
       if(keep) {
         cells = MAX2(cells, (y1 - y0 + 1) * (c1 - c0));
@@ -447,16 +466,17 @@ fill_result_t alignment_fill_banded(aligner_t *aligner,
       ts = aln_calloc(1, sizeof(trace_strips_t));
       if(ts != NULL) {
         ts->strip = strip;
-        ts->nstrips = ts->loaded = nstrips;
-        ts->c0 = aln_malloc(nstrips * sizeof(size_t));
+        ts->nstrips = ts->loaded = max_strips;
+        ts->c0 = aln_malloc(max_strips * sizeof(size_t));
+        ts->y0s = aln_malloc((max_strips + 1) * sizeof(size_t));
         ts->min = min;
-        ts->off = aln_malloc((nstrips + 1) * sizeof(size_t));
-        ts->rows = aln_malloc(kept * sizeof(score_t));
+        ts->off = aln_malloc((max_strips + 1) * sizeof(size_t));
+        ts->rows = aln_malloc(MAX2(kept, (size_t)3) * sizeof(score_t));
         ts->col0 = aln_malloc(3 * h * sizeof(score_t));
         ts->top = aln_malloc(3 * w * sizeof(score_t));
         ts->lcol = aln_malloc(3 * (strip + 1) * sizeof(score_t));
       }
-      if(ts == NULL || ts->off == NULL || ts->c0 == NULL ||
+      if(ts == NULL || ts->off == NULL || ts->c0 == NULL || ts->y0s == NULL ||
          ts->rows == NULL || ts->col0 == NULL || ts->top == NULL ||
          ts->lcol == NULL) {
         trace_strips_free(ts);
@@ -480,14 +500,17 @@ fill_result_t alignment_fill_banded(aligner_t *aligner,
     }
 
     size_t jr_prev = len_i; // the top row is right up to here
-    size_t s = 0, used = 0, c0_prev = 0;
+    size_t s = 0, used = 0, c0_prev = 0, rows_cap = MAX2(kept, (size_t)3);
     ptrdiff_t sdlo = dlo, sdhi = dhi; // this strip's diagonals
     for(y0 = 1; y0 <= len_j; y0 = y1 + 1, s++)
     {
       // Not left of the strip above's left column: a path only moves right,
       // so one reaching a cell there passes left of the strip above too
       sdlo = MAX2(sdlo, (ptrdiff_t)c0_prev + 1 - (ptrdiff_t)y0);
-      alignment_strip(y0, strip, len_i, len_j, sdlo, sdhi, &y1, &c0, &c1);
+      const size_t span_d = sdhi >= sdlo ? (size_t)(sdhi - sdlo) + 1 : 1;
+      const size_t rows = s == 0 ? strip
+                          : MIN2(strip, MAX2(min_rows, span_d / 2));
+      alignment_strip(y0, rows, len_i, len_j, sdlo, sdhi, &y1, &c0, &c1);
       c0_prev = c0;
       // Columns the strip above did not reach
       for(i = jr_prev + 1; i <= c1; i++)
@@ -498,6 +521,14 @@ fill_result_t alignment_fill_banded(aligner_t *aligner,
         const size_t span = c1 - c0 + 1;
         if(s == 0) ts->off[0] = 0;
         ts->c0[s] = c0;
+        ts->y0s[s] = y0;
+        if(ts->off[s] + 3 * span > rows_cap) {
+          const size_t cap = MAX2(2 * rows_cap, ts->off[s] + 3 * span);
+          score_t *grown = aln_realloc(ts->rows, cap * sizeof(score_t));
+          if(grown == NULL) break; // out of memory: y0 <= len_j below
+          ts->rows = grown;
+          rows_cap = cap;
+        }
         for(m = 0; m < 3; m++)
           memcpy(ts->rows + ts->off[s] + m * span, topm[m] + c0,
                  span * sizeof(score_t));
@@ -534,9 +565,25 @@ fill_result_t alignment_fill_banded(aligner_t *aligner,
         topm[MATCH][c0] = topm[GAP_A][c0] = topm[GAP_B][c0] = min;
       sdlo = dlo;
       sdhi = dhi;
-      if(have_lb)
+      if(have_lb) {
         alignment_band_narrow(topm, col0, y1, c0, c1, len_i, len_j, smax,
                               scoring->gap_extend, lb, &sdlo, &sdhi);
+        if(aligner->opts.band_seeds && !seeds_tried) {
+          seeds_tried = true;
+          seeds = seeds_build(table, scoring, aligner->seq_a, len_i,
+                              aligner->seq_b, len_j, smax,
+                              aligner->opts.seed_length);
+        }
+        if(seeds != NULL && y1 < len_j) {
+          // Over the rows the next strip would have at these diagonals
+          // (it may get fewer: the same cells, in part)
+          const size_t next_d = sdhi >= sdlo ? (size_t)(sdhi - sdlo) + 1 : 1;
+          const size_t next = MIN2(strip, MAX2(min_rows, next_d / 2));
+          seeds_narrow(seeds, topm, col0, y1, c0, c1,
+                       MIN2(len_j, y1 + next), smax, scoring->gap_extend,
+                       lb, &sdlo, &sdhi);
+        }
+      }
     }
     if(y0 <= len_j) {
       trace_strips_free(ts);
@@ -553,7 +600,9 @@ fill_result_t alignment_fill_banded(aligner_t *aligner,
       done = FILL_DONE;
       if(ts != NULL) {
         // The last strip's bytes are in trace, for the start of the walk
-        ts->loaded = nstrips - 1;
+        ts->nstrips = s;
+        ts->y0s[s] = len_j + 1;
+        ts->loaded = s - 1;
         ts->loaded_y = len_j;
         ts->loaded_x = len_i;
         aligner->trace_strips = ts;
@@ -567,6 +616,7 @@ fill_result_t alignment_fill_banded(aligner_t *aligner,
     }
   }
 
+  seeds_free(seeds);
   free(top);
   free(lcol);
   aligner->trace_banded = done == FILL_DONE;

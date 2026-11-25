@@ -109,6 +109,8 @@ int alignment_max_threads = 0; // 0: half the CPUs
 bool alignment_band_enabled = true;
 size_t alignment_band_strip_rows = 0; // 0: automatic
 size_t alignment_band_min_width = 64;
+bool alignment_seeds_enabled = true;
+size_t alignment_seed_length = 0; // 0: automatic
 size_t alignment_band_keep_max_cells = 0; // 0: a quarter of the memory
 size_t alignment_band_wfa_budget = 16;
 
@@ -187,6 +189,8 @@ void alignment_options_default(alignment_options_t *opts)
   opts->block_min_cols = alignment_block_min_cols;
   opts->band_strip_rows = alignment_band_strip_rows;
   opts->band_min_width = alignment_band_min_width;
+  opts->band_seeds = alignment_seeds_enabled;
+  opts->seed_length = alignment_seed_length;
   opts->band_keep_max_cells = alignment_band_keep_max_cells;
   opts->band_wfa_budget = alignment_band_wfa_budget;
   opts->sw_rect_min_cells = smith_waterman_rect_min_cells;

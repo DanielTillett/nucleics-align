@@ -20,12 +20,16 @@
 
 #include "needleman_wunsch.h"
 #include "smith_waterman.h"
+#include <ctype.h>
+#include <limits.h>
+#include <stdint.h>
 #include "smith_waterman_internal.h" // sw_history_t, for the index-size test
 #include "hirschberg.h"
 #include "alignment_scoring_load.h"
 #include "alignment_cmdline.h"
 #include "alignment_simd.h" // ALN_STRIPED
 #include "alignment_testing.h" // counters and checks
+#include "alignment_seeds.h" // seeds_build(), for the bound test
 
 //
 // Tests
@@ -1850,6 +1854,8 @@ void simd_test_compact_band(bool keep)
   int max_threads = alignment_max_threads;
   size_t strip_rows = alignment_band_strip_rows;
   size_t min_width = alignment_band_min_width;
+  size_t seed_length = alignment_seed_length;
+  bool seeds_on = alignment_seeds_enabled;
   nw_aligner_t *full = needleman_wunsch_new(), *compact = needleman_wunsch_new();
   alignment_t *r_full = alignment_create(256), *r_compact = alignment_create(256);
   char seqa[1601], seqb[1801];
@@ -1871,6 +1877,9 @@ void simd_test_compact_band(bool keep)
     {
       alignment_band_min_width = i % 2 ? 1 : 1 + hb_rand(16);
       alignment_band_wfa_budget = i % 3 ? 0 : (size_t)1 << 20;
+      // Short seeds, so they narrow strips of these short pairs
+      alignment_seed_length = i % 3 ? 2 + hb_rand(5) : 0;
+      alignment_seeds_enabled = i % 7 != 6;
       const char *alpha = "acgt";
       if(i % 5 == 4) {
         scoring_system_BLOSUM62(&scoring);
@@ -1907,6 +1916,8 @@ void simd_test_compact_band(bool keep)
     alignment_band_strip_rows = 1 + i % 7;
     alignment_max_threads = 1 + (int)(i % 2) * 2;
     alignment_band_wfa_budget = i % 3 ? 0 : (size_t)1 << 20;
+    alignment_seed_length = i % 3 ? 2 + hb_rand(5) : 0;
+    alignment_seeds_enabled = i % 7 != 6;
     hb_rand_seq(seqa, 100 + hb_rand(600), "acgt");
     size_t len = strlen(seqa), from = hb_rand((unsigned int)len);
     size_t to = hb_rand((unsigned int)len), j, o = 0;
@@ -1938,6 +1949,8 @@ void simd_test_compact_band(bool keep)
     alignment_band_min_width = i % 2 ? 1 : 64;
     alignment_max_threads = 1 + (int)(i % 2) * 2;
     alignment_band_wfa_budget = i / 3 % 2 ? 0 : (size_t)1 << 20;
+    alignment_seed_length = i % 3 ? 2 + hb_rand(5) : 0;
+    alignment_seeds_enabled = i % 7 != 6;
     hb_rand_seq(seqa, 800 + hb_rand(600), "acgt");
     size_t len = strlen(seqa), at = hb_rand((unsigned int)len);
     size_t gap = 1 + hb_rand((unsigned int)len / 10), j, o = 0;
@@ -1979,10 +1992,91 @@ void simd_test_compact_band(bool keep)
   alignment_max_threads = max_threads;
   alignment_band_strip_rows = strip_rows;
   alignment_band_min_width = min_width;
+  alignment_seed_length = seed_length;
+  alignment_seeds_enabled = seeds_on;
   needleman_wunsch_free(full);
   needleman_wunsch_free(compact);
   alignment_free(r_full);
   alignment_free(r_compact);
+}
+
+// The seed bound (alignment_seeds.c) is never under the best score the
+// rest of an alignment can add from a cell, whatever gap the path is in
+// there: checked at every cell of small pairs against a reverse fill that
+// keeps the type of the step into the cell (a gap of the same type goes
+// on without opening), with short seeds of various scorings
+void simd_test_seeds()
+{
+  char seqa[401], seqb[561];
+  scoring_t scoring;
+  const unsigned int rates[] = {0, 10, 50, 150, 400};
+  size_t it, i, j, checked = 0, built = 0;
+  for(it = 0; it < 300; it++)
+  {
+    const char *alpha = it % 4 == 3 ? "acgtn" : "acgt";
+    const int match = 1 + (int)hb_rand(3);
+    scoring_init(&scoring, match, -(int)hb_rand(6), -(int)hb_rand(8),
+                 -(int)hb_rand(4), false, false, false, false, false,
+                 it % 5 == 4);
+    hb_rand_seq(seqa, 20 + hb_rand(280), alpha);
+    if(it % 9 == 8) hb_rand_seq(seqb, 20 + hb_rand(280), alpha);
+    else hb_mutate(seqb, seqa, rates[it % 5], alpha);
+    const size_t m = strlen(seqa), n = strlen(seqb);
+    if(it % 2) for(j = 0; j < n; j += 3) seqb[j] = (char)toupper(seqb[j]);
+    sub_table_t t;
+    ASSERT(sub_table_build(&t, &scoring, seqa, m, seqb, n));
+    score_t smax = INT_MIN;
+    for(i = 0; i < t.n * t.n; i++) smax = MAX2(smax, t.scores[i]);
+    const size_t k = 2 + hb_rand(5);
+    seeds_t *sd = seeds_build(&t, &scoring, seqa, m, seqb, n, smax, k);
+    if(sd == NULL) {
+      if(it < 40)
+        printf("seeds: none for match %d mismatch %d open %d extend %d "
+               "case %d alphabet %s k %zu letters %zu\n", match,
+               scoring.mismatch, scoring.gap_open, scoring.gap_extend,
+               (int)(it % 5 == 4), alpha, k, t.n);
+      sub_table_free(&t);
+      continue;
+    }
+    built++;
+    // F[step][i][j]: the best score of aligning a[i..] with b[j..] after a
+    // step of that type into (i, j): 0 a pair, 1 a gap taking a letter of
+    // a, 2 one taking a letter of b
+    const int64_t NEG = INT64_MIN / 4;
+    const int64_t o = scoring.gap_open, e = scoring.gap_extend;
+    const size_t W = n + 1;
+    int64_t *F = malloc(3 * (m + 1) * W * sizeof(int64_t));
+    ASSERT(F != NULL);
+    #define FS(s, i, j) F[((s) * (m + 1) + (i)) * W + (j)]
+    for(i = m + 1; i-- > 0; ) for(j = n + 1; j-- > 0; ) {
+      int64_t pair = NEG, ga = NEG, gb = NEG, s;
+      if(i == m && j == n) { FS(0,i,j) = FS(1,i,j) = FS(2,i,j) = 0; continue; }
+      if(i < m && j < n) {
+        const int sc = t.scores[t.code[(unsigned char)seqb[j]] * t.n +
+                                t.code[(unsigned char)seqa[i]]];
+        pair = sc + FS(0,i+1,j+1);
+      }
+      if(i < m) ga = FS(1,i+1,j) + e;
+      if(j < n) gb = FS(2,i,j+1) + e;
+      for(s = 0; s < 3; s++)
+        FS(s,i,j) = MAX3(pair, ga + (s == 1 ? 0 : o), gb + (s == 2 ? 0 : o));
+    }
+    for(i = 0; i <= m; i++) for(j = 0; j <= n; j++) {
+      const int64_t exact = MAX3(FS(0,i,j), FS(1,i,j), FS(2,i,j));
+      const int64_t bound = seeds_bound(sd, i, j);
+      if(bound < exact)
+        printf("seeds: cell %zu,%zu bound %lld under %lld (%zu x %zu)\n",
+               i, j, (long long)bound, (long long)exact, m, n);
+      ASSERT(bound >= exact);
+      checked++;
+    }
+    #undef FS
+    free(F);
+    seeds_free(sd);
+    sub_table_free(&t);
+  }
+  ASSERT(built > 150);
+  ASSERT(checked > 100000);
 }
 
 void test_simd()
@@ -1995,6 +2089,7 @@ void test_simd()
   simd_test_rect_gap_score();
   simd_test_narrow(16);
   simd_test_narrow(8);
+  simd_test_seeds();
   simd_test_compact_band(true);
   simd_test_compact_band(false);
   simd_test_compact();

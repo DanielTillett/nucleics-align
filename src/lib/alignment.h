@@ -57,6 +57,8 @@ typedef struct
   size_t wfa_budget; // diagonal-update cap for --wfa (0: automatic)
   bool sw_fast_rect; // opt-in fast local reconstruction (smith_waterman_fast_rect)
   size_t block_min_cells, block_min_cols, band_strip_rows, band_min_width;
+  bool band_seeds; // see alignment_seeds_enabled
+  size_t seed_length; // see alignment_seed_length
   size_t band_keep_max_cells; // see alignment_band_keep_max_cells
   size_t band_wfa_budget; // see alignment_band_wfa_budget
   size_t sw_rect_min_cells; // see smith_waterman_rect_min_cells
@@ -307,6 +309,12 @@ extern int alignment_max_threads;
 // tuning and tests
 extern bool alignment_band_enabled;
 extern size_t alignment_band_strip_rows, alignment_band_min_width;
+// Band strips are narrowed further by seeds, words of a looked up in b
+// (alignment_seeds.c), with the same result; alignment_seeds_enabled
+// (default true) turns that off, alignment_seed_length sets the letters per
+// seed (0, the default: by the length of b), for tuning and tests
+extern bool alignment_seeds_enabled;
+extern size_t alignment_seed_length;
 // Bands of more than this many cells (0, the default: a quarter of the
 // physical memory, one traceback byte per cell) keep only one strip of
 // rows' bytes at a time, and each strip's top row: the traceback fills a
