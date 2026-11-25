@@ -89,3 +89,4 @@ nw_seq2_flag     | -     | ./bin/needleman_wunsch --printscores ACGT --printscor
 nw_missing_value | -     | ./bin/needleman_wunsch --printscores --threads
 sw_maxhits_zero  | -     | ./bin/smith_waterman --maxhits 0 ACGT ACGT
 sw_minscore_neg  | -     | ./bin/smith_waterman --minscore -5 ACGT ACGT
+sw_gap_positive  | -     | ./bin/smith_waterman --gapextend 1 CA GA

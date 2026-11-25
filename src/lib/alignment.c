@@ -267,8 +267,10 @@ bool alignment_scores_may_overflow(const scoring_t *scoring,
       edge_len > 0 ? open + edge_len * ext : 0,
       score_lb
     };
+    // Strictly above the floor: a cell at the floor could not be told from
+    // an unreachable one (clamped there), and the traceback would fail
     for(i = 0; i < sizeof(edges) / sizeof(edges[0]); i++)
-      if(edges[i] < floor || edges[i] > (double)INT_MAX) return true;
+      if(edges[i] <= floor || edges[i] > (double)INT_MAX) return true;
   }
   return false;
 }
@@ -301,24 +303,35 @@ bool alignment_scoring_complete(const scoring_t *scoring,
   return true;
 }
 
+bool alignment_sw_gaps_unsupported(const scoring_t *scoring)
+{
+  // A gap scoring above 0 would grow out of the empty cells (clamped at
+  // 0), reporting a gap where there is no alignment
+  return scoring->gap_extend > 0 || scoring->gap_open + scoring->gap_extend > 0;
+}
+
 aln_status_t alignment_check(const scoring_t *scoring,
                              const char *a, size_t len_a,
                              const char *b, size_t len_b,
-                             bool scoring_first, aln_error_t *err)
+                             bool is_sw, aln_error_t *err)
 {
+  // Smith-Waterman checks the scoring pairs first, Needleman-Wunsch last
   aln_error_t e = {ALN_OK, 0, 0};
-  bool ok = !scoring_first ||
+  bool ok = !is_sw ||
             alignment_scoring_complete(scoring, a, len_a, b, len_b, &e);
+  if(ok && is_sw && alignment_sw_gaps_unsupported(scoring)) {
+    e.status = ALN_ERR_UNSUPPORTED;
+    ok = false;
+  }
   if(ok && alignment_too_long(len_a, len_b)) {
     e.status = ALN_ERR_TOO_LONG;
     ok = false;
   }
-  if(ok && alignment_scores_may_overflow(scoring, a, len_a, b, len_b,
-                                         scoring_first)) {
+  if(ok && alignment_scores_may_overflow(scoring, a, len_a, b, len_b, is_sw)) {
     e.status = ALN_ERR_OVERFLOW;
     ok = false;
   }
-  if(ok && !scoring_first)
+  if(ok && !is_sw)
     alignment_scoring_complete(scoring, a, len_a, b, len_b, &e);
   if(err != NULL) *err = e;
   return e.status;
@@ -340,8 +353,9 @@ void alignment_fprint_error(FILE *out, const aln_error_t *err)
                    "shorter sequences\n");
       break;
     case ALN_ERR_UNSUPPORTED:
-      fprintf(out, "Error: linear space does not support these scoring "
-                   "options (or penalties this large)\n");
+      fprintf(out, "Error: the aligner does not support these scoring "
+                   "options or penalties (linear space refuses some; "
+                   "Smith-Waterman gaps must not score above 0)\n");
       break;
     case ALN_ERR_NOMEM:
       fprintf(out, "Error: Out of memory\n");

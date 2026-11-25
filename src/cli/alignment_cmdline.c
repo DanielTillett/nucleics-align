@@ -639,6 +639,11 @@ cmdline_t* cmdline_new(int argc, char **argv, scoring_t *scoring,
     usage("Match value should not be less than mismatch penalty");
   }
 
+  // A gap scoring above 0 would grow out of Smith-Waterman's empty cells
+  if(cmd_type == NUCLEICS_ALIGN_SW_CMD && alignment_sw_gaps_unsupported(scoring))
+    usage("Smith-Waterman gaps must not score above 0: --gapextend, and "
+          "--gapopen plus --gapextend, must be at most 0");
+
   // Cannot guarantee that we can perform a global alignment if nomismatches
   // and nogaps is true
   if(cmd_type == NUCLEICS_ALIGN_NW_CMD && scoring->no_mismatches &&

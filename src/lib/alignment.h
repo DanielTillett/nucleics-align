@@ -191,7 +191,8 @@ typedef enum {
   ALN_ERR_SCORING,     // a character pair has no score: err->a, err->b
   ALN_ERR_TOO_LONG,    // the score matrices would not fit in memory addresses
   ALN_ERR_OVERFLOW,    // scores could pass INT_MAX (see SCORE_ABS_MAX)
-  ALN_ERR_UNSUPPORTED, // linear space refuses these options or penalties
+  ALN_ERR_UNSUPPORTED, // the aligner refuses these options or penalties
+                       // (linear space some; Smith-Waterman gaps above 0)
   ALN_ERR_NOMEM        // out of memory; nothing to fetch until aligned again
 } aln_status_t;
 
@@ -213,13 +214,18 @@ bool alignment_scores_may_overflow(const scoring_t *scoring,
                                    const char *a, size_t len_a,
                                    const char *b, size_t len_b, bool is_sw);
 
-// The first error a full-matrix alignment of a and b would stop at: the
-// scoring first (as Smith-Waterman checks it) or last (Needleman-Wunsch).
-// err may be NULL
+// Smith-Waterman cannot take gaps that score above 0 (see
+// alignment_check())
+bool alignment_sw_gaps_unsupported(const scoring_t *scoring);
+
+// The first error a full-matrix alignment of a and b would stop at, for
+// Smith-Waterman (is_sw: the scoring pairs are checked first, and gaps
+// scoring above 0 are ALN_ERR_UNSUPPORTED) or Needleman-Wunsch (the
+// scoring pairs last). err may be NULL
 aln_status_t alignment_check(const scoring_t *scoring,
                              const char *a, size_t len_a,
                              const char *b, size_t len_b,
-                             bool scoring_first, aln_error_t *err);
+                             bool is_sw, aln_error_t *err);
 
 // The message for an error, as the aligners print it before exiting
 void alignment_fprint_error(FILE *out, const aln_error_t *err);

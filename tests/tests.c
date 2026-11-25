@@ -2453,6 +2453,31 @@ void test_checked()
   ASSERT(hirschberg_align_checked("AC", "AC", 2, 2, &scoring, NULL, aln,
                                   &e) == ALN_ERR_UNSUPPORTED);
 
+  // Smith-Waterman: a gap that scores above 0 would grow out of the empty
+  // (zero) cells, so such scores are refused; Needleman-Wunsch takes them
+  scoring_init(&scoring, 2, -3, -2, 1, false, false, false, false, false,
+               false);
+  ASSERT(smith_waterman_align_checked("CA", "GA", 2, 2, &scoring, sw, &e)
+         == ALN_ERR_UNSUPPORTED);
+  ASSERT(needleman_wunsch_align_checked("CA", "GA", 2, 2, &scoring, nw, aln,
+                                        &e) == ALN_OK);
+  scoring_init(&scoring, 2, -3, 3, -1, false, false, false, false, false,
+               false);
+  ASSERT(smith_waterman_align_checked("CA", "GA", 2, 2, &scoring, sw, &e)
+         == ALN_ERR_UNSUPPORTED && e.status == ALN_ERR_UNSUPPORTED);
+  ASSERT(!smith_waterman_fetch_checked(sw, aln, &e));
+  scoring_init(&scoring, 2, -3, -1, 0, false, false, false, false, false,
+               false);
+  ASSERT(smith_waterman_align_checked("CA", "GA", 2, 2, &scoring, sw, &e)
+         == ALN_OK);
+
+  // A score that would reach the matrices' floor exactly is refused as an
+  // overflow: at the floor a cell cannot be told from an unreachable one
+  scoring_init(&scoring, 1, -387483648, -530000000, -350000000, false, false,
+               false, false, false, false);
+  ASSERT(needleman_wunsch_align_checked("AA", "C", 2, 1, &scoring, nw, aln,
+                                        &e) == ALN_ERR_OVERFLOW);
+
   // The messages, as the aligners print them before exiting
   char *text = NULL;
   size_t len = 0;
