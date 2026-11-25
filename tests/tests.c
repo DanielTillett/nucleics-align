@@ -1160,6 +1160,8 @@ void simd_test_fill_blocks()
 {
   size_t min_cells = alignment_block_min_cells;
   size_t min_cols = alignment_block_min_cols;
+  size_t band_cells = alignment_band_block_min_cells;
+  size_t band_cols = alignment_band_block_min_cols;
   int max_threads = alignment_max_threads;
   aligner_t scalar, striped;
   aligner_init(&scalar);
@@ -1171,6 +1173,8 @@ void simd_test_fill_blocks()
 
   alignment_block_min_cells = 1;
   alignment_block_min_cols = 8;
+  alignment_band_block_min_cells = 1;
+  alignment_band_block_min_cols = 8;
 
   for(t = 0; t < sizeof(threads)/sizeof(threads[0]); t++)
   {
@@ -1203,6 +1207,8 @@ void simd_test_fill_blocks()
 
   alignment_block_min_cells = min_cells;
   alignment_block_min_cols = min_cols;
+  alignment_band_block_min_cells = band_cells;
+  alignment_band_block_min_cols = band_cols;
   alignment_max_threads = max_threads;
   aligner_destroy(&scalar);
   aligner_destroy(&striped);
@@ -1272,6 +1278,8 @@ void simd_test_compact()
 {
   size_t min_cells = alignment_block_min_cells;
   size_t min_cols = alignment_block_min_cols;
+  size_t band_cells = alignment_band_block_min_cells;
+  size_t band_cols = alignment_band_block_min_cols;
   int max_threads = alignment_max_threads;
   nw_aligner_t *nw_full = needleman_wunsch_new(), *nw_compact = needleman_wunsch_new();
   sw_aligner_t *sw_full = smith_waterman_new(), *sw_compact = smith_waterman_new();
@@ -1286,6 +1294,8 @@ void simd_test_compact()
   smith_waterman_set_compact(sw_compact, true);
   alignment_block_min_cells = 1;
   alignment_block_min_cols = 8;
+  alignment_band_block_min_cells = 1;
+  alignment_band_block_min_cols = 8;
 
   for(t = 0; t < sizeof(threads)/sizeof(threads[0]); t++)
   {
@@ -1348,6 +1358,8 @@ void simd_test_compact()
 
   alignment_block_min_cells = min_cells;
   alignment_block_min_cols = min_cols;
+  alignment_band_block_min_cells = band_cells;
+  alignment_band_block_min_cols = band_cols;
   alignment_max_threads = max_threads;
   needleman_wunsch_free(nw_full);
   needleman_wunsch_free(nw_compact);
@@ -1364,6 +1376,8 @@ void simd_test_compact_rect()
 {
   size_t min_cells = alignment_block_min_cells;
   size_t min_cols = alignment_block_min_cols;
+  size_t band_cells = alignment_band_block_min_cells;
+  size_t band_cols = alignment_band_block_min_cols;
   int max_threads = alignment_max_threads;
   size_t rect_cells = smith_waterman_rect_min_cells;
   sw_aligner_t *full = smith_waterman_new(), *rect = smith_waterman_new();
@@ -1377,6 +1391,8 @@ void simd_test_compact_rect()
   smith_waterman_rect_min_cells = 0;
   alignment_block_min_cells = 1;
   alignment_block_min_cols = 8;
+  alignment_band_block_min_cells = 1;
+  alignment_band_block_min_cols = 8;
 
   for(i = 0; i < 600; i++)
   {
@@ -1444,6 +1460,8 @@ void simd_test_compact_rect()
   smith_waterman_rect_min_cells = rect_cells;
   alignment_block_min_cells = min_cells;
   alignment_block_min_cols = min_cols;
+  alignment_band_block_min_cells = band_cells;
+  alignment_band_block_min_cols = band_cols;
   alignment_max_threads = max_threads;
   smith_waterman_free(full);
   smith_waterman_free(rect);
@@ -1458,6 +1476,8 @@ void simd_test_strips()
 {
   size_t min_cells = alignment_block_min_cells;
   size_t min_cols = alignment_block_min_cols;
+  size_t band_cells = alignment_band_block_min_cells;
+  size_t band_cols = alignment_band_block_min_cols;
   int max_threads = alignment_max_threads;
   size_t rect_cells = smith_waterman_rect_min_cells;
   size_t strip_cells = smith_waterman_strip_min_cells;
@@ -1472,6 +1492,8 @@ void simd_test_strips()
   smith_waterman_strip_min_cells = 0;
   alignment_block_min_cells = 1;
   alignment_block_min_cols = 8;
+  alignment_band_block_min_cells = 1;
+  alignment_band_block_min_cols = 8;
 
   for(i = 0; i < 400; i++)
   {
@@ -1521,6 +1543,8 @@ void simd_test_strips()
   smith_waterman_rect_min_cells = rect_cells;
   alignment_block_min_cells = min_cells;
   alignment_block_min_cols = min_cols;
+  alignment_band_block_min_cells = band_cells;
+  alignment_band_block_min_cols = band_cols;
   alignment_max_threads = max_threads;
   smith_waterman_free(full);
   smith_waterman_free(strips);
@@ -1648,6 +1672,8 @@ void simd_test_narrow(int bits)
 {
   size_t min_cells = alignment_block_min_cells;
   size_t min_cols = alignment_block_min_cols;
+  size_t band_cells = alignment_band_block_min_cells;
+  size_t band_cols = alignment_band_block_min_cols;
   int max_threads = alignment_max_threads;
   sw_aligner_t *full = smith_waterman_new(), *compact = smith_waterman_new();
   alignment_t *r_full = alignment_create(256), *r_compact = alignment_create(256);
@@ -1661,6 +1687,8 @@ void simd_test_narrow(int bits)
   smith_waterman_set_compact(compact, true);
   alignment_block_min_cells = 1;
   alignment_block_min_cols = 8;
+  alignment_band_block_min_cells = 1;
+  alignment_band_block_min_cols = 8;
   if(bits == 8) alignment_byte_counts(&fills0, &retries0);
   else alignment_narrow_counts(&fills0, &retries0);
 
@@ -1789,6 +1817,8 @@ void simd_test_narrow(int bits)
 
   alignment_block_min_cells = min_cells;
   alignment_block_min_cols = min_cols;
+  alignment_band_block_min_cells = band_cells;
+  alignment_band_block_min_cols = band_cols;
   alignment_max_threads = max_threads;
   smith_waterman_free(full);
   smith_waterman_free(compact);
@@ -1851,6 +1881,8 @@ void simd_test_compact_band(bool keep)
   size_t wfa_budget = alignment_band_wfa_budget;
   size_t min_cells = alignment_block_min_cells;
   size_t min_cols = alignment_block_min_cols;
+  size_t band_cells = alignment_band_block_min_cells;
+  size_t band_cols = alignment_band_block_min_cols;
   int max_threads = alignment_max_threads;
   size_t strip_rows = alignment_band_strip_rows;
   size_t min_width = alignment_band_min_width;
@@ -1867,6 +1899,8 @@ void simd_test_compact_band(bool keep)
   compact->compact = true;
   alignment_block_min_cells = 1;
   alignment_block_min_cols = 8;
+  alignment_band_block_min_cells = 1;
+  alignment_band_block_min_cols = 8;
   if(!keep) alignment_band_keep_max_cells = 1;
 
   for(s = 0; s < 4; s++)
@@ -1989,6 +2023,8 @@ void simd_test_compact_band(bool keep)
 
   alignment_block_min_cells = min_cells;
   alignment_block_min_cols = min_cols;
+  alignment_band_block_min_cells = band_cells;
+  alignment_band_block_min_cols = band_cols;
   alignment_max_threads = max_threads;
   alignment_band_strip_rows = strip_rows;
   alignment_band_min_width = min_width;

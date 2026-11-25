@@ -228,8 +228,9 @@ static int alignment_online_cpus(void)
 // takes blocks of at least twice block_min_cols columns: thinner blocks
 // finish a row too soon after the block on their left, so threads mostly
 // wait (20 kb: 16 threads no faster than 10, with 0.79 -> 0.44 s of CPU).
-// A band's strips keep the minimum, or narrow bands would lose their
-// threads and stop paying (50 kb at 10%: 0.15 -> 0.29 s)
+// A band's strips take their own, smaller minimums (band_block_min_cols,
+// band_block_min_cells): narrowed strips have few columns and few rows,
+// and would otherwise run on one thread (1 Mb at 1%: 8.5 -> 2.4 s)
 size_t alignment_fill_threads(const alignment_options_t *o,
                                     size_t width, size_t rows, bool whole)
 {
@@ -241,8 +242,10 @@ size_t alignment_fill_threads(const alignment_options_t *o,
   if(threads > ALN_MAX_THREADS) threads = ALN_MAX_THREADS;
   // At least one vector of columns per block, so no block is empty
   const size_t min_cols = MAX2(whole ? 2 * o->block_min_cols
-                                     : o->block_min_cols, (size_t)ALN_VL);
-  if(threads > 1 && (double)width * rows >= o->block_min_cells &&
+                                     : o->band_block_min_cols, (size_t)ALN_VL);
+  const size_t min_cells = whole ? o->block_min_cells
+                                 : o->band_block_min_cells;
+  if(threads > 1 && (double)width * rows >= (double)min_cells &&
      width >= 2 * min_cols)
     return MIN2((size_t)threads, width / min_cols);
   return 1;

@@ -104,6 +104,10 @@ bool alignment_striped_enabled = true;
 size_t alignment_block_min_cells = 4000000; // rows x columns
 size_t alignment_block_min_cols = 1024; // columns per block
 int alignment_max_threads = 0; // 0: half the CPUs
+// A band's strips: narrowed strips have few columns, and their blocks run
+// only for the strip's rows, so they split finer than a whole fill
+size_t alignment_band_block_min_cells = 262144;
+size_t alignment_band_block_min_cols = 256;
 
 // Banded compact fills (see alignment_fill_banded())
 bool alignment_band_enabled = true;
@@ -187,6 +191,8 @@ void alignment_options_default(alignment_options_t *opts)
   opts->sw_fast_rect = smith_waterman_fast_rect;
   opts->block_min_cells = alignment_block_min_cells;
   opts->block_min_cols = alignment_block_min_cols;
+  opts->band_block_min_cells = alignment_band_block_min_cells;
+  opts->band_block_min_cols = alignment_band_block_min_cols;
   opts->band_strip_rows = alignment_band_strip_rows;
   opts->band_min_width = alignment_band_min_width;
   opts->band_seeds = alignment_seeds_enabled;

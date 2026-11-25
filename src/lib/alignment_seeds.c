@@ -123,10 +123,17 @@ seeds_t *seeds_build(const sub_table_t *t, const scoring_t *sc,
   int bits = 1;
   while(((size_t)1 << bits) < 2 * n) bits++;
   if(k == 0) {
-    // Enough letters that a seed has few copies in b by chance: about one
-    // for random letters
-    k = 8;
-    while(k < 15 && k * bits < 60 && ((size_t)1 << (bits * k)) < len_b) k++;
+    // Enough letters that a seed has few copies in b by chance (every
+    // copy is looked at for every chain through it): under one for random
+    // letters of as many classes as b has, so 11 for 1 Mb of DNA
+    size_t classes = 0;
+    bool seen[128] = {false};
+    for(y = 0; y < n; y++)
+      if(in_b[y] && !seen[cls[y]]) { seen[cls[y]] = true; classes++; }
+    classes = MAX2(classes, (size_t)2);
+    double copies = (double)len_b;
+    for(k = 1; copies >= 1.0 && k < 15; k++) copies /= (double)classes;
+    k = MAX2(k, (size_t)8);
   }
   if(k < 2 || k * bits > 62 || len_a < k || len_b < k) return NULL;
 

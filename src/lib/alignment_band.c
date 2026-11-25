@@ -357,8 +357,9 @@ fill_result_t alignment_fill_banded(aligner_t *aligner,
                           ? aligner->opts.band_strip_rows
                           : MAX2(64, (size_t)(gcols / 4));
     const double one = gcols + (double)gstrip;
-    const double several = MAX2(2.0 * (double)aligner->opts.block_min_cols,
-                                one / MAX2(1.0, full_threads / 2));
+    const double several =
+      MAX2(2.0 * (double)aligner->opts.band_block_min_cols,
+           one / MAX2(1.0, full_threads / 2));
     if(MIN2(one, several) >=
        pays * (double)len_i / MAX2(1.0, full_threads / 2)) return FILL_SKIPPED;
   }

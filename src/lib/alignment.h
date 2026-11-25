@@ -57,6 +57,7 @@ typedef struct
   size_t wfa_budget; // diagonal-update cap for --wfa (0: automatic)
   bool sw_fast_rect; // opt-in fast local reconstruction (smith_waterman_fast_rect)
   size_t block_min_cells, block_min_cols, band_strip_rows, band_min_width;
+  size_t band_block_min_cells, band_block_min_cols; // blocks of a strip
   bool band_seeds; // see alignment_seeds_enabled
   size_t seed_length; // see alignment_seed_length
   size_t band_keep_max_cells; // see alignment_band_keep_max_cells
@@ -301,6 +302,10 @@ extern bool alignment_striped_enabled;
 // per block, on up to alignment_max_threads threads (0: half the CPUs)
 extern size_t alignment_block_min_cells, alignment_block_min_cols;
 extern int alignment_max_threads;
+// The strips of a band are short and narrow, so their blocks are smaller:
+// at least alignment_band_block_min_cells cells and
+// alignment_band_block_min_cols columns per block
+extern size_t alignment_band_block_min_cells, alignment_band_block_min_cols;
 
 // Compact Needleman-Wunsch fills skip cells that cannot be on a best path,
 // with the same result (see alignment_band_width()). alignment_band_enabled
