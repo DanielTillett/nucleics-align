@@ -43,8 +43,7 @@ void needleman_wunsch_align(const char *a, const char *b,
   needleman_wunsch_align2(a, b, strlen(a), strlen(b), scoring, nw, result);
 }
 
-// Gaps before the first aligned pair, then shift the alignment (written
-// backwards from next_char) to the start of the buffers
+// The alignment with the full matrices (compact: traceback bytes)
 static aln_status_t _nw_align(const char *a, const char *b,
                               size_t len_a, size_t len_b,
                               const scoring_t *scoring,
@@ -146,6 +145,10 @@ static aln_status_t _nw_fast_paths(const char *a, const char *b,
   return status;
 }
 
+// Gaps before the first aligned pair, then shift the alignment (written
+// backwards from next_char) to the start of the buffers. (With two empty
+// sequences longest_alignment is 0 and next_char has wrapped to SIZE_MAX:
+// first_char = next_char + 1 wraps back to 0, and the alignment is empty)
 static void _nw_finish(const nw_aligner_t *nw, alignment_t *result,
                        size_t score_x, size_t score_y, size_t next_char,
                        size_t longest_alignment)
@@ -189,11 +192,10 @@ static void _nw_finish(const nw_aligner_t *nw, alignment_t *result,
   result->len_b = nw->score_height - 1;
 }
 
-// The traceback below, from the traceback bytes of a compact fill. Returns
-// false at a step with no valid predecessor, for the matrices to report
-// Returns 1, or 0 if a step has no predecessor (the caller then fills the
-// matrices, to report it), or -1 if out of memory (filling a band's strip
-// again, see alignment_trace_load())
+// The traceback from the traceback bytes of a compact fill. Returns 1, or
+// 0 if a step has no predecessor (the caller then fills the matrices, to
+// report it), or -1 if out of memory (filling a band's strip again, see
+// alignment_trace_load())
 static int _nw_follow_trace(nw_aligner_t *nw, alignment_t *result)
 {
   const size_t w = nw->score_width;

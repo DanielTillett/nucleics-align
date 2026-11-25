@@ -15,7 +15,7 @@ A change that alters output on purpose is a bug fix, and goes in
 ## Building and testing
 
 ```console
-$ git clone --recursive https://github.com/DanielTillett/nucleics-align
+$ git clone https://github.com/DanielTillett/nucleics-align
 $ cd nucleics-align
 $ make test                      # unit tests, then the command line fixtures
 $ make SANITIZE=1 test           # with AddressSanitizer and UBSan
@@ -38,8 +38,9 @@ $ perl perl/test.pl
 ## Pull requests
 
 - Add a test that fails without your change: a unit test in
-  [`src/tools/tests.c`](src/tools/tests.c), or a fixture in
-  [`tests/cli/cases`](tests/cli/cases) for the tools' output
+  [`tests/tests.c`](tests/tests.c) (or [`tests/test_v2_api.c`](tests/test_v2_api.c)
+  for the public API), or a fixture in [`tests/cli/cases`](tests/cli/cases)
+  for the tools' output
 - For a speed-up, include timings before and after (best of several runs,
   with the machine), and check the output is unchanged against the previous
   build. [`benchmarks/`](benchmarks) has scripts for this

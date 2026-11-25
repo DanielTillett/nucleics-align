@@ -26,7 +26,7 @@ aligner_t* smith_waterman_get_aligner(sw_aligner_t *sw);
 
 /*
  Do not alter seq_a, seq_b or scoring whilst calling this method
- or between calls to smith_waterman_get_hit
+ or between calls to smith_waterman_fetch()
 */
 void smith_waterman_align(const char *seq_a, const char *seq_b,
                           const scoring_t *scoring, sw_aligner_t *sw);
@@ -92,7 +92,9 @@ extern size_t smith_waterman_strip_min_cells;
 // reconstruct the sub-rectangle with BiWFA or linear-space global alignment
 // and verify exact optimal local score and strictly positive prefixes
 // (falling back to the exact local fill on any mismatch). Preserves optimal
-// local score; among equal-scoring paths, may choose another alignment
+// local score; among equal-scoring paths, may choose another alignment, and
+// as the cells that alignment marks as used differ, the second and later
+// hits may differ from a plain run's too
 extern bool smith_waterman_fast_rect;
 
 // An alignment to read from, and a pointer to memory to store the result

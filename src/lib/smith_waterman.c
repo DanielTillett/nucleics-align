@@ -287,14 +287,6 @@ void smith_waterman_align(const char *a, const char *b,
   smith_waterman_align2(a, b, strlen(a), strlen(b), scoring, sw);
 }
 
-// The best hit of the region a[x0 .. x0+rx) against b[y0 .. y0+ry) (of the
-// whole sequences) without its traceback bytes (see
-// smith_waterman_strip_min_cells): one scan finds the best cell, keeping
-// every strip_rows-th row; sw_follow_strips() walks the hit. want: the best
-// score a rectangle's region must have, at its last cell (0: any). Sets
-// *used where it applies (else nothing is changed); ALN_ERR_NOMEM if out
-// of memory
-
 aln_status_t smith_waterman_align_checked(const char *seq_a, const char *seq_b,
                                           size_t len_a, size_t len_b,
                                           const scoring_t *scoring,

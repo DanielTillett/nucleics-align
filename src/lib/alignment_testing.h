@@ -50,7 +50,7 @@ extern size_t hirschberg_myers_scores;
 // Rows per strip of a strip alignment (see smith_waterman_strip_min_cells;
 // 0: automatic)
 extern size_t smith_waterman_strip_rows;
-// Strip alignments made so far (not safe with alignments on other threads)
+// Strip alignments made so far (counted atomically)
 extern size_t smith_waterman_strip_alignments;
 
 // Set to n > 0: the nth allocation an alignment makes from then on fails,

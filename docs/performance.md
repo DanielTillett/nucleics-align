@@ -6,7 +6,7 @@ The point of forking `seq-align` was to make exact affine-gap alignment fast eno
 
 ## How a global alignment is dispatched
 
-When you run `needleman_wunsch`, the CLI dispatches a pair in this order (`src/tools/nw_cmdline.c`, `src/hirschberg.c`, `src/needleman_wunsch.c`):
+When you run `needleman_wunsch`, the CLI dispatches a pair in this order (`src/cli/nw_cmdline.c`, `src/lib/hirschberg.c`, `src/lib/needleman_wunsch.c`):
 
 ```mermaid
 flowchart TD

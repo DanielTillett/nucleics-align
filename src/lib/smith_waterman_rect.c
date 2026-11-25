@@ -5,6 +5,13 @@
 
 #include "smith_waterman_internal.h"
 
+// The best hit of the region a[x0 .. x0+rx) against b[y0 .. y0+ry) (of the
+// whole sequences) without its traceback bytes (see
+// smith_waterman_strip_min_cells): one scan finds the best cell, keeping
+// every strip_rows-th row; sw_follow_strips() walks the hit. want: the best
+// score a rectangle's region must have, at its last cell (0: any). Sets
+// *used where it applies (else nothing is changed); ALN_ERR_NOMEM if out
+// of memory
 aln_status_t sw_strips_fill(sw_aligner_t *sw, size_t x0, size_t y0,
                                size_t rx, size_t ry, const scoring_t *scoring,
                                score_t want, bool *used)
@@ -139,20 +146,6 @@ int sw_follow_strips(sw_aligner_t *sw, alignment_t *result)
   return 1;
 }
 
-// Best hit of a large compact alignment in little memory (as SSW finds it,
-// but with the same hit as the full search). A scan finds the best score
-// and its first cell (bx, by). A local path ending there and scoring best
-// is a best path of the reversed prefixes, so a scan of a[0..bx) and
-// b[0..by) reversed finds where every best path ending at (bx, by) starts:
-// the rectangle from the lowest start column and row to (bx, by) holds them
-// all. A fill of just that rectangle gives exact values along every best
-// path, and no cell outside it could tie with one on them, so the
-// traceback takes the same steps. The rectangle is as big as the hit: this
-// saves memory and time when hits are short against the sequences.
-// That needs every hit to start with a pair: the traceback stops at a score
-// of 0, so a hit can open with a gap only if a gap can score above 0.
-// Returns false where the scans do not apply, or if out of memory (the
-// whole fill then reports it)
 // Verify that a global alignment of a[x0..x0+rx) vs b[y0..y0+ry) is a valid
 // optimal local hit scoring exactly best with strictly positive local prefixes
 static bool _sw_verify_local_hit(const sub_table_t *t, const scoring_t *scoring,
@@ -272,6 +265,20 @@ bool sw_align_fast_rect(sw_aligner_t *sw, const char *a, const char *b,
   return true;
 }
 
+// Best hit of a large compact alignment in little memory (as SSW finds it,
+// but with the same hit as the full search). A scan finds the best score
+// and its first cell (bx, by). A local path ending there and scoring best
+// is a best path of the reversed prefixes, so a scan of a[0..bx) and
+// b[0..by) reversed finds where every best path ending at (bx, by) starts:
+// the rectangle from the lowest start column and row to (bx, by) holds them
+// all. A fill of just that rectangle gives exact values along every best
+// path, and no cell outside it could tie with one on them, so the
+// traceback takes the same steps. The rectangle is as big as the hit: this
+// saves memory and time when hits are short against the sequences.
+// That needs every hit to start with a pair: the traceback stops at a score
+// of 0, so a hit can open with a gap only if a gap can score above 0.
+// Returns false where the scans do not apply, or if out of memory (the
+// whole fill then reports it)
 bool sw_align_rect(sw_aligner_t *sw, const char *a, const char *b,
                            size_t len_a, size_t len_b,
                            const scoring_t *scoring)

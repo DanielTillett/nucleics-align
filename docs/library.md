@@ -2,197 +2,134 @@
 
 [Documentation index](README.md)
 
-After `make`, link your C or C++ code against `src/libalign.a` and `libs/string_buffer/libstrbuf.a` with `-lpthread -lz`:
+The public API is one header, `include/nucleics_align.h`, with the `na_*` functions. It is C11 and works from C++ unchanged. After `make`, link against `src/libalign.a` and pthreads (the library needs no zlib):
 
 ```sh
-cc -O3 myprog.c -I src -I libs -L src -L libs/string_buffer -lalign -lstrbuf -lpthread -lz
+cc -O3 myprog.c -I include -L src -lalign -lpthread
+c++ -O3 myprog.cpp -I include -L src -lalign -lpthread
 ```
 
 ## Minimal example
 
 ```c
 #include <stdio.h>
-#include "needleman_wunsch.h"
+#include <string.h>
+#include "nucleics_align.h"
 
 int main(void) {
-  scoring_t scoring;
-  scoring_system_default(&scoring);
+  na_scoring_t *sc = na_scoring_new(1, -2, -4, -1); // match, mismatch, gap open, gap extend
+  na_aligner_t *al = na_aligner_new();
+  na_alignment_t *res = na_alignment_new();
+  if(!sc || !al || !res) return 1;
 
-  nw_aligner_t *nw = needleman_wunsch_new();
-  nw->compact = true; // 1 traceback byte/cell, enables banding & SIMD
-  alignment_t *aln = alignment_create(256);
-
-  aln_error_t err;
-  if (needleman_wunsch_align_checked("GATTACAGATTACA", "GATCACAGTTACA",
-                                     14, 13, &scoring, nw, aln, &err) != ALN_OK) {
-    alignment_fprint_error(stderr, &err);
+  const char *a = "GATTACAGATTACA", *b = "GATCACAGTTACA";
+  if(na_global_align(al, a, strlen(a), b, strlen(b), sc, res) != NA_OK) {
+    char msg[128];
+    na_error_format(na_aligner_last_error(al), msg, sizeof(msg));
+    fprintf(stderr, "%s\n", msg);
     return 1;
   }
-  printf("%s\n%s\nscore: %d\n", aln->result_a, aln->result_b, aln->score);
+  printf("%s\n%s\nscore: %d\n", na_alignment_a(res), na_alignment_b(res),
+         na_alignment_score(res));
 
-  alignment_free(aln);
-  needleman_wunsch_free(nw);
+  na_alignment_free(res);
+  na_aligner_free(al);
+  na_scoring_free(sc);
   return 0;
 }
 ```
 
-More complete C and C++ programs live in [`examples/`](../examples/README.md) (`nw_example.c`, `sw_example.c`, and C++ versions).
+Complete C and C++ programs live in [`examples/`](../examples/README.md).
 
-## Quick API reference
+## The three objects
 
-### Result buffer (`alignment.h`)
+| Object | Made by | Holds | Threads |
+|---|---|---|---|
+| `na_scoring_t` | `na_scoring_new()`, `na_scoring_new_preset()` | match/mismatch, gap penalties, pairs, wildcards, flags | share one read-only across threads once set up |
+| `na_aligner_t` | `na_aligner_new()` | an aligner's working memory, settings and last error | one per thread |
+| `na_alignment_t` | `na_alignment_new()` | one result: the two aligned strings, score and span | one per thread, reused across calls |
 
-```c
-typedef struct {
-  char *result_a, *result_b; // NUL-terminated aligned strings (gaps as '-')
-  size_t capacity, length;   // allocated capacity; length of aligned strings
-  size_t pos_a, pos_b;       // 0-based start in seq_a / seq_b (0 for global)
-  size_t len_a, len_b;       // bases consumed from seq_a / seq_b
-  score_t score;             // optimal alignment score (int)
-} alignment_t;
+All three are opaque; free them with the matching `na_*_free()`, which accept NULL. Reuse one aligner and one result buffer for a loop of pairs: their buffers grow on demand and stay allocated.
 
-alignment_t *alignment_create(size_t capacity);
-void         alignment_free(alignment_t *result);
-```
+## Scoring
 
-Reuse one `alignment_t` and one aligner across a loop of pairs: buffers grow on demand and stay allocated between calls.
+`na_scoring_new(match, mismatch, gap_open, gap_extend)`: a gap of k letters scores `gap_open + k * gap_extend`. `na_scoring_new_preset(name)` takes `"PAM30"`, `"PAM70"`, `"BLOSUM80"`, `"BLOSUM62"`, `"DNA_HYBRIDIZATION"` (the list from `na_scoring_preset_names()`), and also `"DEFAULT"` or `"DNA_DEFAULT"` for the tools' default DNA scoring; it returns NULL for any other name. Scores must lie within `-INT_MAX/4 .. INT_MAX/4` or the setters return `NA_ERR_INVALID_ARG`.
 
-### Global alignment (`needleman_wunsch.h`)
+- `na_scoring_set_flags(sc, flags)` **replaces** every flag with the set given (so pass the whole set each time). `NA_CASE_SENSITIVE` is one-way: once set, a call without it is refused with `NA_ERR_INVALID_ARG` and changes nothing. Pairs and wildcards added before it are copied to every mix of cases; those added after are exact.
+- `na_scoring_set_pair(sc, a, b, score)` and `na_scoring_set_wildcard(sc, c, score)` add scores for a character pair, or a character that matches everything. Two wildcards against each other score the lower of the two.
+- `na_scoring_parse_matrix()` and `na_scoring_parse_pairs()` read the file formats in [`scoring/`](../scoring) from memory; on error nothing changes and `err->line` says where.
+- `na_scoring_lookup()` answers `NA_ERR_SCORING_PAIR` for a pair the scoring does not cover.
 
-```c
-nw_aligner_t *needleman_wunsch_new(void);
-void          needleman_wunsch_free(nw_aligner_t *nw);
+Flags for global alignment: `NA_FREE_START_GAP` and `NA_FREE_END_GAP` make a gap free while it runs along the first row or column (before any letter of the other sequence) or the last (after all of them). `NA_NO_GAPS_A`, `NA_NO_GAPS_B`, `NA_NO_GAPS_LONGEST` and `NA_NO_MISMATCHES` restrict the alignment; `NA_NO_MISMATCHES` with any `NA_NO_GAPS_*` is refused by `na_global_align()` (such a pair may have no alignment at all).
 
-void needleman_wunsch_align(const char *a, const char *b,
-                            const scoring_t *scoring,
-                            nw_aligner_t *nw, alignment_t *result);
+## Global alignment
 
-void needleman_wunsch_align2(const char *a, const char *b,
-                             size_t len_a, size_t len_b,
-                             const scoring_t *scoring,
-                             nw_aligner_t *nw, alignment_t *result);
+`na_global_align(al, a, len_a, b, len_b, sc, out)` writes the best global alignment of `a` and `b` into `out`. Sequences are byte strings of the given lengths: empty sequences and embedded NUL bytes are fine. On any error `out` is cleared (length 0, score 0) and the status is also kept in `na_aligner_last_error(al)`.
 
-aln_status_t needleman_wunsch_align_checked(const char *a, const char *b,
-                                            size_t len_a, size_t len_b,
-                                            const scoring_t *scoring,
-                                            nw_aligner_t *nw,
-                                            alignment_t *result,
-                                            aln_error_t *err);
-```
+`na_aligner_set_method()` picks how:
 
-Set `nw->compact = true` whenever you do not need to inspect the raw score matrices afterwards. Whenever `opts.striped` is enabled (the default) and the scoring options are supported by the striped kernels, it uses 12x less memory (one traceback byte per cell) and enables exact banding and difference-encoded SIMD lanes; otherwise (for example if `opts.striped = false`) it falls back to the three-matrix scalar fill.
+| Method | What runs | Settings it honours |
+|---|---|---|
+| `NA_METHOD_AUTO` (default) | exact DP with one traceback byte per cell, banded and SIMD where it applies; the documented tie-breaking | `linear_above`, `linear_fallback`, `threads` |
+| `NA_METHOD_FULL` | the three full score matrices (12 bytes per cell); needed for `na_debug_fprint_matrices()` | `threads` |
+| `NA_METHOD_LINEAR` | Hirschberg / Myers-Miller in linear memory; refuses the free-gap, no-gap and no-mismatch flags and a positive gap open (`NA_ERR_UNSUPPORTED`) | `threads` |
+| `NA_METHOD_WFA` | bidirectional wavefront alignment within `wfa_budget` diagonal updates, otherwise as AUTO | `wfa_budget`, then as AUTO |
 
-### Local alignment (`smith_waterman.h`)
+Every method returns the same optimal score. AUTO and FULL return the same alignment, chosen by the tie-breaking rules below; LINEAR and WFA, and AUTO once `na_aligner_set_linear_above()` or `na_aligner_set_linear_fallback()` has sent a pair to linear memory, may return another alignment with that score.
 
-```c
-sw_aligner_t *smith_waterman_new(void);
-void          smith_waterman_free(sw_aligner_t *sw);
-void          smith_waterman_set_min_score(sw_aligner_t *sw, score_t min_score);
-void          smith_waterman_set_compact(sw_aligner_t *sw, bool compact);
-void          smith_waterman_set_options(sw_aligner_t *sw,
-                                         const alignment_options_t *opts);
+`na_global_score(al, a, len_a, b, len_b, sc, &score)` gives the score alone in linear memory (unit-cost scoring uses Myers' bit-vector algorithm). It ignores the method; for flags linear memory refuses, it aligns with the compact matrices and reports their score.
 
-void smith_waterman_align(const char *a, const char *b,
-                          const scoring_t *scoring, sw_aligner_t *sw);
-int  smith_waterman_fetch(sw_aligner_t *sw, alignment_t *result); // 1=hit, 0=done
+## Local alignment
 
-aln_status_t smith_waterman_align_checked(const char *a, const char *b,
-                                          size_t len_a, size_t len_b,
-                                          const scoring_t *scoring,
-                                          sw_aligner_t *sw, aln_error_t *err);
-int          smith_waterman_fetch_checked(sw_aligner_t *sw, alignment_t *result,
-                                          aln_error_t *err);
-```
+`na_local_align(al, a, len_a, b, len_b, sc)` finds the local alignments; `na_local_next(al, out)` then fetches them best first, returning `NA_OK` with a hit in `out`, `NA_DONE` after the last, or an error. Hits never share a cell with an earlier one, so each is a distinct alignment. Only hits scoring at least `na_aligner_set_min_local_score()` are fetched: the default is 1 (every positive hit), and values below 1 are clamped to 1. The command line tools instead default to `match * max(0.2 * shorter length, 2)`, which keeps the number of hits on long sequences sensible; set it yourself for long pairs.
 
-Do not modify `seq_a`, `seq_b` or `scoring` between `smith_waterman_align()` and `smith_waterman_fetch()`. If you only want the best hit, call `smith_waterman_set_compact(sw, true)` before aligning; if you later ask for a second hit, it fills the full matrices automatically.
+`a`, `b` and `sc` must stay valid and unchanged until the next `na_local_align()`, `na_global_align()`, `na_global_score()` or `na_aligner_free()`: any of those ends the iteration (`na_local_next()` then returns `NA_DONE`). The first hit of a long pair is found with little memory; the second fills the score matrices (12 bytes per cell).
 
-### Linear-space global alignment & score-only (`hirschberg.h`)
+`na_aligner_set_fast_local(al, true)` reconstructs the first hit of a long pair with wavefront or linear-memory alignment, verified against the exact score. The score is the same, but among equal-scoring paths another may be chosen, and because the cells it marks as used differ, later hits can differ too.
 
-```c
-bool hirschberg_align(const char *a, const char *b,
-                      const scoring_t *scoring, alignment_t *result);
-bool hirschberg_align_opts(const char *a, const char *b,
-                           size_t len_a, size_t len_b,
-                           const scoring_t *scoring,
-                           const alignment_options_t *opts,
-                           alignment_t *result);
-bool hirschberg_score(const char *a, const char *b,
-                      const scoring_t *scoring, score_t *score);
-bool hirschberg_score_opts(const char *a, const char *b,
-                           size_t len_a, size_t len_b,
-                           const scoring_t *scoring,
-                           const alignment_options_t *opts,
-                           score_t *score);
+## Results
 
-aln_status_t hirschberg_align_checked(const char *a, const char *b,
-                                      size_t len_a, size_t len_b,
-                                      const scoring_t *scoring,
-                                      const alignment_options_t *opts,
-                                      alignment_t *result, aln_error_t *err);
-aln_status_t hirschberg_score_checked(const char *a, const char *b,
-                                      size_t len_a, size_t len_b,
-                                      const scoring_t *scoring,
-                                      const alignment_options_t *opts,
-                                      score_t *score, aln_error_t *err);
-```
+`na_alignment_a()` and `na_alignment_b()` return the aligned strings with `'-'` for gaps, `na_alignment_length()` their length, `na_alignment_score()` the score, and `na_alignment_span()` the 0-based start and the letters consumed in each sequence (for a global alignment `0, len_a, 0, len_b`). The strings belong to the result object: they are valid until the next call that writes to it or frees it. Copy them if you need them longer. Passing NULL to these accessors gives `""`, 0 or no span.
 
-### Direct WFA and Myers helpers (`alignment.h`)
+Do not pass a result's own strings back in as input to a call that writes to the same result.
 
-Build a `sub_table_t` for the sequence pair first, and free it when done:
+`na_score_alignment(res_a, res_b, len, sc, &score)` scores a pair of aligned strings as the aligner would, including the free start/end gap flags; a column of two gaps is `NA_ERR_INVALID_ARG`, an unscored pair `NA_ERR_SCORING_PAIR` (so is a mismatch under `NA_NO_MISMATCHES`).
 
-```c
-bool sub_table_build(sub_table_t *t, const scoring_t *scoring,
-                     const char *a, size_t len_a,
-                     const char *b, size_t len_b);
-void sub_table_free(sub_table_t *t);
+## Settings
 
-aln_status_t alignment_wfa_align(const sub_table_t *table, const scoring_t *scoring,
-                                 const char *seq_a, size_t len_a,
-                                 const char *seq_b, size_t len_b,
-                                 size_t budget, alignment_t *result);
-bool alignment_wfa_score(const sub_table_t *table, const scoring_t *scoring,
-                         const char *seq_a, size_t len_a,
-                         const char *seq_b, size_t len_b,
-                         size_t budget, score_t *score);
-bool alignment_myers_score(const sub_table_t *table, const scoring_t *scoring,
-                           const char *seq_a, size_t len_a,
-                           const char *seq_b, size_t len_b, score_t *score);
-```
+| Setter | Meaning | Default |
+|---|---|---|
+| `na_aligner_set_threads(al, n)` | threads within one alignment (0: half the CPUs; at most 4096) | 0 |
+| `na_aligner_set_method(al, m)` | see above | `NA_METHOD_AUTO` |
+| `na_aligner_set_linear_above(al, n)` | under AUTO, align pairs whose longer sequence has at least n letters in linear memory (0: never) | 0 |
+| `na_aligner_set_linear_fallback(al, on)` | under AUTO, align in linear memory when the matrices would not fit or ran out of memory | off |
+| `na_aligner_set_wfa_budget(al, n)` | diagonal updates `NA_METHOD_WFA` may spend before giving the pair to AUTO (0: `min(2^28, 256 * (len_a + len_b))`) | 0 |
+| `na_aligner_set_min_local_score(al, s)` | lowest local hit score fetched (clamped to at least 1) | 1 |
+| `na_aligner_set_fast_local(al, on)` | see local alignment | off |
 
-`alignment_wfa_align()` (`budget` in diagonal updates; set globally via `alignment_wfa_budget`, default `0` = `min(2^28, 256 * (len_a + len_b))`) returns `ALN_ERR_UNSUPPORTED` when the scoring is unsupported (anything other than one match score, one mismatch score, and standard gap penalties), when the wavefront exceeds `budget`, or if WFA setup/wavefront allocation fails; it returns `ALN_ERR_NOMEM` if reserving the output `alignment_t` buffer fails. `alignment_wfa_score()` takes `budget` in diagonal updates and returns `false` on unsupported scoring, budget exhaustion, or allocation failure. Unlike calling WFA directly, `needleman_wunsch_align_checked()` with `opts.wfa_align = true` automatically falls back to the matrix aligner whenever WFA does not finish.
+Settings apply to the calls after them.
 
-For unit-cost edit distance (`0 / -1 / 0 / -1`), `alignment_myers_score()` uses Ukkonen exponential diagonal banding with a full-width fallback, `alignment_myers_score_banded()` runs only the banded phase, and `alignment_myers_row()` computes exact forward or reverse split rows for single-threaded `--linear` Hirschberg. For opt-in fast local reconstruction, `smith_waterman_fast_rect` (default `false`) enables forward/reverse $O(|B|)$ scans with `alignment_sw_scan_hint()` followed by verified BiWFA/Hirschberg reconstruction on single-hit compact runs.
+## Errors
 
-### Scoring setup (`alignment_scoring.h`)
+Every fallible call returns an `na_status_t`; the aligner's calls also store it, with any detail, in `na_aligner_last_error(al)`, which stays valid until the aligner's next call. `na_strerror()` names a status and `na_error_format()` writes the detail (the offending character pair, or the line of a parse error) into a buffer.
 
-```c
-void scoring_system_default(scoring_t *scoring);
-bool scoring_system_by_name(scoring_t *scoring, const char *name); // PAM30, BLOSUM62, ...
-void scoring_init(scoring_t *scoring, int match, int mismatch,
-                  int gap_open, int gap_extend,
-                  bool no_start_gap_penalty, bool no_end_gap_penalty,
-                  bool no_gaps_in_a, bool no_gaps_in_b,
-                  bool no_mismatches, bool case_sensitive);
-void scoring_add_wildcard(scoring_t *scoring, char c, int score);
-void scoring_add_mutation(scoring_t *scoring, char a, char b, int score);
-void scoring_make_case_sensitive(scoring_t *scoring);
-```
+| Status | Meaning |
+|---|---|
+| `NA_OK` | Success |
+| `NA_DONE` | `na_local_next()`: no more hits |
+| `NA_ERR_INVALID_ARG` | NULL where a pointer is needed, an unknown flag, a score out of range, or a change the scoring refuses |
+| `NA_ERR_SCORING_PAIR` | A character pair in the sequences has no score (`err->a`, `err->b`) |
+| `NA_ERR_TOO_LONG` | The score matrices would not fit in memory addresses |
+| `NA_ERR_OVERFLOW` | Scores could pass `INT_MAX`, or reach the matrices' floor |
+| `NA_ERR_UNSUPPORTED` | The method refuses these flags or penalties (linear memory some; Smith-Waterman refuses gaps that score above 0) |
+| `NA_ERR_NOMEM` | Out of memory; the aligner stays usable |
+| `NA_ERR_PARSE` | A scoring file's text is malformed (`err->line`) |
 
-## Per-aligner settings (`alignment_options_t`)
-
-Everything that tunes speed or threading without changing the result lives in `alignment_options_t` (`src/alignment.h`). Start with `alignment_options_default(&opts)`, adjust what you need, and attach it via `nw->options = &opts`, `smith_waterman_set_options(sw, &opts)`, or `hirschberg_*_opts()`. That way different threads can run with independent settings without touching global variables.
-
-> [!IMPORTANT]
-> Three fields in `alignment_options_t` *can* change which equal-scoring alignment is returned (all three are off by default):
-> - `linear_fallback` (`alignment_linear_fallback`): fall back to linear space if a pair is too big for matrices or runs out of memory.
-> - `linear_above` (`alignment_linear_above`): use linear space whenever the longer sequence has at least this many letters.
-> - `wfa_align` (`alignment_wfa_alignment`): try `alignment_wfa_align()` first for similar pairs (within a cell budget), falling back to the matrices otherwise.
->
-> All three always return the same optimal score.
+`na_debug_fprint_matrices(al, fp)` prints the three score matrices of the last `NA_METHOD_FULL` alignment, for checking a scoring rule by hand; it reads the sequences and scoring given to that call, which must still be valid. It prints nothing after any other method.
 
 ## Equal-scoring alignments
 
-When two alignments share the same optimal score, the choice is deterministic and identical across every full-matrix path (score matrices, traceback bytes, exact bands, strip-kept bands, and difference-encoded lanes):
+When two alignments share the best score, the choice under `NA_METHOD_AUTO` and `NA_METHOD_FULL` (and the command line tools) is deterministic and identical across every full-matrix path (score matrices, traceback bytes, exact bands, strip-kept bands and difference-encoded lanes):
 
 <p align="center">
   <img src="figures/tie-breaking.svg" width="760" alt="Gotoh traceback tie-breaking: current state fixes the spatial step; GAP_A before GAP_B before MATCH picks the predecessor state, shifting gaps right">
@@ -200,28 +137,26 @@ When two alignments share the same optimal score, the choice is deterministic an
 
 - **Starting cell:** Needleman-Wunsch starts at the bottom-right cell `(len_a, len_b)` in the best matrix in the order `GAP_A`, `GAP_B`, `MATCH`. Smith-Waterman starts in `MATCH` at the highest-scoring cell (breaking ties by lowest end coordinate `x` in `seq_a`, then `y` in `seq_b`).
 - **Each step back:** The current matrix fixes the spatial step (`GAP_A` moves to `(x, y-1)`, `GAP_B` to `(x-1, y)`, `MATCH` to `(x-1, y-1)`). At that predecessor cell, traceback picks the first matrix in the order `GAP_A`, `GAP_B`, `MATCH` whose score plus the step's penalty equals the current score. That tends to push gaps toward the right end of runs (for example, `AAA` vs `AA` gives `AA-`, and `ACCA` vs `ACA` gives `AC-A`).
-- **Local hits:** Candidate hits are sorted by score (highest first), then by the hit's end cell (lowest `x`, then lowest `y`). The returned `pos_a` and `pos_b` are the 0-based start coordinates computed during traceback. A hit stops at score `0`, and any candidate path that touches a cell already used by an earlier hit is discarded.
-- **Linear space & WFA:** `--linear` (`hirschberg_align()`) and `--wfa` (`alignment_wfa_align()`) always find the same optimal score, but use their own midpoint or wavefront tie-breaking.
+- **Local hits:** Candidate hits are sorted by score (highest first), then by the hit's end cell (lowest `x`, then lowest `y`). The returned start positions are computed during traceback. A hit stops at score `0`, and any candidate path that touches a cell already used by an earlier hit is discarded.
+- **Linear memory and WFA:** `NA_METHOD_LINEAR` and `NA_METHOD_WFA` always find the same optimal score, but use their own midpoint or wavefront tie-breaking.
 
-## Error handling (`*_checked()`)
+## Internal API (`src/lib`)
 
-The error contract differs by function family:
-- **`needleman_wunsch_align()` / `smith_waterman_align()`:** print to `stderr` and call `exit(EXIT_FAILURE)` on invalid input, overflow, or OOM.
-- **`hirschberg_align()` / `hirschberg_score()` (and `*_opts()`):** return `false` on unsupported options, undefined character pairs, or score overflow, and call `exit(EXIT_FAILURE)` on OOM.
-- **`needleman_wunsch_align_checked()`, `smith_waterman_align_checked()`, `hirschberg_align_checked()`, `hirschberg_score_checked()`:** return an `aln_status_t` for every error including OOM and optionally populate `aln_error_t` (which `alignment_fprint_error()` formats for you).
-- **`smith_waterman_fetch_checked()`:** returns `1` for a hit, and `0` both when hits are exhausted and on error. Pass a non-NULL `aln_error_t *err` and check `err->status != ALN_OK` when it returns `0` to distinguish an error from end-of-hits.
+The `na_*` functions wrap the aligners in `src/lib`, which the command line tools and the test suite use directly. They are not a stable interface, but they expose a few things the public API does not (the raw `aligner_t` matrices, direct wavefront and Myers calls, the tuning globals). Compile against them with `-I include -I src/lib`.
 
-| Status | Meaning |
-|---|---|
-| `ALN_OK` | Success |
-| `ALN_ERR_SCORING` | A character pair has no defined score (`err->a`, `err->b` give the pair) |
-| `ALN_ERR_TOO_LONG` | Matrix dimensions would overflow `size_t` |
-| `ALN_ERR_OVERFLOW` | Scores could overflow `int` (or drop below the DP floor) |
-| `ALN_ERR_UNSUPPORTED` | Linear space or WFA does not support these options or penalties (or direct WFA hit its cell budget) |
-| `ALN_ERR_NOMEM` | Out of memory during alignment (no partial state is left behind; the aligner stays valid for subsequent calls) |
+| Function | Header | What it does |
+|---|---|---|
+| `needleman_wunsch_align_checked()` | `needleman_wunsch.h` | Global alignment (`nw->compact = true` for one traceback byte per cell) |
+| `smith_waterman_align_checked()`, `smith_waterman_fetch_checked()` | `smith_waterman.h` | Local alignments, best first |
+| `hirschberg_align_checked()`, `hirschberg_score_checked()` | `hirschberg.h` | Linear-memory global alignment and score |
+| `alignment_wfa_align()`, `alignment_wfa_score()` | `alignment.h` | Wavefront alignment and score, given a `sub_table_t` built by `sub_table_build()` |
+| `alignment_myers_score()` | `alignment.h` | Bit-vector unit-cost edit distance |
+| `scoring_init()`, `scoring_system_by_name()`, `scoring_add_mutation()`, `scoring_add_wildcard()` | `alignment_scoring.h` | Scoring setup |
 
-Keep individual scores within `[-SCORE_ABS_MAX, SCORE_ABS_MAX]` (`INT_MAX / 4`). Creating an aligner or result buffer (`needleman_wunsch_new()`, `alignment_create()`) still exits on OOM.
+Every aligner has an unchecked form (`needleman_wunsch_align()`, `smith_waterman_align()`, `hirschberg_align()`) that prints the error and calls `exit()` instead of returning a status, and a `*_checked()` form returning an `aln_status_t` (`ALN_OK`, `ALN_ERR_SCORING`, `ALN_ERR_TOO_LONG`, `ALN_ERR_OVERFLOW`, `ALN_ERR_UNSUPPORTED`, `ALN_ERR_NOMEM`, which `na_status_t` mirrors) with an optional `aln_error_t` that `alignment_fprint_error()` formats. `smith_waterman_fetch_checked()` returns 1 for a hit and 0 both at the end and on error: check `err->status`.
 
-## Printing helpers
+Speed and threading settings that do not change the result live in `alignment_options_t` (`alignment_options_default()`, then `nw->options = &opts`, `smith_waterman_set_options(sw, &opts)`, or the `hirschberg_*_opts()` calls). `linear_fallback`, `linear_above` and `wfa_align` are the three that may change which equal-scoring alignment comes back.
 
-`alignment_colour_fprint_against()` and `alignment_fprint_spacer()` write coloured alignments and `|`/`*` marker lines to any `FILE *`.
+`alignment_wfa_align()` takes a budget in diagonal updates and returns `ALN_ERR_UNSUPPORTED` when the scoring is not one match score, one mismatch score and gap penalties, or the budget runs out, and `ALN_ERR_NOMEM` when memory does. Direct callers get no fallback; `needleman_wunsch_align_checked()` with `opts.wfa_align` falls back to the matrices itself.
+
+`alignment_colour_fprint_against()` and `alignment_fprint_spacer()` (`alignment.h`) write coloured alignments and `|`/`*` marker lines to a `FILE *`.

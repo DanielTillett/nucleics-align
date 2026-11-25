@@ -30,7 +30,7 @@ Nucleics Align keeps the same mathematics and tie-breaking rules, and adds strip
 ## Quick start
 
 ```console
-$ git clone --recursive https://github.com/DanielTillett/nucleics-align
+$ git clone https://github.com/DanielTillett/nucleics-align
 $ cd nucleics-align
 $ make
 $ ./bin/needleman_wunsch --printscores --pretty GATTACAGATTACA GATCACAGTTACA
@@ -83,7 +83,7 @@ To update an existing checkout:
 
 ```console
 $ git pull
-$ git submodule update --init
+$ make
 ```
 
 <details>
@@ -91,7 +91,7 @@ $ git submodule update --init
 
 On x86-64 Linux the SIMD kernels use GCC/clang function multi-versioning (`target_clones` for `avx2`, `sse4.1`, `default`). GCC builds use 8-lane vectors across all three versions; clang uses 4-lane vectors when multi-versioning. `NATIVE=1` enables 16-lane AVX-512 where available. On Arm64 (including Apple silicon), NEON is used automatically.
 
-Bundled dependencies in `libs/` (git submodules, all by Isaac Turner): [string_buffer](https://github.com/noporpoise/string_buffer) (CC0 1.0), [seq_file](https://github.com/noporpoise/seq_file) and [sort_r](https://github.com/noporpoise/sort_r) (both public domain).
+The library depends on nothing but pthreads; the command line tools also need zlib (for `.gz` input). Since v2.0 nothing is bundled: the `libs/` submodules of earlier versions are gone.
 
 </details>
 
@@ -174,18 +174,22 @@ Tests: `perl perl/test.pl`.
 
 ## C library
 
-Link against `src/libalign.a`, `libs/string_buffer/libstrbuf.a`, `-lpthread` and `-lz`:
+One header, `include/nucleics_align.h`, for C11 and C++. Link against `src/libalign.a` and pthreads (no zlib):
 
-| Function | Header | What it does |
-|---|---|---|
-| `needleman_wunsch_align()` | `needleman_wunsch.h` | Global alignment |
-| `smith_waterman_align()`, `smith_waterman_fetch()` | `smith_waterman.h` | Local alignments, best first |
-| `hirschberg_align()` / `hirschberg_score()` | `hirschberg.h` | Linear-space global alignment / score only |
-| `alignment_wfa_align()` / `alignment_wfa_score()` | `alignment.h` | Wavefront alignment / score |
-| `alignment_myers_score()` | `alignment.h` | Bit-vector unit-cost edit distance |
-| `scoring_init()`, `scoring_system_*()` | `alignment_scoring.h` | Scoring systems and matrices |
+```sh
+cc -O3 myprog.c -I include -L src -lalign -lpthread
+```
 
-Every main aligner has a `*_checked()` counterpart that returns an `aln_status_t` error code instead of calling `exit()`. See [docs/library.md](docs/library.md) and [`examples/`](examples).
+| Call | What it does |
+|---|---|
+| `na_scoring_new()`, `na_scoring_new_preset()`, `na_scoring_set_*()` | Scores: match/mismatch, gaps, pairs, wildcards, flags, or a preset such as `"BLOSUM62"` |
+| `na_global_align()` | Best global alignment into a reusable `na_alignment_t` |
+| `na_global_score()` | The score alone, in linear memory |
+| `na_local_align()`, `na_local_next()` | Local alignments, fetched best first |
+| `na_aligner_set_method()`, `na_aligner_set_threads()`, ... | Full matrices, linear memory or wavefront; threads; budgets |
+| `na_score_alignment()` | Score a given pair of aligned strings |
+
+Every call returns an `na_status_t`, with the detail in `na_aligner_last_error()`; nothing in the library calls `exit()`. See [docs/library.md](docs/library.md) and [`examples/`](examples).
 
 ## Documentation
 
@@ -200,4 +204,4 @@ The full [documentation index](docs/README.md) covers:
 
 - **Citing:** Use [`CITATION.cff`](CITATION.cff) (or GitHub's **Cite this repository** button), plus the original method papers in [docs/algorithms.md](docs/algorithms.md).
 - **Contributing:** Open an issue or PR on [GitHub](https://github.com/DanielTillett/nucleics-align/issues); see [CONTRIBUTING.md](CONTRIBUTING.md) and [CHANGELOG.md](CHANGELOG.md).
-- **Licence:** [BSD 3-Clause](LICENSE); see [NOTICE](NOTICE) for attribution to Isaac Turner's `seq-align` (Unlicense), bundled `libs/`, and the NCBI BLAST matrices in `scoring/`.
+- **Licence:** [BSD 3-Clause](LICENSE); see [NOTICE](NOTICE) for attribution to Isaac Turner's `seq-align` (Unlicense) and the NCBI BLAST matrices in `scoring/`.

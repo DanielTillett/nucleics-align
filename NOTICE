@@ -11,13 +11,10 @@ source files that do are marked "original author: Isaac Turner".
 The changes and additions made in Nucleics Align are copyright (c) 2026
 Daniel Tillett and are licensed under the BSD 3-Clause License in LICENSE.
 
-Bundled dependencies in libs/ (git submodules), by Isaac Turner, keep their
-own terms:
-  string_buffer  CC0 1.0 (libs/string_buffer/LICENSE)
-  seq_file       Public domain (libs/seq_file/README.md)
-  sort_r         Public domain (libs/sort_r/README.md)
-libs/seq_file/benchmarks/kseq.h is under the MIT License (copyright
-Attractive Chaos); it is not compiled into Nucleics Align.
+Versions before 2.0 bundled Isaac Turner's string_buffer (CC0 1.0),
+seq_file and sort_r (public domain) as git submodules in libs/. Nucleics
+Align 2.0 and later use none of them: the sequence reader in
+src/cli/cli_seqio.c and the sort in src/lib/smith_waterman.c are their own.
 
 The substitution matrices in scoring/ were obtained from the NCBI BLAST
 matrix archive (https://ftp.ncbi.nlm.nih.gov/blast/matrices/); each file

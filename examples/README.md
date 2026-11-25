@@ -7,8 +7,8 @@ point for your own:
 |---|---|
 | [`nw_example.c`](nw_example.c) | Global alignment (Needleman-Wunsch) with free start and end gaps and custom substitution scores |
 | [`sw_example.c`](sw_example.c) | Local alignments (Smith-Waterman) with custom substitution scores, fetching hits best first |
-| [`nw_example.cpp`](nw_example.cpp) | Global alignment from C++ with no gaps or mismatches allowed, so it needs sequences that match exactly |
-| [`sw_example.cpp`](sw_example.cpp) | Local alignment from C++ with no gaps or mismatches allowed: the exact common substrings |
+| [`nw_example.cpp`](nw_example.cpp) | Global alignment from C++, case sensitive, reporting errors with `na_strerror()` |
+| [`sw_example.cpp`](sw_example.cpp) | Local alignments from C++, case sensitive, fetching hits best first |
 
 Build them after building the library (`make` at the top level builds them
 too):
