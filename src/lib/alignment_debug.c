@@ -83,46 +83,33 @@ void alignment_colour_fprint_against(FILE *out, const char *alignment_a,
                                      const char *alignment_b,
                                      char case_sensitive)
 {
+  // One colour per column (a gap in b red, a mismatch green, else none),
+  // switched only where the next column's differs
   size_t i;
-  char red = 0, green = 0;
+  const char *colour = NULL;
 
   for(i = 0; alignment_a[i] != '\0'; i++)
   {
+    const char *want = NULL;
     if(alignment_b[i] == '-')
-    {
-      if(!red)
-      {
-        fputs(align_col_indel, out);
-        red = 1;
-      }
-    }
-    else if(red)
-    {
-      red = 0;
-      fputs(align_col_stop, out);
-    }
+      want = align_col_indel;
+    else if(alignment_a[i] != '-' &&
+            ((case_sensitive && alignment_a[i] != alignment_b[i]) ||
+             (!case_sensitive && tolower((unsigned char)alignment_a[i]) !=
+                                 tolower((unsigned char)alignment_b[i]))))
+      want = align_col_mismatch;
 
-    if(((case_sensitive && alignment_a[i] != alignment_b[i]) ||
-        (!case_sensitive && tolower((unsigned char)alignment_a[i]) !=
-                            tolower((unsigned char)alignment_b[i]))) &&
-       alignment_a[i] != '-' && alignment_b[i] != '-')
+    if(want != colour)
     {
-      if(!green)
-      {
-        fputs(align_col_mismatch, out);
-        green = 1;
-      }
-    }
-    else if(green)
-    {
-      green = 0;
-      fputs(align_col_stop, out);
+      if(colour != NULL) fputs(align_col_stop, out);
+      if(want != NULL) fputs(want, out);
+      colour = want;
     }
 
     putc(alignment_a[i], out);
   }
 
-  if(green || red)
+  if(colour != NULL)
   {
     // Stop all colours
     fputs(align_col_stop, out);

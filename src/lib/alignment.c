@@ -484,6 +484,7 @@ void alignment_ensure_capacity(alignment_t* result, size_t strlength)
 
 bool alignment_reserve(alignment_t* result, size_t strlength)
 {
+  if(strlength == SIZE_MAX) return false; // its '\0' would not fit
   size_t capacity = strlength+1;
   if(result->capacity < capacity)
   {

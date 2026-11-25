@@ -8,12 +8,18 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <assert.h>
-
 #include "alignment.h"
 #include "needleman_wunsch.h"
 #include "smith_waterman.h"
 #include "hirschberg.h"
+
+// Always evaluated (assert() would vanish, calls and all, under NDEBUG)
+#define CHECK(cond) do { \
+  if(!(cond)) { \
+    fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond); \
+    exit(EXIT_FAILURE); \
+  } \
+} while(0)
 
 static unsigned int rng_state = 123456789u;
 static unsigned int next_rand(void)
@@ -93,7 +99,7 @@ static void test_biwfa_deep(void)
     {3, -5, -7, -2}, // high coprime penalties
   };
   char *a = malloc(4096), *b = malloc(5000);
-  assert(a && b);
+  CHECK(a && b);
   alignment_t *aln = alignment_create(8192);
 
   for(size_t pi = 0; pi < sizeof(params)/sizeof(params[0]); pi++) {
@@ -106,18 +112,18 @@ static void test_biwfa_deep(void)
     size_t la = strlen(a), lb = strlen(b);
 
     sub_table_t tbl;
-    assert(sub_table_build(&tbl, &sc, a, la, b, lb));
+    CHECK(sub_table_build(&tbl, &sc, a, la, b, lb));
     score_t ref = 0;
-    assert(hirschberg_score2(a, b, la, lb, &sc, &ref));
+    CHECK(hirschberg_score2(a, b, la, lb, &sc, &ref));
 
     // Tiny budget must decline cleanly
-    assert(alignment_wfa_align(&tbl, &sc, a, la, b, lb, 50, aln) ==
+    CHECK(alignment_wfa_align(&tbl, &sc, a, la, b, lb, 50, aln) ==
            ALN_ERR_UNSUPPORTED);
     // Sufficient budget must succeed via BiWFA (> 2048 cutoff) and rescore identically
-    assert(alignment_wfa_align(&tbl, &sc, a, la, b, lb, 5000000, aln) == ALN_OK);
-    assert(aln->score == ref);
-    assert(rescore_global(aln->result_a, aln->result_b, &sc) == ref);
-    assert(same_letters(aln->result_a, a) && same_letters(aln->result_b, b));
+    CHECK(alignment_wfa_align(&tbl, &sc, a, la, b, lb, 5000000, aln) == ALN_OK);
+    CHECK(aln->score == ref);
+    CHECK(rescore_global(aln->result_a, aln->result_b, &sc) == ref);
+    CHECK(same_letters(aln->result_a, a) && same_letters(aln->result_b, b));
     sub_table_free(&tbl);
   }
   alignment_free(aln);
@@ -141,22 +147,22 @@ static void test_myers_boundaries(void)
     for(size_t ri = 0; ri < sizeof(rates)/sizeof(rates[0]); ri++) {
       size_t la = lens[li];
       char *a = malloc(la + 1), *b = malloc(la * 2 + 64);
-      assert(a && b);
+      CHECK(a && b);
       rand_dna(a, la);
       mutate_dna(b, a, rates[ri]);
       size_t lb = strlen(b);
 
       sub_table_t tbl;
-      assert(sub_table_build(&tbl, &sc, a, la, b, lb));
+      CHECK(sub_table_build(&tbl, &sc, a, la, b, lb));
       score_t ms = 0, bs = 0, hs = 0;
-      assert(alignment_myers_score(&tbl, &sc, a, la, b, lb, &ms));
+      CHECK(alignment_myers_score(&tbl, &sc, a, la, b, lb, &ms));
       if(alignment_myers_score_banded(&tbl, &sc, a, la, b, lb, &bs))
-        assert(bs == ms);
-      assert(hirschberg_align_checked(a, b, la, lb, &sc, &opts, aln, NULL) == ALN_OK);
+        CHECK(bs == ms);
+      CHECK(hirschberg_align_checked(a, b, la, lb, &sc, &opts, aln, NULL) == ALN_OK);
       hs = aln->score;
-      assert(ms == hs);
-      assert(rescore_global(aln->result_a, aln->result_b, &sc) == ms);
-      assert(same_letters(aln->result_a, a) && same_letters(aln->result_b, b));
+      CHECK(ms == hs);
+      CHECK(rescore_global(aln->result_a, aln->result_b, &sc) == ms);
+      CHECK(same_letters(aln->result_a, a) && same_letters(aln->result_b, b));
       sub_table_free(&tbl);
       free(a);
       free(b);
@@ -170,16 +176,16 @@ static void test_myers_boundaries(void)
     for(size_t ci = 0; ci < 2; ci++) {
       size_t ma = cases[ci][0], pad = cases[ci][1], nb = ma + pad;
       char *a = malloc(ma + 1), *b = malloc(nb + 1);
-      assert(a && b);
+      CHECK(a && b);
       memset(a, 'A', ma); a[ma] = '\0';
       memset(b, 'C', pad); memset(b + pad, 'A', ma); b[nb] = '\0';
       sub_table_t tbl;
-      assert(sub_table_build(&tbl, &sc, a, ma, b, nb));
+      CHECK(sub_table_build(&tbl, &sc, a, ma, b, nb));
       score_t ms = 0, bs = 0;
-      assert(alignment_myers_score(&tbl, &sc, a, ma, b, nb, &ms));
-      assert(ms == -(score_t)pad);
-      assert(alignment_myers_score_banded(&tbl, &sc, a, ma, b, nb, &bs));
-      assert(bs == ms);
+      CHECK(alignment_myers_score(&tbl, &sc, a, ma, b, nb, &ms));
+      CHECK(ms == -(score_t)pad);
+      CHECK(alignment_myers_score_banded(&tbl, &sc, a, ma, b, nb, &bs));
+      CHECK(bs == ms);
       sub_table_free(&tbl);
       free(a);
       free(b);
@@ -205,36 +211,36 @@ static void test_sw_fastlocal(void)
   scoring_init(&sc1, 2, -1, -1, -1, false, false, false, false, false, true);
   smith_waterman_fast_rect = true;
   smith_waterman_align("ATATT", "TAATT", &sc1, sw);
-  assert(smith_waterman_fetch(sw, r1) == 1);
-  assert(r1->score == 6);
+  CHECK(smith_waterman_fetch(sw, r1) == 1);
+  CHECK(r1->score == 6);
 
   // 2. Codex multi-hit counterexample: ACAA vs ACCCAA (+2/-1/0/-1)
   scoring_t sc2;
   scoring_init(&sc2, 2, -1, 0, -1, false, false, false, false, false, true);
   smith_waterman_align("ACAA", "ACCCAA", &sc2, sw);
-  assert(smith_waterman_fetch(sw, r1) == 1);
-  assert(r1->score == 6);
+  CHECK(smith_waterman_fetch(sw, r1) == 1);
+  CHECK(r1->score == 6);
   int f2 = smith_waterman_fetch(sw, r2);
-  assert(f2 == 0 || (f2 == 1 && r2->score <= r1->score));
+  CHECK(f2 == 0 || (f2 == 1 && r2->score <= r1->score));
 
   // 3. 3000 bp pair: exact optimal score match vs default Gotoh + 2nd hit
   scoring_t sc3;
   scoring_init(&sc3, 1, -2, -4, -1, false, false, false, false, false, true);
   char *a = malloc(3100), *b = malloc(3500);
-  assert(a && b);
+  CHECK(a && b);
   rand_dna(a, 3000);
   mutate_dna(b, a, 50);
 
   smith_waterman_fast_rect = false;
   smith_waterman_align(a, b, &sc3, sw);
-  assert(smith_waterman_fetch(sw, rdef) == 1);
+  CHECK(smith_waterman_fetch(sw, rdef) == 1);
 
   smith_waterman_fast_rect = true;
   smith_waterman_align(a, b, &sc3, sw);
-  assert(smith_waterman_fetch(sw, r1) == 1);
-  assert(r1->score == rdef->score);
+  CHECK(smith_waterman_fetch(sw, r1) == 1);
+  CHECK(r1->score == rdef->score);
   f2 = smith_waterman_fetch(sw, r2);
-  assert(f2 == 0 || (f2 == 1 && r2->score <= r1->score));
+  CHECK(f2 == 0 || (f2 == 1 && r2->score <= r1->score));
 
   smith_waterman_fast_rect = false;
   smith_waterman_rect_min_cells = saved_min;
@@ -269,12 +275,12 @@ static void test_strip_col0_and_striped_trace(void)
   alignment_t *r1 = alignment_create(128), *r2 = alignment_create(128);
   nw1->compact = false; nw1->options = &o_scalar;
   nw2->compact = true;  nw2->options = &o_band;
-  assert(needleman_wunsch_align_checked(ta, tb, 35, 35, &sc, nw1, r1, NULL) == ALN_OK);
-  assert(needleman_wunsch_align_checked(ta, tb, 35, 35, &sc, nw2, r2, NULL) == ALN_OK);
-  assert(nw2->trace_banded);
-  assert(r1->score == r2->score);
-  assert(strcmp(r1->result_a, r2->result_a) == 0);
-  assert(strcmp(r1->result_b, r2->result_b) == 0);
+  CHECK(needleman_wunsch_align_checked(ta, tb, 35, 35, &sc, nw1, r1, NULL) == ALN_OK);
+  CHECK(needleman_wunsch_align_checked(ta, tb, 35, 35, &sc, nw2, r2, NULL) == ALN_OK);
+  CHECK(nw2->trace_banded);
+  CHECK(r1->score == r2->score);
+  CHECK(strcmp(r1->result_a, r2->result_a) == 0);
+  CHECK(strcmp(r1->result_b, r2->result_b) == 0);
 
   // 2. Striped vector-order trace (diff8 DNA + diff16 BLOSUM62, 1t & 4t) byte-identical to scalar
   scoring_t sc_dna, sc_b62;
@@ -292,35 +298,35 @@ static void test_strip_col0_and_striped_trace(void)
   for(size_t li = 0; li < sizeof(test_lens)/sizeof(test_lens[0]); li++) {
     size_t la = test_lens[li], lb = test_lens[li] + (li % 3) * 7;
     char *a = malloc(la + 1), *b = malloc(lb + 1);
-    assert(a && b);
+    CHECK(a && b);
     rand_dna(a, la);
     rand_dna(b, lb);
     // DNA diff8
     nw1->options = &o_scalar;
-    assert(needleman_wunsch_align_checked(a, b, la, lb, &sc_dna, nw1, r1, NULL) == ALN_OK);
+    CHECK(needleman_wunsch_align_checked(a, b, la, lb, &sc_dna, nw1, r1, NULL) == ALN_OK);
     nw2->options = &o_diff1;
-    assert(needleman_wunsch_align_checked(a, b, la, lb, &sc_dna, nw2, r2, NULL) == ALN_OK);
-    assert(nw2->trace_striped);
+    CHECK(needleman_wunsch_align_checked(a, b, la, lb, &sc_dna, nw2, r2, NULL) == ALN_OK);
+    CHECK(nw2->trace_striped);
     size_t dna_vl = nw2->trace_vl;
-    assert(r1->score == r2->score && strcmp(r1->result_a, r2->result_a) == 0 && strcmp(r1->result_b, r2->result_b) == 0);
+    CHECK(r1->score == r2->score && strcmp(r1->result_a, r2->result_a) == 0 && strcmp(r1->result_b, r2->result_b) == 0);
     nw2->options = &o_diff4;
-    assert(needleman_wunsch_align_checked(a, b, la, lb, &sc_dna, nw2, r2, NULL) == ALN_OK);
-    assert(nw2->trace_striped && nw2->trace_vl == dna_vl);
-    assert(r1->score == r2->score && strcmp(r1->result_a, r2->result_a) == 0 && strcmp(r1->result_b, r2->result_b) == 0);
+    CHECK(needleman_wunsch_align_checked(a, b, la, lb, &sc_dna, nw2, r2, NULL) == ALN_OK);
+    CHECK(nw2->trace_striped && nw2->trace_vl == dna_vl);
+    CHECK(r1->score == r2->score && strcmp(r1->result_a, r2->result_a) == 0 && strcmp(r1->result_b, r2->result_b) == 0);
     // Protein BLOSUM62 diff16 (ensure 'W' is present so score range forces 16-bit lanes)
     for(size_t i = 0; i < la; i++) a[i] = aa20[next_rand() % 20];
     for(size_t i = 0; i < lb; i++) b[i] = aa20[next_rand() % 20];
     a[0] = 'W'; b[0] = 'W';
     nw1->options = &o_scalar;
-    assert(needleman_wunsch_align_checked(a, b, la, lb, &sc_b62, nw1, r1, NULL) == ALN_OK);
+    CHECK(needleman_wunsch_align_checked(a, b, la, lb, &sc_b62, nw1, r1, NULL) == ALN_OK);
     nw2->options = &o_diff1;
-    assert(needleman_wunsch_align_checked(a, b, la, lb, &sc_b62, nw2, r2, NULL) == ALN_OK);
-    assert(nw2->trace_striped && nw2->trace_vl * 2 == dna_vl);
-    assert(r1->score == r2->score && strcmp(r1->result_a, r2->result_a) == 0 && strcmp(r1->result_b, r2->result_b) == 0);
+    CHECK(needleman_wunsch_align_checked(a, b, la, lb, &sc_b62, nw2, r2, NULL) == ALN_OK);
+    CHECK(nw2->trace_striped && nw2->trace_vl * 2 == dna_vl);
+    CHECK(r1->score == r2->score && strcmp(r1->result_a, r2->result_a) == 0 && strcmp(r1->result_b, r2->result_b) == 0);
     nw2->options = &o_diff4;
-    assert(needleman_wunsch_align_checked(a, b, la, lb, &sc_b62, nw2, r2, NULL) == ALN_OK);
-    assert(nw2->trace_striped && nw2->trace_vl * 2 == dna_vl);
-    assert(r1->score == r2->score && strcmp(r1->result_a, r2->result_a) == 0 && strcmp(r1->result_b, r2->result_b) == 0);
+    CHECK(needleman_wunsch_align_checked(a, b, la, lb, &sc_b62, nw2, r2, NULL) == ALN_OK);
+    CHECK(nw2->trace_striped && nw2->trace_vl * 2 == dna_vl);
+    CHECK(r1->score == r2->score && strcmp(r1->result_a, r2->result_a) == 0 && strcmp(r1->result_b, r2->result_b) == 0);
     free(a); free(b);
   }
   alignment_free(r1); alignment_free(r2);

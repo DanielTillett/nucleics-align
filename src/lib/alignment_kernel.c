@@ -597,14 +597,17 @@ bool alignment_sw_trace_rows(const char *a, size_t len_a,
     .r0 = {row, row + w, row + 2*w}, .lc = {&zero, &zero, &zero},
     .lstride = 0, .width = xmax, .y0 = y0, .y1 = y1,
     .trace = trace, .trace_rows = trace_rows};
-  // Use 8- or 16-bit lanes when the known global max_score fits safely
+  // Use 8- or 16-bit lanes when the known global max_score fits safely,
+  // each where the options allow it (as alignment_lanes() chooses them)
   score_t lim = 0;
-  if(tmp.opts.narrow && max_score > 0) {
-    if(alignment_narrow_limit(use_table, scoring, 0, xmax, 8, &lim) &&
+  if(max_score > 0) {
+    if(tmp.opts.byte &&
+       alignment_narrow_limit(use_table, scoring, 0, xmax, 8, &lim) &&
        max_score <= lim) {
       tmpl.bits = 8;
       tmpl.narrow_limit = lim;
-    } else if(alignment_narrow_limit(use_table, scoring, 0, xmax, 16, &lim) &&
+    } else if(tmp.opts.narrow &&
+              alignment_narrow_limit(use_table, scoring, 0, xmax, 16, &lim) &&
               max_score <= lim) {
       tmpl.bits = 16;
       tmpl.narrow_limit = lim;

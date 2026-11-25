@@ -91,3 +91,6 @@ sw_maxhits_zero  | -     | ./bin/smith_waterman --maxhits 0 ACGT ACGT
 sw_minscore_neg  | -     | ./bin/smith_waterman --minscore -5 ACGT ACGT
 sw_gap_positive  | -     | ./bin/smith_waterman --gapextend 1 CA GA
 nw_pm_linearfallback | - | ./bin/needleman_wunsch --printmatrices --linearfallback ACGT AGT
+nw_matrix_gz_bad | -     | ./bin/needleman_wunsch --substitution_matrix @/bad_matrix.txt.gz --printscores --file @/protein.fa
+sw_interact_noname | -   | ./bin/smith_waterman --stdin < @/sw_interactive_noname.txt
+lcs_help         | -     | ./bin/lcs --help

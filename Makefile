@@ -26,9 +26,18 @@ endif
 
 CFLAGS ?= -Wall -Wextra
 # -Wno-psabi: GCC notes that 8-lane vectors are passed differently without
-# AVX; the SIMD helpers are always inlined, so no call passes one
-CFLAGS += -std=c11 $(OPT) -Wno-psabi
+# AVX; the SIMD helpers are always inlined, so no call passes one.
+# override: appended even to a CFLAGS given on the make command line
+override CFLAGS += -std=c11 $(OPT) -Wno-psabi
 OBJFLAGS = -fPIC
+
+# The C++ examples use the compiler matching CC unless CXX is given, so a
+# sanitizer build links one runtime (clang's objects with clang's)
+ifeq ($(origin CXX),default)
+  ifneq (,$(findstring clang,$(CC)))
+    CXX = clang++
+  endif
+endif
 
 LIB_INCS = -I include -I src/lib
 CLI_INCS = -I include -I src/lib -I src/cli
@@ -94,7 +103,7 @@ bin/test_v2_api: tests/test_v2_api.c src/libalign.a include/nucleics_align.h | b
 	$(CC) -o $@ $< $(CFLAGS) $(TGTFLAGS) -I include $(LIBS) $(LIB_LINK)
 
 examples: src/libalign.a
-	cd examples; $(MAKE) SANFLAGS="$(TGTFLAGS)"
+	$(MAKE) -C examples SANFLAGS="$(TGTFLAGS)" CC="$(CC)" CXX="$(CXX)"
 
 bin:
 	mkdir -p bin

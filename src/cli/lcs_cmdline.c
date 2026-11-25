@@ -17,16 +17,19 @@
 
 #include "smith_waterman.h"
 
-static void print_usage(char **argv)
+static void print_usage(char **argv, int status)
 {
-  fprintf(stderr, "%s [options] <sequence>\n", argv[0]);
-  fprintf(stderr, "  Print substrings in decreasing order of length\n");
-  exit(EXIT_FAILURE);
+  fprintf(stderr, "usage: %s <sequence>\n", argv[0]);
+  fprintf(stderr, "  Print the substrings the sequence repeats, longest "
+                  "first, with their positions\n");
+  exit(status);
 }
 
 int main(int argc, char **argv)
 {
-  if(argc != 2) print_usage(argv);
+  if(argc == 2 && (strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "--help") == 0))
+    print_usage(argv, EXIT_SUCCESS);
+  if(argc != 2) print_usage(argv, EXIT_FAILURE);
 
   char *seq = argv[1];
   size_t seqlen = strlen(seq);

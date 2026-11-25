@@ -97,9 +97,11 @@ aln_status_t hirschberg_score_checked(const char *a, const char *b,
                                       const alignment_options_t *opts,
                                       score_t *score, aln_error_t *err);
 
-// Score an alignment as needleman_wunsch_align() would. A '-' in either string is
-// read as a gap and the strings end at '\0': hirschberg_align() scores its
-// alignments from the steps taken instead
+// Score an alignment as needleman_wunsch_align() would without the free
+// start/end gap options (every gap is charged; those options are not
+// applied). A '-' in either string is read as a gap and the strings end at
+// '\0': hirschberg_align() scores its alignments from the steps taken
+// instead
 score_t hirschberg_score_alignment(const char *result_a, const char *result_b,
                                    const scoring_t *scoring);
 

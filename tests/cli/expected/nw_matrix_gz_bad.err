@@ -1,0 +1,1 @@
+Error: reading scoring file: tests/cli/input/bad_matrix.txt.gz: unexpected end of file

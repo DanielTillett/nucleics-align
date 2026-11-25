@@ -346,6 +346,14 @@ static aln_status_t _sw_align(const char *a, const char *b,
   aligner->compact = sw->compact;
   if(aligner->options != NULL) aligner->opts = *aligner->options;
   else alignment_options_default(&aligner->opts);
+
+  // Whether the quick traceback step applies to this scoring (set before
+  // any path returns, so no earlier alignment's choice is left behind)
+  sw->fast_walk = !scoring->no_start_gap_penalty &&
+                  !scoring->no_end_gap_penalty &&
+                  !scoring->no_gaps_in_a && !scoring->no_gaps_in_b &&
+                  !scoring->no_gaps_in_longest;
+
   if(sw->compact && aligner->opts.sw_fast_rect &&
      (double)len_a * (double)len_b >= (double)aligner->opts.sw_rect_min_cells &&
      sw_align_fast_rect(sw, a, b, len_a, len_b, scoring))
@@ -371,11 +379,6 @@ static aln_status_t _sw_align(const char *a, const char *b,
       if(status != ALN_OK) return status;
     }
   }
-
-  sw->fast_walk = !scoring->no_start_gap_penalty &&
-                  !scoring->no_end_gap_penalty &&
-                  !scoring->no_gaps_in_a && !scoring->no_gaps_in_b &&
-                  !scoring->no_gaps_in_longest;
 
   // No cell is walked when the scan found no hit, or (strips) before a
   // second hit is fetched

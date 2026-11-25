@@ -2135,6 +2135,8 @@ void sw_test_index_size()
   smith_waterman_free(sw);
 }
 
+void sw_test_strips_empty(void);
+
 void test_sw()
 {
   SUITE_START("Smith-Waterman");
@@ -2142,6 +2144,7 @@ void test_sw()
   sw_test_no_gaps_smith_waterman();
   sw_test_reuse_aligner();
   sw_test_index_size();
+  sw_test_strips_empty();
 
   SUITE_END();
 }
@@ -2154,6 +2157,50 @@ void alignment_test_create_zero()
   ASSERT(result->capacity >= 101);
   alignment_free(result);
   alignment_free(NULL); // as free(NULL): nothing
+
+  // A length that cannot be held (SIZE_MAX letters need SIZE_MAX + 1
+  // bytes) is refused, not wrapped to a no-op
+  result = alignment_create(0);
+  ASSERT(!alignment_reserve(result, SIZE_MAX));
+  alignment_free(result);
+}
+
+// Colours: one per column (red a gap, green a mismatch), switched only
+// where the next column's differs; a gap right after a mismatch stays red
+void alignment_test_colour()
+{
+  char *text = NULL;
+  size_t len = 0;
+  FILE *out = open_memstream(&text, &len);
+  alignment_colour_fprint_against(out, "CAAA", "T--A", 0);
+  fclose(out);
+  ASSERT(strcmp(text, "\033[92mC\033[0m\033[91mAA\033[0mA") == 0);
+  free(text);
+}
+
+// A strips fill of a region with no rows is nothing to do, not a division
+// by zero (the strip height is clamped to the rows)
+void sw_test_strips_empty()
+{
+  sw_aligner_t *sw = smith_waterman_new();
+  alignment_t *aln = alignment_create(16);
+  alignment_options_t opts;
+  scoring_t scoring;
+  scoring_system_default(&scoring);
+  alignment_options_default(&opts);
+  opts.sw_strip_min_cells = 0; // every compact fill through the strips
+  opts.sw_rect_min_cells = 0;
+  smith_waterman_set_options(sw, &opts);
+  smith_waterman_set_compact(sw, true);
+  aln_error_t e;
+  ASSERT(smith_waterman_align_checked("ACGT", "", 4, 0, &scoring, sw, &e)
+         == ALN_OK);
+  ASSERT(!smith_waterman_fetch_checked(sw, aln, &e) && e.status == ALN_OK);
+  ASSERT(smith_waterman_align_checked("", "ACGT", 0, 4, &scoring, sw, &e)
+         == ALN_OK);
+  ASSERT(!smith_waterman_fetch_checked(sw, aln, &e) && e.status == ALN_OK);
+  alignment_free(aln);
+  smith_waterman_free(sw);
 }
 
 // Write text to a temporary file and load it as a substitution matrix
@@ -3136,6 +3183,7 @@ void test_misc()
   SUITE_START("Alignment buffers and scoring files");
 
   alignment_test_create_zero();
+  alignment_test_colour();
   alignment_test_roundup();
   scoring_test_load_matrix();
   scoring_test_penalty_range();

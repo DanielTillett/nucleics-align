@@ -62,8 +62,17 @@ static size_t line_buf_gzreadline(line_buf_t *lb, gzFile file)
       lb->cap = ncap;
     }
     int avail = (lb->cap - lb->end > (size_t)INT_MAX) ? INT_MAX : (int)(lb->cap - lb->end);
-    if(gzgets(file, lb->b + lb->end, avail) == NULL)
+    if(gzgets(file, lb->b + lb->end, avail) == NULL) {
+      // The end of the file, or a damaged one: not the same thing
+      int errnum = 0;
+      const char *msg = gzerror(file, &errnum);
+      if(errnum != Z_OK && errnum != Z_STREAM_END) {
+        fprintf(stderr, "Error: reading scoring file: %s\n",
+                msg != NULL && *msg != '\0' ? msg : "read error");
+        exit(EXIT_FAILURE);
+      }
       return lb->end;
+    }
     size_t got = strlen(lb->b + lb->end);
     lb->end += got;
     if(got == 0 || lb->b[lb->end - 1] == '\n')

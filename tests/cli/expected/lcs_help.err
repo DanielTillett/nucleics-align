@@ -1,0 +1,2 @@
+usage: ./bin/lcs <sequence>
+  Print the substrings the sequence repeats, longest first, with their positions

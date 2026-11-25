@@ -4,7 +4,7 @@ r1
 
 hit 0.0 score: 94
   acgtttgacgtacgtagc[92mta[0m--gctgatcgtagctagctagctgatcgatcgtag  [pos: 0; len: 53]
-  acgtttgacgtacgtagc[92mcc[91m[0mcc[0mgctgatcgtagctagctagctgatcgatcgtag  [pos: 6; len: 55]
+  acgtttgacgtacgtagc[92mcc[0m[91mcc[0mgctgatcgtagctagctagctgatcgatcgtag  [pos: 6; len: 55]
 
 hit 0.1 score: 35
   tga-cgta[91mc[0mg-tagctagctgatcg  [pos: 5; len: 23]

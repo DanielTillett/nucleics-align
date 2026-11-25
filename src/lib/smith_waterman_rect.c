@@ -11,6 +11,7 @@ aln_status_t sw_strips_fill(sw_aligner_t *sw, size_t x0, size_t y0,
 {
   aligner_t *aligner = &sw->aligner;
   *used = false;
+  if(rx == 0 || ry == 0) return ALN_OK; // no cells: no hit, nothing to do
   // Rows per strip near sqrt(12 x rows): the strip's bytes (k bytes per
   // column) and the rows kept (12 bytes per column each) then take about
   // the same memory
@@ -20,7 +21,7 @@ aln_status_t sw_strips_fill(sw_aligner_t *sw, size_t x0, size_t y0,
   }
   k = MIN2(k, ry);
   const size_t kept = ry / k + 1;
-  if(rx == 0 || ry == 0 || kept > SIZE_MAX / 3 / sizeof(score_t) / (rx + 1))
+  if(kept > SIZE_MAX / 3 / sizeof(score_t) / (rx + 1))
     return ALN_OK;
   score_t *ckpt = aln_malloc(kept * 3 * (rx + 1) * sizeof(score_t));
   if(ckpt == NULL) return ALN_ERR_NOMEM;
@@ -216,6 +217,7 @@ bool sw_align_fast_rect(sw_aligner_t *sw, const char *a, const char *b,
     aligner->score_height = len_b + 1;
     aligner->traced = true;
     aligner->best_score = best;
+    aligner->best_index = 0; // not an earlier alignment's cell
     sw->rect = true;
     sw->off_a = sw->off_b = 0;
     return true;
@@ -266,6 +268,7 @@ bool sw_align_fast_rect(sw_aligner_t *sw, const char *a, const char *b,
   aligner->score_height = len_b + 1;
   aligner->traced = true;
   aligner->best_score = best;
+  aligner->best_index = sw->full_best;
   return true;
 }
 
@@ -297,6 +300,7 @@ bool sw_align_rect(sw_aligner_t *sw, const char *a, const char *b,
     aligner->score_height = len_b+1;
     aligner->traced = true;
     aligner->best_score = best;
+    aligner->best_index = 0; // not an earlier alignment's cell
     sw->rect = true;
     sw->off_a = sw->off_b = 0;
     return true;

@@ -156,7 +156,9 @@ static int align(tool_worker_t *wk, const char *seq_a, const char *seq_b,
   if((seq_a_name != NULL || seq_b_name != NULL) && wait_on_keystroke)
   {
     fprintf(err, "Error: Interactive input takes seq only "
-                 "(no FASTA/FASTQ) '%s:%s'\n", seq_a_name, seq_b_name);
+                 "(no FASTA/FASTQ) '%s:%s'\n",
+            seq_a_name != NULL ? seq_a_name : "",
+            seq_b_name != NULL ? seq_b_name : "");
     fflush(err);
     exit(EXIT_FAILURE);
   }

@@ -176,17 +176,15 @@ void scoring_print(const scoring_t* scoring)
 static char _scoring_check_wildcards(const scoring_t* scoring, char a, char b,
                                      int* score)
 {
-  // Check if either characters are wildcards
-  int tmp_score = INT_MAX;
-  if(get_wildcard_bit(scoring,a)) tmp_score = scoring->wildscores[(unsigned char)a];
-  if(get_wildcard_bit(scoring,b)) tmp_score = MIN2(scoring->wildscores[(unsigned char)b],tmp_score);
-  if(tmp_score != INT_MAX) {
-    *score = tmp_score;
-    return 1;
-  }
-
-  *score = 0;
-  return 0;
+  // Either character a wildcard: its score, the lower where both are
+  const bool wild_a = get_wildcard_bit(scoring,a), wild_b = get_wildcard_bit(scoring,b);
+  if(wild_a && wild_b)
+    *score = MIN2(scoring->wildscores[(unsigned char)a],
+                  scoring->wildscores[(unsigned char)b]);
+  else if(wild_a) *score = scoring->wildscores[(unsigned char)a];
+  else if(wild_b) *score = scoring->wildscores[(unsigned char)b];
+  else { *score = 0; return 0; }
+  return 1;
 }
 
 // Considered match if lc(a)==lc(b) or if a or b are wildcards
@@ -216,9 +214,8 @@ void scoring_lookup(const scoring_t* scoring, char a, char b,
     return;
   }
 
-  // Check wildcards
-  // Wildcards are used in the order they are given
-  // e.g. if we specify '--wildcard X 2 --wildcard Y 3' X:Y align with score 2
+  // Check wildcards: two of them score the lower of their scores, e.g.
+  // with '--wildcard X 2 --wildcard Y 3' X against Y scores 2
   if(_scoring_check_wildcards(scoring, a, b, score))
   {
     *is_match = 1;
