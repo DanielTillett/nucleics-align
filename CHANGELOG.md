@@ -15,7 +15,10 @@ fixes listed under [Changes to output](#changes-to-output).
   heuristic of A\*PA (Groot Koerkamp & Ivanov 2024) with affine scores as
   penalties. Strips also get shorter as they get narrower. The alignment is
   unchanged; `alignment_seeds_enabled` and `alignment_seed_length` are the
-  tuning and test hooks
+  tuning and test hooks. Band strips split into smaller thread blocks
+  (`alignment_band_block_min_cols`, `alignment_band_block_min_cells`).
+  1 Mb at 1%: 6.2 -> 3.1 s on 8 threads with a third of the CPU; 200 kb at
+  1%: 0.62 -> 0.30 s and 657 -> 128 MB (same alignments)
 
 ## 1.3.0 - 24 Nov 2026
 
