@@ -5,6 +5,18 @@ Nucleics Align is derived from Isaac Turner's
 2017). Output is the same as seq-align's, byte for byte, except for the
 fixes listed under [Changes to output](#changes-to-output).
 
+## Unreleased
+
+### Improved
+
+- Band strips are narrowed further by seeds (`src/lib/alignment_seeds.c`):
+  words of `a` with no exact copy in `b` each cost an error, and matched
+  words on different diagonals cost gap letters, the gap-chaining seed
+  heuristic of A\*PA (Groot Koerkamp & Ivanov 2024) with affine scores as
+  penalties. Strips also get shorter as they get narrower. The alignment is
+  unchanged; `alignment_seeds_enabled` and `alignment_seed_length` are the
+  tuning and test hooks
+
 ## 1.3.0 - 24 Nov 2026
 
 ### Added

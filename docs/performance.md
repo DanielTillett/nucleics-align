@@ -38,7 +38,7 @@ flowchart TD
     C -- no --> S[Scalar fill of 3 score matrices] --> T[Traceback]
     C -- yes --> W["Exact score from WFA (budgeted),<br/>or high guess from 12-mer matches"]
     W --> D{Does a band pay?}
-    D -- yes --> E["Banded traceback-byte fill in strips<br/>(narrowed by A*PA2 volume)"]
+    D -- yes --> E["Banded traceback-byte fill in strips<br/>(narrowed by A*PA2 volume and A*PA seeds)"]
     D -- no --> F["Whole traceback-byte fill<br/>(difference-encoded 8/16-bit lanes)"]
     E --> G{Band fits in 1/4 RAM?}
     G -- yes --> T
@@ -160,7 +160,7 @@ In rough order of what made the biggest difference:
 1. **One traceback byte per cell (12x less RAM):** Instead of storing three 4-byte score matrices, compact mode packs the three 2-bit predecessor directions into one byte per cell. Most of the old wall time was actually page-faulting gigabytes of RAM.
 2. **Striped SIMD fills (Farrar 2007) + prefix-scan lazy F:** Written with portable GCC/clang vector extensions (AVX2/SSE4.1/SSE2 multi-versioned on x86-64 Linux, AVX-512 with `NATIVE=1`, NEON on Arm64). Precomputing inter-lane carries with a single scan cuts lazy-F sweeps along bands from ~8 per row down to 1.
 3. **8- and 16-bit narrow / difference-encoded lanes:** Smith-Waterman starts in 8-bit lanes (4x width) and widens to 16- or 32-bit only if scores outgrow the lane. Needleman-Wunsch full traceback fills store differences from the cell above (Suzuki & Kasahara 2018), keeping values in 8 bits for DNA and 16 bits for BLOSUM62 at any sequence length. Linear-space passes use 16-bit relative blocks.
-4. **Exact banding, WFA sizing, and A\*PA2 strip narrowing:** Before filling a global matrix, a budgeted WFA score pass (or 12-mer sample guess) estimates the band width. Each strip is narrowed using the exact upper bound from the row above; if the band is too big for a quarter of RAM, only one strip's bytes are kept at a time and refilled on traceback.
+4. **Exact banding, WFA sizing, and A\*PA strip narrowing:** Before filling a global matrix, a budgeted WFA score pass (or 12-mer sample guess) estimates the band width. Each strip is narrowed using the exact upper bound from the row above, tightened by seeds: words of `a` with no exact copy in `b` must each hold an error, and matched words on different diagonals cost gap letters (the gap-chaining seed heuristic of A\*PA), so a strip covers only the diagonals a best path can use, and strips get shorter as they get narrower. If the band is too big for a quarter of RAM, only one strip's bytes are kept at a time and refilled on traceback.
 5. **Bidirectional wavefront alignment (`--wfa`, `--wfabudget`):** On close pairs, trims empty wavefront diagonals, uses 32-byte AVX2 match extension (8-byte fallback), and finds breakpoints in $O(s)$ wavefront memory.
 6. **Linear-space global alignment (`--linear`) with row reuse:** Hirschberg / Myers-Miller with exact banded passes, 16-bit blocks, two-level intermediate row reuse, and Myers bit-vector split rows for single-threaded unit-cost pairs.
 7. **Ukkonen-banded Myers' bit-vector edit distance:** Under unit costs (`0 / -1 / 0 / -1`), `--scoreonly` computes 64 cells per CPU word inside an exponential Ukkonen diagonal band (matching `edlib` at 20 kb 1% in 3.4 ms).
