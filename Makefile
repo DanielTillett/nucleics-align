@@ -1,11 +1,13 @@
 ifdef DEBUG
 	OPT = -O0 -g -ggdb
 else
-	# -falign-functions=64: the striped kernels' speed moved by 12% with
-	# where unrelated edits happened to place them (measured: identical
-	# instruction counts, 33.5G vs 37.5G cycles on a 200 kb band at one
-	# thread, Zen 3); fixed alignment keeps that from drifting
-	OPT = -O3 -falign-functions=64
+	# Fixed function and loop alignment: the striped kernels' speed moved
+	# by 12% with where unrelated edits happened to place their loops
+	# (measured: identical instruction counts, 33.5G vs 37.5G cycles on a
+	# 200 kb band at one thread, Zen 3). -falign-loops=N needs gcc or a
+	# recent clang, so it is added only where the compiler takes it
+	OPT = -O3 -falign-functions=64 \
+	      $(shell $(CC) -falign-loops=32 -x c -c -o /dev/null /dev/null 2>/dev/null && echo -falign-loops=32)
 endif
 
 # Build with sanitizers: make SANITIZE=1 test
