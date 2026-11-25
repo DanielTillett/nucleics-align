@@ -140,6 +140,29 @@ class NeedlemanWunschTest(unittest.TestCase):
         next(it)
         it.close()
 
+    def test_single_pair_checks_exit_status(self):
+        # align() finishes the tool's run: an exit status after the output
+        # is still an error (a stand-in tool prints an alignment, then fails)
+        import stat
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            fake = os.path.join(d, "needleman_wunsch")
+            with open(fake, "w") as f:
+                f.write("#!/bin/sh\nprintf 'ACGT\\n| ||\\nA-GT\\nscore: -2\\n\\n'\n"
+                        "echo 'Error: late failure' >&2\nexit 3\n")
+            os.chmod(fake, os.stat(fake).st_mode | stat.S_IXUSR)
+            with self.assertRaisesRegex(na.AlignmentError, "late failure"):
+                na.NeedlemanWunsch(bin_dir=d).align("ACGT", "AGT")
+
+    def test_input_iterator_error(self):
+        # An error from the caller's own iterator is the caller's error,
+        # not a complete batch
+        def pairs():
+            yield ("ACGT", "AGT")
+            raise OSError("input source failed")
+        with self.assertRaisesRegex(OSError, "input source failed"):
+            list(na.NeedlemanWunsch().align_pairs(pairs()))
+
 
 class SmithWatermanTest(unittest.TestCase):
     def test_hits(self):
@@ -177,6 +200,25 @@ class SmithWatermanTest(unittest.TestCase):
         self.assertEqual(got[0], [])
         self.assertEqual(got[1], [])
         self.assertEqual(got[2][0].score, 16)
+
+    def test_stop_early_stops_reading_input(self):
+        # Pairs with an empty sequence never reach the tool; closing the
+        # batch must still stop the reader of the caller's pairs
+        import time
+        pulled = [0]
+
+        def endless():
+            while True:
+                pulled[0] += 1
+                yield ("", "ACGT")
+        it = na.SmithWaterman().align_pairs(endless())
+        self.assertEqual(next(it), [])
+        it.close()
+        time.sleep(0.3)
+        seen = pulled[0]
+        time.sleep(0.3)
+        self.assertEqual(pulled[0], seen)
+        self.assertLess(seen, 100000)
 
 
 if __name__ == "__main__":

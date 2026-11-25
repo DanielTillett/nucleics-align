@@ -179,35 +179,52 @@ class _Tool:
             stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.PIPE, encoding="latin-1")
         # In the order written: ("pair", a, b), ("empty", a, b), an error
-        # from the input, then None
-        sent = queue.Queue()
+        # from the input, then None. Bounded, so a caller that stops reading
+        # results does not have the writer pull its pairs without end
+        sent = queue.Queue(maxsize=1024)
+        stop = threading.Event()  # the caller left the batch
         errors = []
+
+        def put(item):
+            """Queue item, giving up (False) once the caller has left."""
+            while not stop.is_set():
+                try:
+                    sent.put(item, timeout=0.1)
+                    return True
+                except queue.Full:
+                    pass
+            return False
 
         def write():
             try:
                 for i, pair in enumerate(pairs):
+                    if stop.is_set():
+                        return
                     try:
                         a, b = pair
                         _check_sequence(a, "seq_a of pair %d" % i)
                         _check_sequence(b, "seq_b of pair %d" % i)
                     except (TypeError, ValueError) as exc:
-                        sent.put(exc)
+                        put(exc)
                         return
                     if skip_empty is not None and (a == "" or b == ""):
-                        sent.put(("empty", a, b))
+                        if not put(("empty", a, b)):
+                            return
                         continue
-                    proc.stdin.write(">a%d\n%s\n>b%d\n%s\n" % (i, a, i, b))
-                    sent.put(("pair", a, b))
-            except (BrokenPipeError, OSError):
-                pass  # the tool stopped: its error is reported below
+                    try:
+                        proc.stdin.write(">a%d\n%s\n>b%d\n%s\n" % (i, a, i, b))
+                    except (BrokenPipeError, OSError):
+                        return  # the tool stopped: its error is reported below
+                    if not put(("pair", a, b)):
+                        return
             except BaseException as exc:  # the caller's iterator failed
-                sent.put(exc)
+                put(exc)
             finally:
                 try:
                     proc.stdin.close()
                 except OSError:
                     pass
-                sent.put(None)
+                put(None)
 
         def drain_errors():
             errors.append(proc.stderr.read())
@@ -241,11 +258,25 @@ class _Tool:
                     message or "%s stopped (exit status %s)"
                     % (self._NAME, proc.returncode))
         finally:
+            stop.set()
             if proc.poll() is None:
                 proc.kill()
                 proc.wait()
+            # The tool has gone, so its pipes are at their end: the threads
+            # finish, and the streams are closed once nothing reads them
+            reader.join()
+            writer.join(timeout=2.0)
             for stream in (proc.stdout, proc.stderr):
                 stream.close()
+
+    @staticmethod
+    def _single(results):
+        """The one result of a single-pair batch, once the batch has run to
+        the end (so the tool's exit status is checked too)."""
+        results = list(results)
+        if len(results) != 1:
+            raise AlignmentError("expected one result, got %d" % len(results))
+        return results[0]
 
 
 class _Truncated(Exception):
@@ -300,8 +331,9 @@ class NeedlemanWunsch(_Tool):
                 self._args.append(flag)
 
     def align(self, seq_a: str, seq_b: str) -> GlobalAlignment:
-        """The best global alignment of seq_a and seq_b."""
-        return next(self.align_pairs([(seq_a, seq_b)]))
+        """The best global alignment of seq_a and seq_b. For many pairs,
+        align_pairs() runs them through one tool process."""
+        return self._single(self.align_pairs([(seq_a, seq_b)]))
 
     def align_pairs(self, pairs: Iterable[Tuple[str, str]]
                     ) -> Iterator[GlobalAlignment]:
@@ -321,8 +353,9 @@ class NeedlemanWunsch(_Tool):
 
     def score(self, seq_a: str, seq_b: str) -> int:
         """The best global alignment's score, without the alignment: one
-        pass in linear memory (--scoreonly)."""
-        return next(self.score_pairs([(seq_a, seq_b)]))
+        pass in linear memory (--scoreonly). For many pairs, score_pairs()
+        runs them through one tool process."""
+        return self._single(self.score_pairs([(seq_a, seq_b)]))
 
     def score_pairs(self, pairs: Iterable[Tuple[str, str]]) -> Iterator[int]:
         """score() for each (seq_a, seq_b) in pairs, in order."""
@@ -359,8 +392,9 @@ class SmithWaterman(_Tool):
             self._args += ["--maxhits", str(max_hits)]
 
     def align(self, seq_a: str, seq_b: str) -> List[LocalHit]:
-        """The local alignments of seq_a and seq_b, best first."""
-        return next(self.align_pairs([(seq_a, seq_b)]))
+        """The local alignments of seq_a and seq_b, best first. For many
+        pairs, align_pairs() runs them through one tool process."""
+        return self._single(self.align_pairs([(seq_a, seq_b)]))
 
     def align_pairs(self, pairs: Iterable[Tuple[str, str]]
                     ) -> Iterator[List[LocalHit]]:
