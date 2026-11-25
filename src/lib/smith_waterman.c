@@ -208,8 +208,8 @@ static bool _ensure_mask_capacity(sw_history_t *hist, size_t arr_size)
          bitset_set_length(&hist->match_scores_mask, ROUNDUP2POW(arr_size));
 }
 
-// Room for every cell in the sorted index (only needed past the first hit).
-// Returns false if out of memory
+// Room for arr_size cells in the sorted index (only needed past the first
+// hit). Returns false if out of memory
 static bool _ensure_index_capacity(sw_history_t *hist, size_t arr_size)
 {
   if(arr_size > hist->hits_capacity) {
@@ -434,7 +434,6 @@ static bool _index_hits(sw_aligner_t *sw)
   aligner_t *aligner = &sw->aligner;
   sw_history_t *hist = &sw->history;
   const size_t arr_size = aligner->score_width * aligner->score_height;
-  if(!_ensure_index_capacity(hist, arr_size)) return false;
 
   // Hits may start from cells scoring at least lo. Cells scoring less are
   // only reached after every higher one, so leaving them out changes no
@@ -448,6 +447,9 @@ static bool _index_hits(sw_aligner_t *sw)
     if(scores[pos] > max_score) max_score = scores[pos];
     total += (scores[pos] >= lo);
   }
+  // Room for those cells only: one entry per cell of the matrix would be
+  // 34 GB for a 50 kb pair
+  if(!_ensure_index_capacity(hist, total)) return false;
 
   // Order cells by score (highest first), then position in seq_a, then seq_b.
   // Scores are bounded integers, so a counting sort replaces the comparison

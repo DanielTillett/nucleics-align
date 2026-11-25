@@ -20,6 +20,7 @@
 
 #include "needleman_wunsch.h"
 #include "smith_waterman.h"
+#include "smith_waterman_internal.h" // sw_history_t, for the index-size test
 #include "hirschberg.h"
 #include "alignment_scoring_load.h"
 #include "alignment_cmdline.h"
@@ -2111,12 +2112,36 @@ void sw_test_reuse_aligner()
   smith_waterman_free(fresh);
 }
 
+// The index of later hits holds the cells scoring at least min_score, not
+// every cell of the matrix (a 50 kb pair would need 34 GB for that)
+void sw_test_index_size()
+{
+  sw_aligner_t *sw = smith_waterman_new();
+  alignment_t *aln = alignment_create(256);
+  scoring_t scoring;
+  scoring_system_default(&scoring);
+  static char a[401], b[401];
+  hb_rand_seq(a, 400, "acgt");
+  hb_rand_seq(b, 400, "acgt");
+  memcpy(b + 100, a + 50, 20); // one clear hit, few other cells score >= 20
+  smith_waterman_set_min_score(sw, 20);
+  smith_waterman_align(a, b, &scoring, sw);
+  ASSERT(smith_waterman_fetch(sw, aln));
+  smith_waterman_fetch(sw, aln); // builds the index
+  const sw_history_t *hist = &sw->history;
+  ASSERT(hist->hits_capacity > 0);
+  ASSERT(hist->hits_capacity < 401 * 401 / 8);
+  alignment_free(aln);
+  smith_waterman_free(sw);
+}
+
 void test_sw()
 {
   SUITE_START("Smith-Waterman");
 
   sw_test_no_gaps_smith_waterman();
   sw_test_reuse_aligner();
+  sw_test_index_size();
 
   SUITE_END();
 }
