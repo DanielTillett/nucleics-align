@@ -737,14 +737,22 @@ static void close_seq_files(seq_file_t *sf1, seq_file_t *sf2)
   if(sf2 != sf1) seq_close(sf2);
 }
 
-// Warnings once the input ends: a sequence left without a pair, no pairs
-static void report_input_end(bool odd, size_t alignments)
+// Once the input ends: a sequence left without a pair is an error (the
+// pairs before it are already written), no pairs a warning. two_files:
+// the pairs came from two files, one sequence from each. Returns false
+// on the error
+static bool report_input_end(bool odd, bool two_files, size_t alignments)
 {
   if(odd)
   {
-    fprintf(stderr, "Alignment Error: Odd number of sequences - "
-                    "I read in pairs!\n");
+    if(two_files)
+      fprintf(stderr, "Alignment Error: the files have different numbers "
+                      "of sequences\n");
+    else
+      fprintf(stderr, "Alignment Error: Odd number of sequences - "
+                      "I read in pairs!\n");
     fflush(stderr);
+    return false;
   }
 
   // warn if no bases read
@@ -753,16 +761,23 @@ static void report_input_end(bool odd, size_t alignments)
     fprintf(stderr, "Alignment Warning: empty input\n");
     fflush(stderr);
   }
+  return true;
+}
+
+// Once sf1 is exhausted: with two files, a sequence left in sf2 is odd too
+static bool input_left_over(seq_file_t *sf1, seq_file_t *sf2, read_t *spare)
+{
+  return sf2 != sf1 && seq_read(sf2, spare) > 0;
 }
 
 // If seq2 is NULL, read pair of entries from first file
 // Otherwise read an entry from each
-void align_from_file(const char *path1, const char *path2,
+bool align_from_file(const char *path1, const char *path2,
                      void (align)(read_t *r1, read_t *r2),
                      bool use_zlib)
 {
   seq_file_t *sf1, *sf2;
-  if(!open_seq_files(path1, path2, use_zlib, &sf1, &sf2)) return;
+  if(!open_seq_files(path1, path2, use_zlib, &sf1, &sf2)) return false;
 
   read_t read1, read2;
   seq_read_alloc(&read1);
@@ -777,13 +792,15 @@ void align_from_file(const char *path1, const char *path2,
     if(seq_read(sf2, &read2) <= 0) { odd = true; break; }
     (align)(&read1, &read2);
   }
+  if(!odd) odd = input_left_over(sf1, sf2, &read2);
 
-  report_input_end(odd, alignments);
+  const bool ok = report_input_end(odd, path2 != NULL, alignments);
   close_seq_files(sf1, sf2);
 
   // Free memory
   seq_read_dealloc(&read1);
   seq_read_dealloc(&read2);
+  return ok;
 }
 
 unsigned int cmdline_threads(const cmdline_t *cmd)
@@ -982,7 +999,7 @@ static void cmd_stop_workers(cmd_batch_t *b, cmd_worker_t *workers,
   }
 }
 
-void align_from_file_threaded(const char *path1, const char *path2,
+bool align_from_file_threaded(const char *path1, const char *path2,
                               bool use_zlib, unsigned int threads,
                               size_t (*number)(read_t *r1, read_t *r2),
                               const alignment_options_t *opts,
@@ -994,7 +1011,7 @@ void align_from_file_threaded(const char *path1, const char *path2,
                               void (*free_worker)(void *worker))
 {
   seq_file_t *sf1, *sf2;
-  if(!open_seq_files(path1, path2, use_zlib, &sf1, &sf2)) return;
+  if(!open_seq_files(path1, path2, use_zlib, &sf1, &sf2)) return false;
 
   // An alignment beside others gets one thread; one on its own gets them all
   threads = MAX2(threads, 1);
@@ -1060,7 +1077,11 @@ void align_from_file_threaded(const char *path1, const char *path2,
 
   // Reported after the output of the pairs before, as one at a time
   const int status = b.status;
-  if(status == 0) report_input_end(odd, alignments);
+  bool ok = false;
+  if(status == 0) {
+    if(!odd) odd = input_left_over(sf1, sf2, &b.jobs[b.read % b.cap].r2);
+    ok = report_input_end(odd, path2 != NULL, alignments);
+  }
 
   close_seq_files(sf1, sf2);
   cmd_batch_free(&b);
@@ -1068,6 +1089,7 @@ void align_from_file_threaded(const char *path1, const char *path2,
 
   // As one pair at a time: after the failing pair's output
   if(status != 0) exit(status);
+  return ok;
 }
 
 // The tool being run by cmdline_run_tool(), for the callbacks below
@@ -1145,7 +1167,10 @@ int cmdline_run_tool(cmdline_t *cmd, const cmd_tool_t *tool)
     if(status != 0) exit(status);
   }
 
-  // Align from files
+  // Align from files. A file that cannot be opened or ends with a sequence
+  // left over is reported there and then; the files after it are still
+  // aligned, and the status at the end says it failed
+  bool input_ok = true;
   size_t i, num_of_file_pairs = cmdline_get_num_of_file_pairs(cmd);
   for(i = 0; i < num_of_file_pairs; i++)
   {
@@ -1156,13 +1181,16 @@ int cmdline_run_tool(cmdline_t *cmd, const cmd_tool_t *tool)
       if(tool->on_stdin != NULL) tool->on_stdin();
     }
     // Interactive input, and printed matrices, one pair at a time
+    bool ok;
     if(threads > 1 && !cmd->interactive && !cmd->print_matrices)
-      align_from_file_threaded(file1, file2, !cmd->interactive, threads,
-                               tool->number != NULL ? tool_number : NULL,
-                               &main_opts, tool_run, tool_worker_new,
-                               tool_worker_free);
+      ok = align_from_file_threaded(file1, file2, !cmd->interactive, threads,
+                                    tool->number != NULL ? tool_number : NULL,
+                                    &main_opts, tool_run, tool_worker_new,
+                                    tool_worker_free);
     else
-      align_from_file(file1, file2, &tool_pair_from_file, !cmd->interactive);
+      ok = align_from_file(file1, file2, &tool_pair_from_file,
+                           !cmd->interactive);
+    input_ok = input_ok && ok;
   }
 
   // Free memory for storing alignment results
@@ -1170,5 +1198,5 @@ int cmdline_run_tool(cmdline_t *cmd, const cmd_tool_t *tool)
 
   cmdline_free(cmd);
 
-  return EXIT_SUCCESS;
+  return input_ok ? EXIT_SUCCESS : EXIT_FAILURE;
 }

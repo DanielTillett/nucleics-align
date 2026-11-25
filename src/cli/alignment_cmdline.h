@@ -78,7 +78,10 @@ size_t cmdline_get_num_of_file_pairs(cmdline_t* cmd);
 char* cmdline_get_file1(cmdline_t* cmd, size_t i);
 char* cmdline_get_file2(cmdline_t* cmd, size_t i);
 
-void align_from_file(const char *path1, const char *path2,
+// Align the pairs in path1 (or one sequence from each of path1 and path2)
+// with align(). Returns false if a file cannot be opened or a sequence is
+// left without a pair (reported on stderr; the pairs before are aligned)
+bool align_from_file(const char *path1, const char *path2,
                      void (align)(read_t *r1, read_t *r2),
                      bool use_zlib);
 
@@ -116,7 +119,8 @@ typedef struct
 // pair given on the command line, then the pairs in the files, several at
 // once on cmdline_threads() threads (one at a time from standard input or
 // when printing matrices). Frees cmd. Exits with the status of a pair that
-// fails; returns EXIT_SUCCESS otherwise
+// fails; returns EXIT_FAILURE if a file could not be read in pairs (see
+// align_from_file()), EXIT_SUCCESS otherwise
 int cmdline_run_tool(cmdline_t *cmd, const cmd_tool_t *tool);
 
 // Like align_from_file(), but aligns several pairs at once on up to
@@ -130,8 +134,9 @@ int cmdline_run_tool(cmdline_t *cmd, const cmd_tool_t *tool);
 // written as soon as the pairs before it are, so it is the same as one at a
 // time. A pair of more than opts->block_min_cells cells runs on its own
 // with all the threads. run() should return errors in the input (see the
-// *_checked() aligners) rather than exit, so the pairs before are written
-void align_from_file_threaded(const char *path1, const char *path2,
+// *_checked() aligners) rather than exit, so the pairs before are written.
+// Returns false as align_from_file() does
+bool align_from_file_threaded(const char *path1, const char *path2,
                               bool use_zlib, unsigned int threads,
                               size_t (*number)(read_t *r1, read_t *r2),
                               const alignment_options_t *opts,

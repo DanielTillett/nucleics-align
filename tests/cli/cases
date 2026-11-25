@@ -70,3 +70,7 @@ nw_scoring_case  | -     | ./bin/needleman_wunsch --scoring blosum62 --printscor
 nw_scoring_twice | -     | ./bin/needleman_wunsch --scoring PAM30 --scoring PAM70 ACGT AGT
 nw_linearfallback | -    | ./bin/needleman_wunsch --linearfallback --printscores --file @/ties.fa
 sw_linearfallback | -    | ./bin/smith_waterman --linearfallback ACGT AGT
+# Input errors end with a non-zero status (25 Nov 2026 review)
+nw_odd           | batch | ./bin/needleman_wunsch --printscores --file @/odd.fa
+nw_files_uneven  | batch | ./bin/needleman_wunsch --printscores --files @/files_a.fa @/odd.fa
+nw_missing_file  | -     | ./bin/needleman_wunsch --printscores --file @/no_such.fa
