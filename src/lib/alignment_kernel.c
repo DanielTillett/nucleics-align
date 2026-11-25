@@ -287,11 +287,15 @@ bool alignment_fill_blocks(alignment_block_t *tmpl)
   if(tmpl->bits == 16) atomic_fetch_add(&aln_stat_narrow_fills, 1);
   if(tmpl->diff != 0) atomic_fetch_add(&aln_stat_diff_fills, 1);
 
-  // With trace, each block's last column goes here for the next block
+  // With trace, each block's last column goes here for the next block:
+  // the rows of this fill (a band's strip, or the whole matrix) and the
+  // row above them, not the whole matrix height (a 1 Mb pair's strips
+  // would each map 12 MB per block for a few hundred rows)
   score_t *cols = NULL;
+  const size_t col_rows = len_j + 1; // rows y0-1 .. y1
   if(tmpl->trace != NULL || tmpl->score_only) {
-    if(h > SIZE_MAX / sizeof(score_t) / 3 / nblocks) cols = NULL;
-    else cols = aln_malloc(nblocks * 3 * h * sizeof(score_t));
+    if(col_rows > SIZE_MAX / sizeof(score_t) / 3 / nblocks) cols = NULL;
+    else cols = aln_malloc(nblocks * 3 * col_rows * sizeof(score_t));
     if(cols == NULL) {
       free(args); free(done); free(thread_ids); free(started);
       return false;
@@ -334,10 +338,15 @@ bool alignment_fill_blocks(alignment_block_t *tmpl)
     b->stop = &stop;
     b->nomem = &nomem;
     b->gave_up = &gave_up;
+    b->rc_y0 = tmpl->y0 - 1;
     for(m = 0; m < 3; m++) {
       if(cols != NULL) {
-        b->rc[m] = cols + (i*3 + m) * h; // by row
-        if(i > 0) { b->lc[m] = args[i-1].rc[m]; b->lstride = 1; b->ly0 = 0; }
+        b->rc[m] = cols + (i*3 + m) * col_rows; // by row, from row y0-1
+        if(i > 0) {
+          b->lc[m] = args[i-1].rc[m];
+          b->lstride = 1;
+          b->ly0 = tmpl->y0 - 1;
+        }
       }
       else b->lc[m] = tmpl->lc[m] + (b->c0 - tmpl->c0); // the matrices
     }
@@ -396,7 +405,7 @@ bool alignment_fill_blocks(alignment_block_t *tmpl)
   if(cols != NULL) {
     if(tmpl->y1 == h-1 && tmpl->c0 + tmpl->width == w-1)
       for(m = 0; m < 3; m++)
-        aligner->final_scores[m] = args[nblocks-1].rc[m][h-1];
+        aligner->final_scores[m] = args[nblocks-1].rc[m][h-1 - (tmpl->y0-1)];
     // Blocks are in column order, so on a tie the earlier block's cell wins
     aligner->best_score = 0;
     aligner->best_index = 0;
@@ -458,8 +467,9 @@ static bool alignment_sw_scan_any(const char *a, size_t len_a,
   tmp.score_width = len_a + 1;
   tmp.score_height = len_b + 1;
 
-  // Row 0 and column 0 are all 0 in Smith-Waterman
-  score_t *zeros = aln_calloc(len_a + len_b + 2, sizeof(score_t));
+  // Row 0 and column 0 are all 0 in Smith-Waterman: row 0 is read across
+  // the columns, column 0 through one cell (stride 0)
+  score_t *zeros = aln_calloc(len_a + 1, sizeof(score_t));
   sub_table_t table;
   if(zeros == NULL || !sub_table_build(&table, scoring, a, len_a, b, len_b)) {
     free(zeros);

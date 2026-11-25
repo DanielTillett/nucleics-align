@@ -117,7 +117,7 @@ static void DN(alignment_fill_diff)(alignment_block_t *p)
     l = i / seg;
     pOM[k][l] = pOA[k][l] = pOB[k][l] = pV[k][l] = 0;
   }
-  for(c = 0; c < 3; c++) p->rc[c][p->y0-1] = p->r0[c][c0+len_i];
+  for(c = 0; c < 3; c++) p->rc[c][p->y0-1 - p->rc_y0] = p->r0[c][c0+len_i];
 
   const size_t kl = (len_i - 1) % seg, ll = (len_i - 1) / seg; // last cell
   size_t left_seen = 0;
@@ -229,9 +229,9 @@ static void DN(alignment_fill_diff)(alignment_block_t *p)
 
     // The last column's scores for the block on the right (and the final
     // cell), and the first and last columns' H for the next row
-    p->rc[MATCH][y] = hlast + cm[kl][ll];
-    p->rc[GAP_A][y] = hlast + ca[kl][ll];
-    p->rc[GAP_B][y] = hlast + cb[kl][ll];
+    p->rc[MATCH][y - p->rc_y0] = hlast + cm[kl][ll];
+    p->rc[GAP_A][y - p->rc_y0] = hlast + ca[kl][ll];
+    p->rc[GAP_B][y - p->rc_y0] = hlast + cb[kl][ll];
     hlast += MAX3((score_t)cm[kl][ll], (score_t)ca[kl][ll],
                   (score_t)cb[kl][ll]);
     hfirst += MAX3((score_t)cm[0][0], (score_t)ca[0][0], (score_t)cb[0][0]);

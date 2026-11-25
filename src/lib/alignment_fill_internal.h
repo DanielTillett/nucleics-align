@@ -53,6 +53,7 @@ typedef struct {
   uint8_t *trace; score_t *rc[3];
   bool track_best; score_t best_score; size_t best_x, best_y;
   size_t y0, y1, ly0;
+  size_t rc_y0; // the row rc[c][0] holds (rc runs from row y0-1 to y1)
   const ptrdiff_t *trace_rows;
   score_t *lastrow[3];
   bool score_only;
@@ -89,6 +90,10 @@ bool alignment_fill_blocks(alignment_block_t *tmpl);
 
 // Defined in alignment_fill.c
 bool alignment_trace_capacity(aligner_t *aligner, size_t cells);
+// Room for cells with some to spare: the next power of two up to 1M cells,
+// then a quarter more (doubling a multi-gigabyte buffer would fail where
+// a little more fits)
+size_t alignment_grow_capacity(size_t cells);
 
 // Defined in alignment_band.c
 void trace_strips_free(void *ts_ptr);

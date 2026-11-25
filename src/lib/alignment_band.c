@@ -61,15 +61,24 @@ static bool alignment_score_guess(const sub_table_t *t,
 {
   enum { K = 12, SAMPLES = 128, WINDOW = 256 };
   if(len_a < 64 * K || len_b < 64 * K) return false;
-  size_t s, i, j, found = 0;
+  size_t s, i, j, k, found = 0;
+  // Letters match as the scoring says (so soft-masked lower case against
+  // upper case counts under case-insensitive scoring), through the table
+  const unsigned char *code = t->code;
+  const bool *is_match = t->is_match;
+  const size_t n = t->n;
   for(s = 0; s < SAMPLES; s++) {
     i = (len_a - K) * s / (SAMPLES - 1);
     const size_t at = (size_t)((double)i * (double)(len_b - K) /
                                (double)(len_a - K));
     const size_t lo = at > WINDOW ? at - WINDOW : 0;
     const size_t hi = MIN2(len_b - K, at + WINDOW);
-    for(j = lo; j <= hi; j++)
-      if(memcmp(a + i, b + j, K) == 0) { found++; break; }
+    for(j = lo; j <= hi; j++) {
+      for(k = 0; k < K; k++)
+        if(!is_match[code[(unsigned char)b[j+k]] * n +
+                     code[(unsigned char)a[i+k]]]) break;
+      if(k == K) { found++; break; }
+    }
   }
   // p^K is the share found, taken high so the guess stays high (a band
   // wrongly skipped costs more than one wrongly tried: 50 kb at 3%, 0.16
@@ -116,6 +125,8 @@ typedef struct {
   score_t *top; // 3 x score_width: a strip's top row by column
   score_t *lcol; // 3 x (strip + 1): its left column
   size_t loaded, loaded_y, loaded_x; // the strip in trace, to row, column
+  sub_table_t table; // the pair's scores, built on the first reload
+  bool has_table;
 } trace_strips_t;
 
 void trace_strips_free(void *ts_ptr)
@@ -128,6 +139,7 @@ void trace_strips_free(void *ts_ptr)
   free(ts->col0);
   free(ts->top);
   free(ts->lcol);
+  if(ts->has_table) sub_table_free(&ts->table);
   free(ts);
 }
 
@@ -150,11 +162,15 @@ static bool trace_strips_fill(aligner_t *aligner, trace_strips_t *ts,
   for(r = y0; r <= y; r++)
     aligner->trace_rows[r] = (ptrdiff_t)((r - y0) * width) -
                              (ptrdiff_t)(c0 + 1);
-  sub_table_t table;
-  if(!sub_table_build(&table, aligner->scoring, aligner->seq_a, len_i,
-                      aligner->seq_b, len_j)) return false;
+  // The scores table once, not per strip (building it scans both whole
+  // sequences, and a 1 Mb traceback reloads hundreds of strips)
+  if(!ts->has_table) {
+    if(!sub_table_build(&ts->table, aligner->scoring, aligner->seq_a, len_i,
+                        aligner->seq_b, len_j)) return false;
+    ts->has_table = true;
+  }
   alignment_block_t tmpl = {
-    .aligner = aligner, .table = &table, .min = ts->min,
+    .aligner = aligner, .table = &ts->table, .min = ts->min,
     .c0 = c0, .width = width, .y0 = y0, .y1 = y,
     .r0 = {top[MATCH], top[GAP_A], top[GAP_B]}, .lstride = 1,
     .band = true,
@@ -171,7 +187,6 @@ static bool trace_strips_fill(aligner_t *aligner, trace_strips_t *ts,
     }
   }
   bool filled = alignment_fill_blocks(&tmpl);
-  sub_table_free(&table);
   if(filled) {
     ts->loaded = s;
     ts->loaded_y = y;

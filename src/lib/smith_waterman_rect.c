@@ -314,12 +314,14 @@ bool sw_align_rect(sw_aligner_t *sw, const char *a, const char *b,
   }
 
   // A hit scoring best has at least best / smax aligned pairs. If that is
-  // most of the prefix up to (bx, by), fill the whole prefix (exact too:
-  // nothing after (bx, by) changes it) rather than scan for the rectangle
+  // most of the prefix up to (bx, by), along its longer side, fill the
+  // whole prefix (exact too: nothing after (bx, by) changes it) rather than
+  // scan for the rectangle. (Along the shorter side alone, a 100-letter
+  // hit at (100, 100000) would have the whole 100 x 100000 prefix filled)
   const sub_table_t *t = &sw->table;
   score_t smax = 0;
   for(i = 0; i < t->n * t->n; i++) smax = MAX2(smax, t->scores[i]);
-  if(smax > 0 && (double)best >= 0.5 * smax * (double)MIN2(bx, by)) {
+  if(smax > 0 && (double)best >= 0.5 * smax * (double)MAX2(bx, by)) {
     rx = bx;
     ry = by;
   }

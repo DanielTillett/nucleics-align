@@ -81,7 +81,8 @@ static bool _nw_linear(const char *a, const char *b, size_t len_a,
 // ALN_ERR_UNSUPPORTED: the other aligners align it
 static aln_status_t _nw_wfa(const char *a, const char *b, size_t len_a,
                             size_t len_b, const scoring_t *scoring,
-                            const nw_aligner_t *nw, alignment_t *result)
+                            const nw_aligner_t *nw, alignment_t *result,
+                            bool checked)
 {
   alignment_options_t defaults;
   const alignment_options_t *opts = nw->options;
@@ -89,9 +90,10 @@ static aln_status_t _nw_wfa(const char *a, const char *b, size_t len_a,
     alignment_options_default(&defaults);
     opts = &defaults;
   }
-  // (a pair the scoring lacks is left to the matrices, which report it)
-  if(!opts->wfa_align ||
-     !alignment_scoring_complete(scoring, a, len_a, b, len_b, NULL))
+  if(!opts->wfa_align) return ALN_ERR_UNSUPPORTED;
+  // (a pair the scoring lacks is left to the matrices, which report it;
+  // the checked entry point has already scanned for one)
+  if(!checked && !alignment_scoring_complete(scoring, a, len_a, b, len_b, NULL))
     return ALN_ERR_UNSUPPORTED;
   sub_table_t table;
   if(!sub_table_build(&table, scoring, a, len_a, b, len_b))
@@ -132,14 +134,16 @@ static aln_status_t _nw_long(const char *a, const char *b, size_t len_a,
 }
 
 // The fast paths that go before the matrices: ALN_OK or ALN_ERR_NOMEM
-// settle it, ALN_ERR_UNSUPPORTED leaves it to the matrices
+// settle it, ALN_ERR_UNSUPPORTED leaves it to the matrices. checked: the
+// input has passed alignment_check()
 static aln_status_t _nw_fast_paths(const char *a, const char *b,
                                    size_t len_a, size_t len_b,
                                    const scoring_t *scoring,
                                    const nw_aligner_t *nw,
-                                   alignment_t *result)
+                                   alignment_t *result, bool checked)
 {
-  aln_status_t status = _nw_wfa(a, b, len_a, len_b, scoring, nw, result);
+  aln_status_t status = _nw_wfa(a, b, len_a, len_b, scoring, nw, result,
+                                checked);
   if(status == ALN_ERR_UNSUPPORTED)
     status = _nw_long(a, b, len_a, len_b, scoring, nw, result);
   return status;
@@ -244,7 +248,7 @@ aln_status_t needleman_wunsch_align_checked(const char *a, const char *b,
   aln_status_t status = alignment_check(scoring, a, len_a, b, len_b, false,
                                         err);
   if(status != ALN_OK) return status;
-  status = _nw_fast_paths(a, b, len_a, len_b, scoring, nw, result);
+  status = _nw_fast_paths(a, b, len_a, len_b, scoring, nw, result, true);
   if(status == ALN_ERR_UNSUPPORTED) {
     status = _nw_align(a, b, len_a, len_b, scoring, nw, result);
     if(_nw_linear(a, b, len_a, len_b, scoring, nw, result, status))
@@ -262,7 +266,7 @@ void needleman_wunsch_align2(const char *a, const char *b,
   // As needleman_wunsch_align_checked() without alignment_check(): a pair
   // the scoring lacks ends the program from the table build instead
   aln_error_t e = {ALN_OK, 0, 0};
-  e.status = _nw_fast_paths(a, b, len_a, len_b, scoring, nw, result);
+  e.status = _nw_fast_paths(a, b, len_a, len_b, scoring, nw, result, false);
   if(e.status == ALN_ERR_UNSUPPORTED) {
     e.status = _nw_align(a, b, len_a, len_b, scoring, nw, result);
     if(_nw_linear(a, b, len_a, len_b, scoring, nw, result, e.status))

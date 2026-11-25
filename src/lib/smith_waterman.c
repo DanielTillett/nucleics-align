@@ -485,7 +485,8 @@ static bool _index_hits(sw_aligner_t *sw)
 }
 
 // Return 1 if alignment was found, 0 otherwise, -1 if out of memory (its
-// cells are then used, and the hit lost)
+// cells are then used, and the hit lost). result NULL: only mark the hit's
+// cells as used (nothing to allocate)
 static int _follow_hit(sw_aligner_t* sw, size_t arr_index,
                        alignment_t* result)
 {
@@ -532,7 +533,9 @@ static int _follow_hit(sw_aligner_t* sw, size_t arr_index,
                      &score_x, &score_y, &arr_index);
   }
 
-  // We got a result!
+  // We got a result! (With no result wanted, the walk has done its job:
+  // the hit's cells are marked as used)
+  if(result == NULL) return 1;
   // Allocate memory for the result
   if(!alignment_reserve(result, length)) return -1;
   result->length = length;
@@ -687,11 +690,8 @@ static int _sw_fetch(sw_aligner_t *sw, alignment_t *result,
         }
         sw->fast_hit = false;
       } else {
-        alignment_t first;
-        memset(&first, 0, sizeof(first));
-        found = _follow_hit(sw, sw->full_best, &first);
-        free(first.result_a);
-        free(first.result_b);
+        // Walk the first hit again only to mark its cells (no strings)
+        found = _follow_hit(sw, sw->full_best, NULL);
         if(found < 0) {
           *status = ALN_ERR_NOMEM;
           return 0;

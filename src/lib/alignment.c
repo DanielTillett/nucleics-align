@@ -407,7 +407,7 @@ aln_status_t aligner_align_checked(aligner_t *aligner,
 
   if(aligner->capacity < new_capacity)
   {
-    aligner->capacity = ROUNDUP2POW(new_capacity);
+    aligner->capacity = alignment_grow_capacity(new_capacity);
     // Rounding up can take the bytes past SIZE_MAX: no rounding then
     if(aligner->capacity > SIZE_MAX / sizeof(score_t))
       aligner->capacity = new_capacity;

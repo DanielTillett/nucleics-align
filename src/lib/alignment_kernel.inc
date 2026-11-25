@@ -153,7 +153,7 @@ static void KN(alignment_fill_striped)(alignment_block_t *p)
     }
   }
   if(!full)
-    for(c = 0; c < 3; c++) p->rc[c][p->y0-1] = p->r0[c][c0+len_i];
+    for(c = 0; c < 3; c++) p->rc[c][p->y0-1 - p->rc_y0] = p->r0[c][c0+len_i];
 
 #if ALN_K_BYTE
   // Rows filled and the best so far at the last checkpoint (mark) and the
@@ -289,9 +289,9 @@ static void KN(alignment_fill_striped)(alignment_block_t *p)
       }
 
       i = len_i - 1;
-      p->rc[MATCH][y] = cM[i % seg][i / seg];
-      p->rc[GAP_A][y] = cA[i % seg][i / seg];
-      p->rc[GAP_B][y] = cB[i % seg][i / seg];
+      p->rc[MATCH][y - p->rc_y0] = cM[i % seg][i / seg];
+      p->rc[GAP_A][y - p->rc_y0] = cA[i % seg][i / seg];
+      p->rc[GAP_B][y - p->rc_y0] = cB[i % seg][i / seg];
 
       if(track)
       {

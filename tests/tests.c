@@ -2165,6 +2165,26 @@ void alignment_test_create_zero()
   alignment_free(result);
 }
 
+// The full score matrices grow by a quarter past 1M cells, as the traceback
+// buffer does, not to the next power of two (26 GB for a 13 GB pair)
+void alignment_test_matrix_growth()
+{
+  nw_aligner_t *nw = needleman_wunsch_new();
+  alignment_t *aln = alignment_create(16);
+  static scoring_t scoring;
+  static char a[1051], b[1051];
+  scoring_system_default(&scoring);
+  hb_rand_seq(a, 1050, "acgt");
+  hb_rand_seq(b, 1050, "acgt");
+  nw->compact = false;
+  needleman_wunsch_align(a, b, &scoring, nw, aln);
+  const size_t cells = 1051 * 1051;
+  ASSERT(nw->match_scores != NULL && !nw->traced);
+  ASSERT(nw->capacity >= cells && nw->capacity <= cells + cells / 4);
+  needleman_wunsch_free(nw);
+  alignment_free(aln);
+}
+
 // Colours: one per column (red a gap, green a mismatch), switched only
 // where the next column's differs; a gap right after a mismatch stays red
 void alignment_test_colour()
@@ -3183,6 +3203,7 @@ void test_misc()
   SUITE_START("Alignment buffers and scoring files");
 
   alignment_test_create_zero();
+  alignment_test_matrix_growth();
   alignment_test_colour();
   alignment_test_roundup();
   scoring_test_load_matrix();

@@ -107,8 +107,9 @@ bool alignment_fill_matrices(aligner_t *aligner, char is_sw)
 
   #ifdef ALN_STRIPED
   // The striped fill handles the uniform recurrence only; options that
-  // change it for particular cells use the scalar loop below
-  if(aligner->opts.striped && len_i > 0 &&
+  // change it for particular cells use the scalar loop below (an empty
+  // sequence has no cells past the edges just set: nothing to fill)
+  if(aligner->opts.striped && len_i > 0 && len_j > 0 &&
      !scoring->no_end_gap_penalty && !scoring->no_mismatches &&
      !no_gaps_in_a && !no_gaps_in_b)
   {
@@ -237,13 +238,19 @@ void* alignment_alloc_matrix(size_t mem)
 #ifdef ALN_STRIPED
 // Room for the traceback bytes of `cells` cells. Returns false if out of
 // memory
+size_t alignment_grow_capacity(size_t cells)
+{
+  // Doubling a multi-gigabyte buffer (e.g. 2.5 GiB -> 4 GiB) would fail
+  // where a little more room fits: a quarter extra past 1M cells
+  return cells <= ((size_t)1 << 20) ? ROUNDUP2POW(cells)
+         : (cells <= SIZE_MAX - cells / 4 ? cells + cells / 4 : cells);
+}
+
 bool alignment_trace_capacity(aligner_t *aligner, size_t cells)
 {
   if(aligner->trace_capacity < cells) {
     free(aligner->trace);
-    // Avoid doubling multi-gigabyte traceback buffers (e.g. 2.5 GiB -> 4 GiB)
-    size_t cap = cells <= ((size_t)1 << 20) ? ROUNDUP2POW(cells)
-                 : (cells <= SIZE_MAX - cells / 4 ? cells + cells / 4 : cells);
+    size_t cap = alignment_grow_capacity(cells);
     aligner->trace_capacity = cap;
     aligner->trace = alignment_alloc_matrix(aligner->trace_capacity);
     if(aligner->trace == NULL) {
