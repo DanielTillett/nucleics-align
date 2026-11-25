@@ -85,17 +85,10 @@ sub new
     else { croak("Unknown option '$key'"); }
   }
 
-  my ($to, $from) = (undef, gensym());
-  # Standard error comes back with the output (its errors end a pair)
-  my $pid = eval { open3($to, $from, undef, $cmd, @args, '--stdin',
-                         '--pretty') };
-  croak("Cannot run $cmd: $@") if !$pid;
-  $to->autoflush(1);
-
   my $self = {
-    _to => $to,
-    _from => $from,
-    _pid => $pid,
+    _cmd => $cmd,
+    _args => \@args,
+    _proc => undef, # the running tool: { pid, to, from }, started on demand
     _timeout => $timeout,
     _align_number => -1, # of the alignment being read
     _seq1 => undef,
@@ -106,11 +99,42 @@ sub new
   return bless($self, $class);
 }
 
-# Lines of output with no line breaks; croaks on the tool's errors
+# The tool, started the first time it is needed and again after an error
+# stopped it (its stdin is then out of step with its prompts)
+sub _proc
+{
+  my ($self) = @_;
+  if(!$self->{_proc})
+  {
+    my ($to, $from) = (undef, gensym());
+    # Standard error comes back with the output (its errors end a pair)
+    my $pid = eval { open3($to, $from, undef, $self->{_cmd},
+                           @{$self->{_args}}, '--stdin', '--pretty') };
+    croak("Cannot run $self->{_cmd}: $@") if !$pid;
+    $to->autoflush(1);
+    $self->{_proc} = { pid => $pid, to => $to, from => $from };
+    $self->{_waiting} = 1;
+    $self->{_align_number} = -1; # a new tool numbers its alignments from 0
+  }
+  return $self->{_proc};
+}
+
+sub _stop
+{
+  my ($self) = @_;
+  my $p = delete($self->{_proc}) or return;
+  close($p->{to});
+  close($p->{from});
+  waitpid($p->{pid}, 0);
+  $self->{_waiting} = 1;
+}
+
+# Lines of output with no line breaks; croaks on the tool's errors, which
+# stop it (the next alignment starts it again)
 sub _read_line
 {
   my ($self) = @_;
-  my $from = $self->{_from};
+  my $from = $self->_proc()->{from};
   my $line;
   eval {
     local $SIG{ALRM} = sub { die("timeout\n") };
@@ -120,14 +144,19 @@ sub _read_line
   };
   alarm(0);
   if($@) {
+    $self->_stop();
     croak($@ eq "timeout\n" ? "Timeout reading smith_waterman output"
                             : "Cannot read smith_waterman output: $@");
   }
-  croak("smith_waterman stopped (have you compiled?)") if !defined($line);
+  if(!defined($line)) {
+    $self->_stop();
+    croak("smith_waterman stopped (have you compiled?)");
+  }
   $line =~ s/\r?\n$//;
   if($line =~ /^(Alignment )?(Error|Warning):/) {
     print STDERR "ErrSeq1: '".($self->{_seq1} // '')."'\n";
     print STDERR "ErrSeq2: '".($self->{_seq2} // '')."'\n";
+    $self->_stop();
     croak($line);
   }
   return $line;
@@ -147,7 +176,7 @@ sub _expect
 sub do_alignment
 {
   my ($self, $seq1, $seq2) = @_;
-  my $to = $self->{_to};
+  my $to = $self->_proc()->{to};
 
   if(!$self->{_waiting})
   {
@@ -161,6 +190,9 @@ sub do_alignment
     croak("Sequences must be defined") if !defined($seq);
     croak("Whitespace or control characters not allowed in sequences")
       if $seq =~ /[\x00-\x20\x7f]/;
+    # The tool would read these as a FASTA or FASTQ header and wait for
+    # the rest of the record
+    croak("Sequences cannot start with '>' or '@'") if $seq =~ /^[>@]/;
   }
   if($seq1 eq '' || $seq2 eq '') {
     carp("Cannot align lengths of zero");
@@ -188,7 +220,7 @@ sub get_next_hit
   my ($self) = @_;
   return undef if $self->{_waiting};
 
-  print {$self->{_to}} "h\n";
+  print {$self->_proc()->{to}} "h\n";
   my $line = $self->_read_line();
   if(substr($line, 0, length(PROMPT_LINE)) ne PROMPT_LINE) {
     croak("smith_waterman said '$line' (expected its prompt)");
@@ -239,11 +271,7 @@ sub print_hit
 sub destructor
 {
   my ($self) = @_;
-  return if !$self->{_pid};
-  close($self->{_to});
-  close($self->{_from});
-  waitpid($self->{_pid}, 0);
-  $self->{_pid} = undef;
+  $self->_stop();
 }
 
 sub DESTROY

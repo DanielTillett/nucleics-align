@@ -159,11 +159,15 @@ sub _check
     croak("Sequences must be defined") if !defined($seq);
     croak("Whitespace or control characters not allowed in sequences")
       if $seq =~ /[\x00-\x20\x7f]/;
+    # The tool would read these as a FASTA or FASTQ header and wait for
+    # the rest of the record
+    croak("Sequences cannot start with '>' or '@'") if $seq =~ /^[>@]/;
   }
 }
 
 # Lines of the tool's output for one pair given on its command line: for
-# pairs with an empty sequence, which its line-by-line input cannot carry
+# pairs with an empty sequence, which its line-by-line input cannot carry.
+# The pair comes after "--", so a sequence may start with '-'
 sub _run_once
 {
   my ($self, @extra) = @_;
@@ -173,12 +177,26 @@ sub _run_once
   croak("Cannot run $self->{_cmd}: $@") if !$pid;
   close($to);
   my @lines;
-  while(defined(my $line = <$from>)) {
-    $line =~ s/\r?\n$//;
-    croak($line) if $line =~ /^(Alignment )?(Error|Warning):/;
-    push(@lines, $line);
-  }
+  my $error;
+  eval {
+    local $SIG{ALRM} = sub { die("timeout\n") };
+    alarm($self->{_timeout});
+    while(defined(my $line = <$from>)) {
+      $line =~ s/\r?\n$//;
+      if($line =~ /^(Alignment )?(Error|Warning):/) { $error = $line; last; }
+      push(@lines, $line);
+    }
+    alarm(0);
+  };
+  alarm(0);
+  my $failed = $@;
+  close($from);
+  kill('TERM', $pid) if $failed || defined($error);
   waitpid($pid, 0);
+  croak($failed eq "timeout\n" ? "Timeout reading $self->{_cmd} output"
+                               : "Cannot read $self->{_cmd} output: $failed")
+    if $failed;
+  croak($error) if defined($error);
   return @lines;
 }
 
@@ -202,7 +220,7 @@ sub do_alignment
   my @lines;
 
   if($seq1 eq '' || $seq2 eq '') {
-    @lines = $self->_run_once('--pretty', '--printscores', $seq1, $seq2);
+    @lines = $self->_run_once('--pretty', '--printscores', '--', $seq1, $seq2);
   }
   else {
     my $p = $self->_proc('align');
@@ -221,7 +239,7 @@ sub do_score
   my ($self, $seq1, $seq2) = @_;
   _check($seq1, $seq2);
   if($seq1 eq '' || $seq2 eq '') {
-    return _score_of(($self->_run_once('--scoreonly', $seq1, $seq2))[0]);
+    return _score_of(($self->_run_once('--scoreonly', '--', $seq1, $seq2))[0]);
   }
   my $p = $self->_proc('score');
   print {$p->{to}} "$seq1\n$seq2\n";

@@ -64,6 +64,16 @@ my $input = "$FindBin::Bin/../tests/cli/input";
   eval { $pairs->do_alignment('ACGT', 'AGT') };
   like($@, qr/Unknown character pair/, 'tool error');
   is($pairs->do_alignment('CAAC', 'CAC')->{score}, -2, 'restarts after one');
+  # The tool reads a leading '>' or '@' as a FASTA/FASTQ header and would
+  # wait for the rest of the record: refused before it is sent
+  my $quick = NeedlemanWunsch->new(timeout => 5);
+  eval { $quick->do_alignment('>ACGT', 'ACGT') };
+  like($@, qr/cannot start with/, 'leading > refused');
+  eval { $quick->do_alignment('ACGT', '@ACGT') };
+  like($@, qr/cannot start with/, 'leading @ refused');
+  is($quick->do_alignment('-A', '')->{align1}, '-A', 'leading dash, empty');
+  is($quick->do_alignment('-A', 'A')->{align1}, '-A', 'leading dash');
+  $quick->destructor();
   $nw->destructor();
 }
 
@@ -101,6 +111,18 @@ my $input = "$FindBin::Bin/../tests/cli/input";
   eval { SmithWaterman->new(Scoring => 'nope') };
   like($@, qr/Invalid scoring/, 'bad scoring name');
   $sw->destructor();
+
+  # After a tool error the next alignment starts a fresh tool
+  my $pairs = SmithWaterman->new(substitution_pairs => "$input/ac_pairs.txt",
+                                 minscore => 1, timeout => 5);
+  eval { $pairs->do_alignment('ACGT', 'AGT') };
+  like($@, qr/Unknown character pair/, 'sw tool error');
+  ok($pairs->do_alignment('ACCA', 'ACA'), 'sw restarts after one');
+  is($pairs->get_next_hit()->{score}, 2, 'sw hit after restart');
+  eval { $pairs->do_alignment('>ACGT', 'ACGT') };
+  like($@, qr/cannot start with/, 'sw leading > refused');
+  $pairs->destructor();
+  ok(SmithWaterman->new()->do_alignment('-ACCA', 'ACA'), 'sw leading dash');
 }
 
 done_testing();
