@@ -300,6 +300,9 @@ aln_status_t smith_waterman_align_checked(const char *seq_a, const char *seq_b,
                                           const scoring_t *scoring,
                                           sw_aligner_t *sw, aln_error_t *err)
 {
+  // Whatever happens, the hits of the pair before are gone (they refer to
+  // sequences the caller may have freed)
+  _no_hits(&sw->history);
   aln_status_t status = alignment_check(scoring, seq_a, len_a, seq_b, len_b,
                                         true, err);
   if(status == ALN_OK) {

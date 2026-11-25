@@ -2376,6 +2376,12 @@ void test_checked()
   ASSERT(smith_waterman_align_checked("ACT", "AC", 3, 2, &scoring, sw,
                                       &e) == ALN_ERR_SCORING);
   ASSERT(e.a == 't' && e.b == 'a');
+  // A failed check leaves no hits from the pair aligned before it
+  ASSERT(smith_waterman_align_checked("ACCA", "ACA", 4, 3, &scoring, sw,
+                                      &e) == ALN_OK);
+  ASSERT(smith_waterman_align_checked("ACT", "AC", 3, 2, &scoring, sw,
+                                      &e) == ALN_ERR_SCORING);
+  ASSERT(!smith_waterman_fetch_checked(sw, aln, &e) && e.status == ALN_OK);
   ASSERT(hirschberg_align_checked("CA", "AT", 2, 2, &scoring, NULL, aln,
                                   &e) == ALN_ERR_SCORING);
   ASSERT(e.a == 'a' && e.b == 't');
