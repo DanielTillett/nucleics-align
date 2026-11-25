@@ -23,8 +23,11 @@ typedef struct {
 
 typedef struct cli_seq_file seq_file_t;
 
+/* Open path for reading ("-": standard input), gzip or not */
 seq_file_t *seq_open(const char *path);
-seq_file_t *seq_dopen(int fd, bool is_gzip, bool unused1, size_t unused2);
+/* Read from an open descriptor. Standard input, not gzip, is read through
+   stdin itself, so other reads of stdin (prompt answers) stay in step */
+seq_file_t *seq_dopen(int fd, bool is_gzip);
 void        seq_close(seq_file_t *sf);
 
 void seq_read_alloc(read_t *r);

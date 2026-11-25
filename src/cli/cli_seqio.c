@@ -33,6 +33,7 @@ struct cli_seq_file {
   cli_str_t pending;
   bool   has_pending;
   bool   eof;
+  bool   borrowed; // fp is stdin: not ours to close
 };
 
 static void str_init(cli_str_t *s, size_t cap)
@@ -184,11 +185,19 @@ seq_file_t *seq_open(const char *path)
   return sf;
 }
 
-seq_file_t *seq_dopen(int fd, bool is_gzip, bool unused1, size_t unused2)
+seq_file_t *seq_dopen(int fd, bool is_gzip)
 {
-  (void)unused1; (void)unused2;
   seq_file_t *sf = sf_alloc();
   if(sf == NULL) return NULL;
+  if(!is_gzip && fd == STDIN_FILENO) {
+    // Read through stdin itself, not a dup() with its own buffer: the
+    // interactive tools read their prompt answers with getc(stdin), which
+    // must see the bytes after the sequences, not those a second buffer
+    // has read ahead
+    sf->fp = stdin;
+    sf->borrowed = true;
+    return sf;
+  }
   int dfd = dup(fd);
   if(dfd < 0) { seq_close(sf); return NULL; }
   if(is_gzip) {
@@ -205,7 +214,7 @@ void seq_close(seq_file_t *sf)
 {
   if(sf == NULL) return;
   if(sf->gz != NULL) gzclose(sf->gz);
-  if(sf->fp != NULL) fclose(sf->fp);
+  if(sf->fp != NULL && !sf->borrowed) fclose(sf->fp);
   str_free(&sf->line);
   str_free(&sf->pending);
   free(sf);

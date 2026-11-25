@@ -702,7 +702,7 @@ char* cmdline_get_file2(cmdline_t *cmd, size_t i)
 static seq_file_t* open_seq_file(const char *path, bool use_zlib)
 {
   return (strcmp(path,"-") != 0 || use_zlib) ? seq_open(path)
-                                             : seq_dopen(fileno(stdin), false, false, 0);
+                                             : seq_dopen(fileno(stdin), false);
 }
 
 // Open path1, and path2 unless it is NULL (pairs are then read from path1

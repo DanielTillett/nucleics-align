@@ -1,3 +1,18 @@
 == Alignment 0 lengths (15, 14):
 
+next [h]it or [a]lignment: hit 0.0 score: 22
+  TACGTTTGACG  [pos: 3; len: 11]
+  TACGTTTGACG  [pos: 1; len: 11]
+
+next [h]it or [a]lignment: hit 0.1 score: 9
+  ACGT---ACG  [pos: 0; len: 7]
+  ACGTTTGACG  [pos: 2; len: 10]
+
+next [h]it or [a]lignment: ==
+== Alignment 1 lengths (10, 10):
+
+next [h]it or [a]lignment: hit 1.0 score: 16
+  GGATCCTTAA  [pos: 0; len: 10]
+  GGATCGTTAA  [pos: 0; len: 10]
+
 next [h]it or [a]lignment: 
