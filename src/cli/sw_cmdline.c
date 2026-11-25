@@ -15,7 +15,7 @@
 #include <string.h>
 
 // my utility functions
-#include "seq_file/seq_file.h"
+#include "cli_seqio.h"
 
 // Alignment scoring and loading
 #include "alignment_scoring_load.h"

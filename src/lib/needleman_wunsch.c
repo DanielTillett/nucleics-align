@@ -11,12 +11,18 @@
 #include <string.h>
 
 #include "alignment_macros.h"
+#include "alignment_alloc.h"
 #include "needleman_wunsch.h"
 #include "hirschberg.h"
 
+nw_aligner_t* needleman_wunsch_try_new(void)
+{
+  return aln_calloc(1, sizeof(nw_aligner_t));
+}
+
 nw_aligner_t* needleman_wunsch_new(void)
 {
-  nw_aligner_t *nw = calloc(1, sizeof(nw_aligner_t));
+  nw_aligner_t *nw = needleman_wunsch_try_new();
   if(nw == NULL) {
     fprintf(stderr, "%s:%i: Out of memory\n", __FILE__, __LINE__);
     exit(EXIT_FAILURE);
@@ -88,7 +94,7 @@ static bool _nw_wfa(const char *a, const char *b, size_t len_a, size_t len_b,
     return false;
   sub_table_t table;
   if(!sub_table_build(&table, scoring, a, len_a, b, len_b)) return false;
-  size_t budget = alignment_wfa_budget;
+  size_t budget = opts->wfa_budget;
   if(budget == 0) {
     const size_t total = len_a <= SIZE_MAX - len_b ? len_a + len_b : SIZE_MAX;
     budget = total <= NW_WFA_MAX_CELLS / NW_WFA_PER_LETTER

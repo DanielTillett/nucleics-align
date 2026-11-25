@@ -100,6 +100,9 @@ fill_result_t alignment_fill_banded(aligner_t *aligner,
 
 #endif /* ALN_STRIPED */
 
+// Always declared (stubbed when ALN_STRIPED is not defined)
+void trace_strips_free(void *ts_ptr);
+
 // Defined in alignment_fill.c
 score_t alignment_min_score(const scoring_t *scoring, char is_sw);
 void* alignment_alloc_matrix(size_t mem);

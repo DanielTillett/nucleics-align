@@ -22,7 +22,7 @@
 
 #include <stdarg.h> // required for va_list
 #include <stdbool.h>
-#include "seq_file/seq_file.h"
+#include "cli_seqio.h"
 #include "alignment.h"
 
 enum NucleicsAlignCmdType {NUCLEICS_ALIGN_SW_CMD, NUCLEICS_ALIGN_NW_CMD};

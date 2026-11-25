@@ -1,5 +1,3 @@
-LIBS_PATH=libs
-
 ifdef DEBUG
 	OPT = -O0 -g -ggdb
 else
@@ -32,8 +30,8 @@ CFLAGS ?= -Wall -Wextra
 CFLAGS += -std=c11 $(OPT) -Wno-psabi
 OBJFLAGS = -fPIC
 
-LIB_INCS = -I src/lib
-CLI_INCS = -I $(LIBS_PATH) -I src/lib -I src/cli
+LIB_INCS = -I include -I src/lib
+CLI_INCS = -I include -I src/lib -I src/cli
 LIBS = -L src
 LIB_LINK = -lalign -lpthread
 CLI_LINK = -lalign -lpthread -lz
@@ -41,10 +39,10 @@ CLI_LINK = -lalign -lpthread -lz
 # Core library sources (zero CLI, zero zlib, zero libs/ dependencies)
 LIB_SRCS = $(wildcard src/lib/*.c)
 LIB_OBJS = $(LIB_SRCS:.c=.o)
-LIB_HDRS = $(wildcard src/lib/*.h)
+LIB_HDRS = $(wildcard include/*.h) $(wildcard src/lib/*.h)
 
 # Shared CLI support objects (linked only into CLI tools & CLI-scoring tests)
-CLI_COMMON_SRCS = src/cli/alignment_cmdline.c src/cli/alignment_scoring_load.c
+CLI_COMMON_SRCS = src/cli/alignment_cmdline.c src/cli/alignment_scoring_load.c src/cli/cli_seqio.c
 CLI_COMMON_OBJS = $(CLI_COMMON_SRCS:.c=.o)
 CLI_HDRS = $(wildcard src/cli/*.h)
 
@@ -92,6 +90,9 @@ bin/nucleics_align_tests: tests/tests.c $(CLI_COMMON_OBJS) src/libalign.a $(LIB_
 bin/test_v130: tests/test_v130.c src/libalign.a $(LIB_HDRS) | bin
 	$(CC) -o $@ $< $(CFLAGS) $(TGTFLAGS) $(LIB_INCS) $(LIBS) $(LIB_LINK)
 
+bin/test_v2_api: tests/test_v2_api.c src/libalign.a include/nucleics_align.h | bin
+	$(CC) -o $@ $< $(CFLAGS) $(TGTFLAGS) -I include $(LIBS) $(LIB_LINK)
+
 examples: src/libalign.a
 	cd examples; $(MAKE) SANFLAGS="$(TGTFLAGS)"
 
@@ -102,9 +103,10 @@ clean:
 	rm -rf bin src/*.o src/*.d src/lib/*.o src/lib/*.d src/cli/*.o src/cli/*.d src/libalign.a src/.build-flags
 	cd examples && $(MAKE) clean
 
-test: bin/nucleics_align_tests bin/test_v130 bin/needleman_wunsch bin/smith_waterman bin/lcs
+test: bin/nucleics_align_tests bin/test_v130 bin/test_v2_api bin/needleman_wunsch bin/smith_waterman bin/lcs
 	./bin/nucleics_align_tests
 	./bin/test_v130
+	./bin/test_v2_api
 	sh tests/cli/run.sh
 
 .PHONY: all clean examples test

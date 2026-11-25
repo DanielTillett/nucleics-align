@@ -18,12 +18,8 @@
 #include <assert.h>
 #include <limits.h> // INT_MAX
 #include <pthread.h>
-#include <sched.h> // sched_yield
 #include <stdatomic.h>
 #include <unistd.h> // sysconf
-#ifdef __linux__
-#  include <sys/mman.h> // madvise
-#endif
 
 #include "alignment.h"
 #include "alignment_macros.h"
@@ -178,6 +174,8 @@ void alignment_options_default(alignment_options_t *opts)
   opts->linear_fallback = alignment_linear_fallback;
   opts->linear_above = alignment_linear_above;
   opts->wfa_align = alignment_wfa_alignment;
+  opts->wfa_budget = alignment_wfa_budget;
+  opts->sw_fast_rect = smith_waterman_fast_rect;
   opts->block_min_cells = alignment_block_min_cells;
   opts->block_min_cols = alignment_block_min_cols;
   opts->band_strip_rows = alignment_band_strip_rows;
@@ -434,25 +432,31 @@ void aligner_destroy(aligner_t *aligner)
 }
 
 
+alignment_t* alignment_try_create(size_t capacity)
+{
+  capacity = capacity < 16 ? 16 : ROUNDUP2POW(capacity);
+  alignment_t *result = aln_calloc(1, sizeof(alignment_t));
+  if(result == NULL) return NULL;
+  result->result_a = aln_malloc(sizeof(char) * capacity);
+  result->result_b = aln_malloc(sizeof(char) * capacity);
+  if(result->result_a == NULL || result->result_b == NULL) {
+    free(result->result_a);
+    free(result->result_b);
+    free(result);
+    return NULL;
+  }
+  result->capacity = capacity;
+  result->result_a[0] = result->result_b[0] = '\0';
+  return result;
+}
+
 alignment_t* alignment_create(size_t capacity)
 {
-  capacity = ROUNDUP2POW(capacity);
-  alignment_t *result = malloc(sizeof(alignment_t));
+  alignment_t *result = alignment_try_create(capacity);
   if(result == NULL) {
     fprintf(stderr, "%s:%i: Out of memory\n", __FILE__, __LINE__);
     exit(EXIT_FAILURE);
   }
-  result->result_a = malloc(sizeof(char)*capacity);
-  result->result_b = malloc(sizeof(char)*capacity);
-  if(result->result_a == NULL || result->result_b == NULL) {
-    fprintf(stderr, "%s:%i: Out of memory\n", __FILE__, __LINE__);
-    exit(EXIT_FAILURE);
-  }
-  result->capacity = capacity;
-  result->length = 0;
-  result->result_a[0] = result->result_b[0] = '\0';
-  result->pos_a = result->pos_b = result->len_a = result->len_b = 0;
-  result->score = 0;
   return result;
 }
 

@@ -49,6 +49,8 @@ typedef struct
   // Needleman-Wunsch by the wavefront algorithm where it applies (see
   // alignment_wfa_alignment): the same score, perhaps another alignment
   bool wfa_align;
+  size_t wfa_budget; // diagonal-update cap for --wfa (0: automatic)
+  bool sw_fast_rect; // opt-in fast local reconstruction (smith_waterman_fast_rect)
   size_t block_min_cells, block_min_cols, band_strip_rows, band_min_width;
   size_t band_keep_max_cells; // see alignment_band_keep_max_cells
   size_t band_wfa_budget; // see alignment_band_wfa_budget
@@ -420,6 +422,7 @@ bool alignment_trace_load(aligner_t *aligner, size_t x, size_t y);
 // alignment_ensure_capacity() exit if out of memory; alignment_reserve()
 // returns false, leaving the result as it was
 alignment_t* alignment_create(size_t capacity);
+alignment_t* alignment_try_create(size_t capacity);
 void alignment_ensure_capacity(alignment_t* result, size_t strlength);
 bool alignment_reserve(alignment_t* result, size_t strlength);
 void alignment_free(alignment_t* result);
@@ -430,6 +433,7 @@ void alignment_reverse_move(enum Matrix *curr_matrix, score_t *curr_score,
 
 // Printing
 void alignment_print_matrices(const aligner_t *aligner);
+void alignment_fprint_matrices(FILE *fp, const aligner_t *aligner);
 
 void alignment_colour_print_against(const char *alignment_a,
                                     const char *alignment_b,

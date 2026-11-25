@@ -1,77 +1,50 @@
 /*
  examples/nw_example.c
- url: https://github.com/DanielTillett/nucleics-align
- original author: Isaac Turner <turner.isaac@gmail.com>
- license: BSD 3-Clause, see LICENSE
- date: May 2013
+ Nucleics Align v2.0 C global alignment example
  */
 
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 
-#include "needleman_wunsch.h"
+#include "nucleics_align.h"
 
-void align(char* seq_a, char* seq_b)
+int main(int argc, char *argv[])
 {
-  // Variables to store alignment result
-  nw_aligner_t *nw = needleman_wunsch_new();
-  alignment_t *result = alignment_create(256);
-
-  // Decide on scoring
-  int match = 1;
-  int mismatch = -2;
-  int gap_open = -4;
-  int gap_extend = -1;
-  
-  // Don't penalise gaps at the start
-  // ACGATTT
-  // ----TTT would score +3 (when match=+1)
-  char no_start_gap_penalty = 1;
-  
-  // ..or gaps at the end e.g.
-  // ACGATTT
-  // ACGA--- would score +4 (when match=+1)
-  char no_end_gap_penalty = 1;
-
-  char no_gaps_in_a = 0, no_gaps_in_b = 0;
-  char no_mismatches = 0;
-
-  // Compare character case-sensitively (usually set to 0 for DNA etc)
-  char case_sensitive = 0;
-
-  scoring_t scoring;
-  scoring_init(&scoring, match, mismatch, gap_open, gap_extend,
-               no_start_gap_penalty, no_end_gap_penalty,
-               no_gaps_in_a, no_gaps_in_b, no_mismatches, case_sensitive);
-
-  // Add some special cases
-  // x -> y means x in seq1 changing to y in seq2
-  scoring_add_mutation(&scoring, 'a', 'c', -2); // a -> c give substitution score -2
-  scoring_add_mutation(&scoring, 'c', 'a', -1); // c -> a give substitution score -1
-
-  // We could also prohibit the aligning of characters not given as special cases
-  // scoring.use_match_mismatch = 0;
-
-  needleman_wunsch_align(seq_a, seq_b, &scoring, nw, result);
-
-  printf("seqA: %s\n", result->result_a);
-  printf("seqB: %s\n", result->result_b);
-  printf("alignment score: %i\n", result->score);
-
-  // Free memory for storing alignment results
-  needleman_wunsch_free(nw);
-  alignment_free(result);
-}
-
-int main(int argc, char* argv[])
-{
-  if(argc != 3)
-  {
+  if(argc != 3) {
     printf("usage: ./nw_example <seq1> <seq2>\n");
-    exit(EXIT_FAILURE);
+    return EXIT_FAILURE;
   }
 
-  align(argv[1], argv[2]);
-  exit(EXIT_SUCCESS);
+  na_scoring_t *sc = na_scoring_new(1, -2, -4, -1);
+  na_aligner_t *al = na_aligner_new();
+  na_alignment_t *res = na_alignment_new();
+  if(!sc || !al || !res) {
+    fprintf(stderr, "Error: out of memory\n");
+    na_scoring_free(sc); na_aligner_free(al); na_alignment_free(res);
+    return EXIT_FAILURE;
+  }
+
+  na_scoring_set_flags(sc, NA_FREE_START_GAP | NA_FREE_END_GAP);
+  na_scoring_set_pair(sc, 'a', 'c', -2);
+  na_scoring_set_pair(sc, 'c', 'a', -1);
+
+  na_status_t st = na_global_align(al, argv[1], strlen(argv[1]),
+                                   argv[2], strlen(argv[2]), sc, res);
+  if(st != NA_OK) {
+    char msg[128];
+    na_error_format(na_aligner_last_error(al), msg, sizeof(msg));
+    fprintf(stderr, "%s\n", msg);
+    na_scoring_free(sc); na_aligner_free(al); na_alignment_free(res);
+    return EXIT_FAILURE;
+  }
+
+  printf("seqA: %s\n", na_alignment_a(res));
+  printf("seqB: %s\n", na_alignment_b(res));
+  printf("alignment score: %d\n", na_alignment_score(res));
+
+  na_alignment_free(res);
+  na_aligner_free(al);
+  na_scoring_free(sc);
+  return EXIT_SUCCESS;
 }

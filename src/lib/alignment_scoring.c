@@ -426,15 +426,7 @@ bool scoring_system_by_name(scoring_t *scoring, const char *name)
 
 const char* scoring_system_names(void)
 {
-  // Long enough for every name and a separator after each
-  static char names[128];
-  if(names[0] == '\0') {
-    size_t i, len = 0;
-    for(i = 0; i < NUM_SCORING_SYSTEMS; i++)
-      len += (size_t)snprintf(names + len, sizeof(names) - len, "%s%s",
-                              i ? "|" : "", scoring_systems[i].name);
-  }
-  return names;
+  return "PAM30|PAM70|BLOSUM80|BLOSUM62|DNA_HYBRIDIZATION";
 }
 
 // Default

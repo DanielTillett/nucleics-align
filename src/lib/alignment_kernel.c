@@ -609,6 +609,16 @@ bool alignment_sw_scan(const char *a, size_t len_a, const char *b, size_t len_b,
   return false;
 }
 
+bool alignment_sw_scan_hint(const char *a, size_t len_a,
+                            const char *b, size_t len_b,
+                            const scoring_t *scoring, score_t target,
+                            score_t max_hint, const alignment_options_t *opts,
+                            score_t *best, size_t *x, size_t *y)
+{
+  (void)max_hint;
+  return alignment_sw_scan(a, len_a, b, len_b, scoring, target, opts, best, x, y);
+}
+
 bool alignment_sw_scan_short(const char *a, size_t len_a,
                              const char *b, size_t len_b,
                              const scoring_t *scoring,

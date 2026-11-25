@@ -26,7 +26,7 @@
 #include <pthread.h>
 #include <unistd.h> // sysconf
 
-#include "seq_file/seq_file.h"
+#include "cli_seqio.h"
 
 #include "alignment.h"
 #include "alignment_cmdline.h"

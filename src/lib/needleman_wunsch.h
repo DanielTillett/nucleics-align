@@ -20,6 +20,7 @@ extern "C" {
 #endif
 
 nw_aligner_t* needleman_wunsch_new(void);
+nw_aligner_t* needleman_wunsch_try_new(void);
 void needleman_wunsch_free(nw_aligner_t *nw);
 
 void needleman_wunsch_align(const char *a, const char *b,

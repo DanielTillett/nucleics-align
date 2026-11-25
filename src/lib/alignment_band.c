@@ -557,4 +557,11 @@ fill_result_t alignment_fill_banded(aligner_t *aligner,
   aligner->trace_banded = done == FILL_DONE;
   return done;
 }
+#else
+void trace_strips_free(void *ts_ptr) { (void)ts_ptr; }
+bool alignment_trace_load(aligner_t *aligner, size_t x, size_t y)
+{
+  (void)aligner; (void)x; (void)y;
+  return false;
+}
 #endif

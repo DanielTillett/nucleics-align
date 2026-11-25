@@ -19,6 +19,7 @@ extern "C" {
 #endif
 
 sw_aligner_t *smith_waterman_new(void);
+sw_aligner_t *smith_waterman_try_new(void);
 void smith_waterman_free(sw_aligner_t *sw_aligner);
 
 aligner_t* smith_waterman_get_aligner(sw_aligner_t *sw);
