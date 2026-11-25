@@ -140,6 +140,20 @@ class NeedlemanWunschTest(unittest.TestCase):
         next(it)
         it.close()
 
+    def test_wfa_and_linear_above(self):
+        # The same scores as the default aligner, through the tool's --wfa,
+        # --wfabudget and --linearabove
+        pairs = random_pairs(30, seed=6)
+        want = [a.score for a in na.NeedlemanWunsch().align_pairs(pairs)]
+        for kwargs in ({"wfa": True}, {"wfa": True, "wfa_budget": 100000},
+                       {"linear_above": 50}):
+            got = [a.score for a in na.NeedlemanWunsch(**kwargs).align_pairs(pairs)]
+            self.assertEqual(got, want, kwargs)
+        with self.assertRaises(TypeError):
+            na.NeedlemanWunsch(wfa_budget="lots")
+        with self.assertRaises(ValueError):
+            na.NeedlemanWunsch(linear_above=0)
+
     def test_single_pair_checks_exit_status(self):
         # align() finishes the tool's run: an exit status after the output
         # is still an error (a stand-in tool prints an alignment, then fails)
@@ -200,6 +214,15 @@ class SmithWatermanTest(unittest.TestCase):
         self.assertEqual(got[0], [])
         self.assertEqual(got[1], [])
         self.assertEqual(got[2][0].score, 16)
+
+    def test_fast_local(self):
+        # --fastlocal: the same best score for single-hit runs
+        pairs = random_pairs(20, seed=7)
+        plain = [h[0].score if h else None for h in
+                 na.SmithWaterman(max_hits=1).align_pairs(pairs)]
+        fast = [h[0].score if h else None for h in
+                na.SmithWaterman(max_hits=1, fast_local=True).align_pairs(pairs)]
+        self.assertEqual(fast, plain)
 
     def test_stop_early_stops_reading_input(self):
         # Pairs with an empty sequence never reach the tool; closing the

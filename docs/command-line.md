@@ -39,7 +39,7 @@ By default, `needleman_wunsch` keeps one traceback byte per cell (12x smaller th
 | `--scoreonly` | You only need the optimal score | Fastest for scores alone; uses Ukkonen-banded Myers bit-vector under unit costs (`0/-1/0/-1`), with multi-threaded striped SIMD fallback on divergent pairs |
 
 > [!NOTE]
-> `--linear`, `--linearfallback`, `--linearabove` and `--wfa` always return the same optimal score as the default aligner, but if several alignments tie for the best score they may pick a different one. `--linear`, `--linearabove`, `--wfa` and `--scoreonly` cannot be combined with `--printmatrices` (`--linearfallback` can). `--scoreonly` also cannot be combined with `--zam`, `--pretty` or `--colour`. `--linear` refuses `--freestartgap`, `--freeendgap`, `--nogaps..`, `--nomismatches` and positive `--gapopen` (whereas `--scoreonly` and `--linearabove` fall back to the matrices for those).
+> `--linear`, `--linearfallback`, `--linearabove` and `--wfa` always return the same optimal score as the default aligner, but if several alignments tie for the best score they may pick a different one. `--linear`, `--linearfallback`, `--linearabove`, `--wfa` and `--scoreonly` cannot be combined with `--printmatrices`. `--scoreonly` also cannot be combined with `--zam`, `--pretty` or `--colour`. `--linear` refuses `--freestartgap`, `--freeendgap`, `--nogaps..`, `--nomismatches` and positive `--gapopen` (whereas `--scoreonly` and `--linearabove` fall back to the matrices for those).
 
 `--printmatrices` prints the three Gotoh dynamic programming matrices (`match`, `gap_a`, `gap_b`) before the alignment, which is useful when checking a custom scoring rule:
 

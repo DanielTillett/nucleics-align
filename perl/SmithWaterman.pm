@@ -23,6 +23,10 @@ package SmithWaterman;
 #   minscore                                 hits scoring at least this
 #                                            (default 0 here: every hit)
 #   maxhits                                  at most this many hits per pair
+#   fastlocal                                with maxhits 1: the best hit of
+#                                            a long pair in little memory
+#                                            (same score; may pick another
+#                                            equal-scoring hit)
 #   case_sensitive, nogaps, nogapsin1, nogapsin2, nogapsinlongest,
 #   nomismatches                             flags (true to set)
 #   threads                                  threads within an alignment
@@ -42,7 +46,7 @@ use Symbol qw(gensym);
 use constant {PROMPT_LINE => 'next [h]it or [a]lignment: '};
 
 my %FLAGS = map { $_ => 1 } qw(case_sensitive nogaps nogapsin1 nogapsin2
-                               nogapsinlongest nomismatches);
+                               nogapsinlongest nomismatches fastlocal);
 my %VALUES = map { $_ => 1 } qw(match mismatch gapopen gapextend
                                 substitution_matrix substitution_pairs
                                 minscore maxhits threads);

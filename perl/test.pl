@@ -74,6 +74,14 @@ my $input = "$FindBin::Bin/../tests/cli/input";
   is($quick->do_alignment('-A', '')->{align1}, '-A', 'leading dash, empty');
   is($quick->do_alignment('-A', 'A')->{align1}, '-A', 'leading dash');
   $quick->destructor();
+  # The tool's other ways to the same score
+  my $plain = $nw->do_alignment('ACGTTGCAACGT', 'ACGTGCAACGT')->{score};
+  is(NeedlemanWunsch->new(wfa => 1)->do_alignment('ACGTTGCAACGT',
+       'ACGTGCAACGT')->{score}, $plain, 'wfa');
+  is(NeedlemanWunsch->new(wfa => 1, wfabudget => 100000)->do_alignment(
+       'ACGTTGCAACGT', 'ACGTGCAACGT')->{score}, $plain, 'wfabudget');
+  is(NeedlemanWunsch->new(linearabove => 5)->do_alignment('ACGTTGCAACGT',
+       'ACGTGCAACGT')->{score}, $plain, 'linearabove');
   $nw->destructor();
 }
 
@@ -123,6 +131,10 @@ my $input = "$FindBin::Bin/../tests/cli/input";
   like($@, qr/cannot start with/, 'sw leading > refused');
   $pairs->destructor();
   ok(SmithWaterman->new()->do_alignment('-ACCA', 'ACA'), 'sw leading dash');
+  my $fast = SmithWaterman->new(maxhits => 1, fastlocal => 1);
+  ok($fast->do_alignment('acgtacgtacgt', 'ttacgtacgtaa'), 'fastlocal');
+  is($fast->get_next_hit()->{score}, 18, 'fastlocal best hit');
+  $fast->destructor();
 }
 
 done_testing();

@@ -314,21 +314,36 @@ class NeedlemanWunsch(_Tool):
     linear aligns in linear memory (Hirschberg, Myers-Miller): the same
     score, but it may choose another of several equal-scoring alignments,
     and it refuses some options. linear_fallback does so only for pairs too
-    big for the score matrices. threads: threads within an alignment and
-    for aligning pairs at once (default: half the CPUs).
+    big for the score matrices; linear_above (a length) for pairs whose
+    longer sequence has at least that many letters. wfa tries the wavefront
+    algorithm first on similar pairs, within wfa_budget diagonal updates
+    (default: the tool's, min(2^28, 256 * (len_a + len_b))), falling back
+    to the matrices: again the same score, perhaps another equal-scoring
+    alignment. threads: threads within an alignment and for aligning pairs
+    at once (default: half the CPUs).
     """
 
     _NAME = "needleman_wunsch"
 
     def __init__(self, *, free_start_gap=False, free_end_gap=False,
-                 linear=False, linear_fallback=False, **options):
+                 linear=False, linear_fallback=False, linear_above=None,
+                 wfa=False, wfa_budget=None, **options):
         super().__init__(**options)
         for flag, on in (("--freestartgap", free_start_gap),
                          ("--freeendgap", free_end_gap),
                          ("--linear", linear),
-                         ("--linearfallback", linear_fallback)):
+                         ("--linearfallback", linear_fallback),
+                         ("--wfa", wfa)):
             if on:
                 self._args.append(flag)
+        if linear_above is not None:
+            if _int_option("linear_above", linear_above) and linear_above < 1:
+                raise ValueError("linear_above must be at least 1")
+            self._args += ["--linearabove", str(linear_above)]
+        if wfa_budget is not None:
+            if _int_option("wfa_budget", wfa_budget) and wfa_budget < 1:
+                raise ValueError("wfa_budget must be at least 1")
+            self._args += ["--wfabudget", str(wfa_budget)]
 
     def align(self, seq_a: str, seq_b: str) -> GlobalAlignment:
         """The best global alignment of seq_a and seq_b. For many pairs,
@@ -377,12 +392,15 @@ class SmithWaterman(_Tool):
     memory). min_score: report hits scoring at least this (the tool's
     default is match * max(0.2 * shorter length, 2)); max_hits: at most this
     many hits per pair (default: all, which may be many for long sequences).
-    A pair with an empty sequence has no hits.
+    fast_local (with max_hits=1) reconstructs the best hit of a long pair in
+    little memory: the same score, perhaps another equal-scoring hit. A pair
+    with an empty sequence has no hits.
     """
 
     _NAME = "smith_waterman"
 
-    def __init__(self, *, min_score=None, max_hits=None, **options):
+    def __init__(self, *, min_score=None, max_hits=None, fast_local=False,
+                 **options):
         super().__init__(**options)
         if min_score is not None:
             self._args += ["--minscore", _int_option("min_score", min_score)]
@@ -390,6 +408,8 @@ class SmithWaterman(_Tool):
             if _int_option("max_hits", max_hits) and max_hits < 1:
                 raise ValueError("max_hits must be at least 1")
             self._args += ["--maxhits", str(max_hits)]
+        if fast_local:
+            self._args.append("--fastlocal")
 
     def align(self, seq_a: str, seq_b: str) -> List[LocalHit]:
         """The local alignments of seq_a and seq_b, best first. For many

@@ -27,6 +27,14 @@ package NeedlemanWunsch;
 #                                            equal-scoring alignment)
 #   linearfallback                           linear memory only where too big
 #                                            for the score matrices
+#   linearabove                              linear memory for pairs whose
+#                                            longer sequence has at least
+#                                            this many letters
+#   wfa, wfabudget                           the wavefront algorithm first on
+#                                            similar pairs, within wfabudget
+#                                            diagonal updates (same score;
+#                                            may pick another equal-scoring
+#                                            alignment)
 #   threads                                  threads within an alignment
 #   timeout                                  seconds to wait for each line of
 #                                            output (default 0: no limit)
@@ -41,11 +49,11 @@ use IPC::Open3;
 use Symbol qw(gensym);
 
 my %FLAGS = map { $_ => 1 } qw(case_sensitive freestartgap freeendgap linear
-                               linearfallback nogaps nogapsin1 nogapsin2
+                               linearfallback wfa nogaps nogapsin1 nogapsin2
                                nogapsinlongest nomismatches);
 my %VALUES = map { $_ => 1 } qw(match mismatch gapopen gapextend
                                 substitution_matrix substitution_pairs
-                                threads);
+                                linearabove wfabudget threads);
 my @SCORING = qw(PAM30 PAM70 BLOSUM80 BLOSUM62 DNA_HYBRIDIZATION);
 
 sub new

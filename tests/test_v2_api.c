@@ -255,6 +255,93 @@ static void test_local_iteration_and_invalidation(void)
   printf("  [PASS] test_local_iteration_and_invalidation\n");
 }
 
+/* The setters and limits the first suite left out: gap and wildcard
+ * setters, linear fallback, threads 0, empty sequences, the scoring-pair
+ * and overflow errors with their detail, and a long pair on every method */
+static void test_setters_and_limits(void)
+{
+  na_scoring_t *sc = na_scoring_new(1, -1, -4, -1);
+  na_aligner_t *al = na_aligner_new();
+  na_alignment_t *res = na_alignment_new();
+  CHECK(sc && al && res);
+  int s = 0; bool m = false;
+
+  CHECK(na_scoring_set_gaps(sc, -2, -2) == NA_OK);
+  CHECK(na_scoring_set_gaps(sc, 1 << 30, 0) == NA_ERR_INVALID_ARG);
+  CHECK(na_global_align(al, "ACGT", 4, "AGT", 3, sc, res) == NA_OK);
+  CHECK(na_alignment_score(res) == -1); /* 3 matches, a gap of 1: -2 - 2 */
+  CHECK(na_scoring_set_wildcard(sc, 'N', 2) == NA_OK);
+  CHECK(na_global_align(al, "ACNT", 4, "ACGT", 4, sc, res) == NA_OK);
+  CHECK(na_alignment_score(res) == 5);
+
+  /* Empty sequences, global and local */
+  CHECK(na_global_align(al, "", 0, "", 0, sc, res) == NA_OK);
+  CHECK(na_alignment_length(res) == 0 && na_alignment_score(res) == 0);
+  CHECK(na_global_align(al, "ACGT", 4, "", 0, sc, res) == NA_OK);
+  CHECK(na_alignment_score(res) == -10 &&
+        strcmp(na_alignment_b(res), "----") == 0);
+  CHECK(na_local_align(al, "", 0, "ACGT", 4, sc) == NA_OK);
+  CHECK(na_local_next(al, res) == NA_DONE);
+
+  /* Errors carry their detail */
+  na_scoring_t *pairs = na_scoring_new(1, -1, -4, -1);
+  CHECK(na_scoring_set_match_mismatch(pairs, false, 0, 0) == NA_OK);
+  CHECK(na_scoring_set_pair(pairs, 'a', 'a', 1) == NA_OK);
+  CHECK(na_global_align(al, "AC", 2, "AC", 2, pairs, res) == NA_ERR_SCORING_PAIR);
+  const na_error_t *err = na_aligner_last_error(al);
+  CHECK(err->status == NA_ERR_SCORING_PAIR);
+  CHECK(na_scoring_lookup(pairs, err->a, err->b, &s, &m) == NA_ERR_SCORING_PAIR);
+  CHECK(na_alignment_length(res) == 0);
+  na_scoring_free(pairs);
+  na_scoring_t *huge = na_scoring_new(500000000, -1, -2, -1);
+  CHECK(huge != NULL);
+  CHECK(na_global_align(al, "ACGTACGT", 8, "ACGTACGT", 8, huge, res) == NA_ERR_OVERFLOW);
+  CHECK(na_aligner_last_error(al)->status == NA_ERR_OVERFLOW);
+  na_scoring_free(huge);
+
+  /* threads 0 (half the CPUs) and linear fallback leave an ordinary pair
+   * unchanged */
+  na_aligner_set_threads(al, 0);
+  na_aligner_set_linear_fallback(al, true);
+  CHECK(na_global_align(al, "ACGT", 4, "AGT", 3, sc, res) == NA_OK);
+  CHECK(na_alignment_score(res) == -1);
+  na_aligner_set_linear_fallback(al, false);
+
+  /* A long similar pair scores the same on every method */
+  enum { N = 100000 };
+  char *a = malloc(N + 1), *b = malloc(N + 1);
+  CHECK(a && b);
+  unsigned x = 12345;
+  for(size_t i = 0; i < N; i++) {
+    x = x * 1103515245u + 12345u;
+    a[i] = "ACGT"[(x >> 16) & 3];
+    b[i] = (x >> 20) % 200 == 0 ? "ACGT"[(x >> 24) & 3] : a[i];
+  }
+  a[N] = b[N] = '\0';
+  na_score_t ref = 0;
+  na_method_t methods[] = { NA_METHOD_AUTO, NA_METHOD_LINEAR, NA_METHOD_WFA };
+  for(size_t i = 0; i < 3; i++) {
+    na_aligner_set_method(al, methods[i]);
+    na_aligner_set_wfa_budget(al, 0);
+    CHECK(na_global_align(al, a, N, b, N, sc, res) == NA_OK);
+    if(i == 0) ref = na_alignment_score(res);
+    else CHECK(na_alignment_score(res) == ref);
+    na_score_t checked = 0;
+    CHECK(na_score_alignment(na_alignment_a(res), na_alignment_b(res),
+                             na_alignment_length(res), sc, &checked) == NA_OK);
+    CHECK(checked == ref);
+  }
+  na_score_t only = 0;
+  CHECK(na_global_score(al, a, N, b, N, sc, &only) == NA_OK && only == ref);
+  free(a);
+  free(b);
+
+  na_alignment_free(res);
+  na_aligner_free(al);
+  na_scoring_free(sc);
+  printf("  [PASS] test_setters_and_limits\n");
+}
+
 int main(void)
 {
   printf("Running v2.0 public API tests...\n");
@@ -262,6 +349,7 @@ int main(void)
   test_scoring_and_parsers();
   test_global_methods_and_edge_cases();
   test_local_iteration_and_invalidation();
+  test_setters_and_limits();
   printf("All v2.0 public API tests passed!\n");
   return 0;
 }

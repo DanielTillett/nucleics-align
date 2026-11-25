@@ -145,11 +145,11 @@ for hit in SmithWaterman(max_hits=3).align("ttacgtacgtaa", "acgtacgt"):
 | `scoring`, `substitution_matrix`, `substitution_pairs` | `--scoring`, `--substitution_matrix`, `--substitution_pairs` |
 | `wildcards={"N": 0}`, `case_sensitive` | `--wildcard N 0`, `--case_sensitive` |
 | `no_gaps`, `no_gaps_in_a`, `no_gaps_in_b`, `no_gaps_in_longest`, `no_mismatches` | `--nogaps`, `--nogapsin1`, `--nogapsin2`, `--nogapsinlongest`, `--nomismatches` |
-| `free_start_gap`, `free_end_gap`, `linear`, `linear_fallback` (global) | `--freestartgap`, `--freeendgap`, `--linear`, `--linearfallback` |
-| `min_score`, `max_hits` (local) | `--minscore`, `--maxhits` |
+| `free_start_gap`, `free_end_gap`, `linear`, `linear_fallback`, `linear_above`, `wfa`, `wfa_budget` (global) | `--freestartgap`, `--freeendgap`, `--linear`, `--linearfallback`, `--linearabove`, `--wfa`, `--wfabudget` |
+| `min_score`, `max_hits`, `fast_local` (local) | `--minscore`, `--maxhits`, `--fastlocal` |
 | `threads`, `bin_dir` | `--threads`; where to find the binaries (or set `NUCLEICS_ALIGN_BIN`) |
 
-`--linearabove` and `--wfa` are CLI and C library options not yet exposed in the Python wrapper. Examples: [`python/nw_example.py`](python/nw_example.py), [`python/sw_example.py`](python/sw_example.py). Tests: `python3 -m unittest discover python`.
+Examples: [`python/nw_example.py`](python/nw_example.py), [`python/sw_example.py`](python/sw_example.py). Tests: `python3 -m unittest discover python`.
 
 ## Perl
 
