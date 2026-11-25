@@ -32,6 +32,11 @@ void        seq_close(seq_file_t *sf);
 
 void seq_read_alloc(read_t *r);
 void seq_read_dealloc(read_t *r);
+/* The next sequence (FASTA, FASTQ or one per line, told from the first
+   line). Returns 1 with the record in r, 0 at the end of the input, -1 on
+   malformed input (see seq_error(); nothing more is read) */
 int  seq_read(seq_file_t *sf, read_t *r);
+/* The error message after seq_read() returned -1, else NULL */
+const char *seq_error(const seq_file_t *sf);
 
 #endif /* CLI_SEQIO_HEADER_SEEN */

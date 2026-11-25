@@ -4,3 +4,5 @@
 tests/cli/** text eol=lf
 # Shell scripts run under Linux shells even from a Windows checkout
 *.sh text eol=lf
+tests/cli/input/crlf.fa -text
+tests/cli/input/*.gz binary

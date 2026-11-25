@@ -737,13 +737,24 @@ static void close_seq_files(seq_file_t *sf1, seq_file_t *sf2)
   if(sf2 != sf1) seq_close(sf2);
 }
 
-// Once the input ends: a sequence left without a pair is an error (the
-// pairs before it are already written), no pairs a warning. two_files:
-// the pairs came from two files, one sequence from each. Returns false
-// on the error
-static bool report_input_end(bool odd, bool two_files, size_t alignments)
+// How the input ended: cleanly, with a sequence left without a pair, or
+// with malformed input (the reader's message in *msg)
+typedef enum { INPUT_OK, INPUT_ODD, INPUT_BAD } input_end_t;
+
+// Once the input ends: a sequence left without a pair, or malformed input,
+// is an error (the pairs before it are already written), no pairs a
+// warning. two_files: the pairs came from two files, one sequence from
+// each. Returns false on an error
+static bool report_input_end(input_end_t how, const char *msg,
+                             bool two_files, size_t alignments)
 {
-  if(odd)
+  if(how == INPUT_BAD)
+  {
+    fprintf(stderr, "Alignment Error: %s\n", msg);
+    fflush(stderr);
+    return false;
+  }
+  if(how == INPUT_ODD)
   {
     if(two_files)
       fprintf(stderr, "Alignment Error: the files have different numbers "
@@ -764,10 +775,27 @@ static bool report_input_end(bool odd, bool two_files, size_t alignments)
   return true;
 }
 
-// Once sf1 is exhausted: with two files, a sequence left in sf2 is odd too
-static bool input_left_over(seq_file_t *sf1, seq_file_t *sf2, read_t *spare)
+// The pair's second sequence: read, or the input ended (how says how)
+static bool read_second(seq_file_t *sf2, read_t *r2, input_end_t *how,
+                        const char **msg)
 {
-  return sf2 != sf1 && seq_read(sf2, spare) > 0;
+  int rc = seq_read(sf2, r2);
+  if(rc > 0) return true;
+  if(rc < 0) { *how = INPUT_BAD; *msg = seq_error(sf2); }
+  else *how = INPUT_ODD;
+  return false;
+}
+
+// Once sf1 is exhausted (rc1: what its last read returned): with two
+// files, a sequence left in sf2 is odd too
+static input_end_t input_left_over(int rc1, seq_file_t *sf1, seq_file_t *sf2,
+                                   read_t *spare, const char **msg)
+{
+  if(rc1 < 0) { *msg = seq_error(sf1); return INPUT_BAD; }
+  if(sf2 == sf1) return INPUT_OK;
+  int rc = seq_read(sf2, spare);
+  if(rc < 0) { *msg = seq_error(sf2); return INPUT_BAD; }
+  return rc > 0 ? INPUT_ODD : INPUT_OK;
 }
 
 // If seq2 is NULL, read pair of entries from first file
@@ -785,16 +813,18 @@ bool align_from_file(const char *path1, const char *path2,
 
   // Loop while we can read a sequence from the first file
   size_t alignments;
-  bool odd = false;
+  input_end_t how = INPUT_OK;
+  const char *msg = NULL;
+  int rc1;
 
-  for(alignments = 0; seq_read(sf1, &read1) > 0; alignments++)
+  for(alignments = 0; (rc1 = seq_read(sf1, &read1)) > 0; alignments++)
   {
-    if(seq_read(sf2, &read2) <= 0) { odd = true; break; }
+    if(!read_second(sf2, &read2, &how, &msg)) break;
     (align)(&read1, &read2);
   }
-  if(!odd) odd = input_left_over(sf1, sf2, &read2);
+  if(how == INPUT_OK) how = input_left_over(rc1, sf1, sf2, &read2, &msg);
 
-  const bool ok = report_input_end(odd, path2 != NULL, alignments);
+  const bool ok = report_input_end(how, msg, path2 != NULL, alignments);
   close_seq_files(sf1, sf2);
 
   // Free memory
@@ -957,10 +987,11 @@ static void* cmd_worker_thread(void *ptr)
 }
 
 // Read the next pair into its slot (once the slot's last pair is written).
-// Returns 1 with a pair, 0 at the end of the input (*odd: a sequence left
-// over) or once a pair has failed
+// Returns 1 with a pair, 0 at the end of the input (*how and *msg say how
+// it ended; *rc1 what the first file's read returned) or once a pair has
+// failed
 static int cmd_read_pair(cmd_batch_t *b, seq_file_t *sf1, seq_file_t *sf2,
-                         bool *odd)
+                         int *rc1, input_end_t *how, const char **msg)
 {
   if(!cmd_wait_written(b, b->read >= b->cap ? b->read - b->cap + 1 : 0))
     return 0;
@@ -970,8 +1001,8 @@ static int cmd_read_pair(cmd_batch_t *b, seq_file_t *sf1, seq_file_t *sf2,
     seq_read_alloc(&job->r2);
     job->allocated = true;
   }
-  if(seq_read(sf1, &job->r1) <= 0) return 0;
-  if(seq_read(sf2, &job->r2) <= 0) { *odd = true; return 0; }
+  if((*rc1 = seq_read(sf1, &job->r1)) <= 0) return 0;
+  if(!read_second(sf2, &job->r2, how, msg)) return 0;
   return 1;
 }
 
@@ -1033,9 +1064,11 @@ bool align_from_file_threaded(const char *path1, const char *path2,
   }
   void *main_worker = NULL;
   size_t nworkers = 0, alignments = 0;
-  bool odd = false;
+  input_end_t how = INPUT_OK;
+  const char *msg = NULL;
+  int rc1 = 0;
 
-  while(cmd_read_pair(&b, sf1, sf2, &odd))
+  while(cmd_read_pair(&b, sf1, sf2, &rc1, &how, &msg))
   {
     cmd_job_t *job = &b.jobs[b.read % b.cap];
     job->number = number != NULL ? number(&job->r1, &job->r2) : alignments;
@@ -1079,8 +1112,9 @@ bool align_from_file_threaded(const char *path1, const char *path2,
   const int status = b.status;
   bool ok = false;
   if(status == 0) {
-    if(!odd) odd = input_left_over(sf1, sf2, &b.jobs[b.read % b.cap].r2);
-    ok = report_input_end(odd, path2 != NULL, alignments);
+    if(how == INPUT_OK)
+      how = input_left_over(rc1, sf1, sf2, &b.jobs[b.read % b.cap].r2, &msg);
+    ok = report_input_end(how, msg, path2 != NULL, alignments);
   }
 
   close_seq_files(sf1, sf2);

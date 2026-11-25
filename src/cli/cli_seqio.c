@@ -34,6 +34,7 @@ struct cli_seq_file {
   bool   has_pending;
   bool   eof;
   bool   borrowed; // fp is stdin: not ours to close
+  char   err[160]; // why seq_read() returned -1 ("" otherwise)
 };
 
 static void str_init(cli_str_t *s, size_t cap)
@@ -109,7 +110,21 @@ static bool str_all_ws(const cli_str_t *s)
   return true;
 }
 
-/* Read one physical line (CRLF trimmed) into sf->line. Returns false on EOF. */
+/* Record why the read failed; seq_read() then returns -1 */
+static void seq_fail(seq_file_t *sf, const char *fmt, const char *name)
+{
+  if(sf->err[0] != '\0') return; // the first error stands
+  snprintf(sf->err, sizeof(sf->err), fmt, name);
+  sf->eof = true;
+}
+
+static bool at_eof(const seq_file_t *sf)
+{
+  return sf->gz != NULL ? gzeof(sf->gz) != 0 : feof(sf->fp) != 0;
+}
+
+/* Read one physical line (CRLF trimmed) into sf->line. Returns false on
+   EOF, or on an error (sf->err then says which) */
 static bool read_raw_line(seq_file_t *sf)
 {
   if(sf->has_pending) {
@@ -132,19 +147,27 @@ static bool read_raw_line(seq_file_t *sf)
         int errnum = 0;
         const char *msg = gzerror(sf->gz, &errnum);
         if(errnum != Z_OK && errnum != Z_STREAM_END) {
-          fprintf(stderr, "Alignment Error: input read error: %s\n", msg ? msg : "zlib error");
-          exit(EXIT_FAILURE);
+          seq_fail(sf, "input read error: %s", msg ? msg : "zlib error");
+          return false;
         }
       } else if(sf->fp != NULL && ferror(sf->fp)) {
-        fprintf(stderr, "Alignment Error: input read error\n");
-        exit(EXIT_FAILURE);
+        seq_fail(sf, "input read error%s", "");
+        return false;
       }
       sf->eof = true;
       break;
     }
+    // A line read in full ends with '\n', or fills the space given; one
+    // that does neither stopped early at the end of the input, or at a
+    // NUL byte, which the sequences (C strings) could not carry
     size_t got = strlen(sf->line.b + sf->line.end);
     sf->line.end += got;
-    if(got == 0 || sf->line.b[sf->line.end - 1] == '\n') break;
+    const bool newline = got > 0 && sf->line.b[sf->line.end - 1] == '\n';
+    if(!newline && got + 1 < (size_t)avail && !at_eof(sf)) {
+      seq_fail(sf, "input contains a NUL byte%s", "");
+      return false;
+    }
+    if(newline || at_eof(sf)) break;
   }
   if(sf->line.end == 0 && sf->eof) return false;
   str_chomp(&sf->line);
@@ -242,6 +265,17 @@ static void append_seq_nonws(cli_str_t *dst, const char *src, size_t len)
   dst->b[dst->end] = '\0';
 }
 
+const char *seq_error(const seq_file_t *sf)
+{
+  return sf != NULL && sf->err[0] != '\0' ? sf->err : NULL;
+}
+
+/* 0 at the end of the input, -1 if an error was recorded on the way */
+static int seq_read_end(const seq_file_t *sf)
+{
+  return sf->err[0] != '\0' ? -1 : 0;
+}
+
 int seq_read(seq_file_t *sf, read_t *r)
 {
   if(sf == NULL || r == NULL) return 0;
@@ -251,7 +285,7 @@ int seq_read(seq_file_t *sf, read_t *r)
   /* Detect format on first non-blank line */
   if(sf->fmt == CLI_FMT_UNKNOWN) {
     for(;;) {
-      if(!read_raw_line(sf)) return 0;
+      if(!read_raw_line(sf)) return seq_read_end(sf);
       if(sf->line.end == 0 || str_all_ws(&sf->line)) continue;
       if(sf->line.b[0] == '>')      sf->fmt = CLI_FMT_FASTA;
       else if(sf->line.b[0] == '@') sf->fmt = CLI_FMT_FASTQ;
@@ -262,12 +296,17 @@ int seq_read(seq_file_t *sf, read_t *r)
   }
 
   if(sf->fmt == CLI_FMT_PLAIN) {
+    /* One sequence per line, whitespace around it ignored, blank lines
+       skipped */
     while(read_raw_line(sf)) {
-      if(sf->line.end == 0 || isspace((unsigned char)sf->line.b[0])) continue;
-      str_set(&r->seq, sf->line.b, sf->line.end);
+      size_t s = 0, e = sf->line.end;
+      while(s < e && isspace((unsigned char)sf->line.b[s])) s++;
+      while(e > s && isspace((unsigned char)sf->line.b[e - 1])) e--;
+      if(e == s) continue;
+      str_set(&r->seq, sf->line.b + s, e - s);
       return 1;
     }
-    return 0;
+    return seq_read_end(sf);
   }
 
   if(sf->fmt == CLI_FMT_FASTA) {
@@ -280,7 +319,7 @@ int seq_read(seq_file_t *sf, read_t *r)
         break;
       }
     }
-    if(!got_hdr) return 0;
+    if(!got_hdr) return seq_read_end(sf);
     while(read_raw_line(sf)) {
       if(sf->line.end > 0 && sf->line.b[0] == '>') {
         push_pending(sf);
@@ -289,10 +328,11 @@ int seq_read(seq_file_t *sf, read_t *r)
       if(sf->line.end > 0)
         append_seq_nonws(&r->seq, sf->line.b, sf->line.end);
     }
-    return 1;
+    return sf->err[0] != '\0' ? -1 : 1;
   }
 
-  /* CLI_FMT_FASTQ */
+  /* CLI_FMT_FASTQ: '@name', sequence lines, '+', then quality lines with
+     exactly as many characters as the sequence (they may start with '@') */
   bool got_hdr = false;
   while(read_raw_line(sf)) {
     if(sf->line.end > 0 && sf->line.b[0] == '@') {
@@ -301,7 +341,7 @@ int seq_read(seq_file_t *sf, read_t *r)
       break;
     }
   }
-  if(!got_hdr) return 0;
+  if(!got_hdr) return seq_read_end(sf);
 
   /* Sequence lines until '+' */
   bool saw_plus = false;
@@ -310,20 +350,26 @@ int seq_read(seq_file_t *sf, read_t *r)
       saw_plus = true;
       break;
     }
+    if(sf->line.end > 0 && sf->line.b[0] == '@') break; // the next record
     if(sf->line.end > 0)
       append_seq_nonws(&r->seq, sf->line.b, sf->line.end);
   }
-  if(!saw_plus) return 1;
+  if(!saw_plus) {
+    seq_fail(sf, "FASTQ record '%s': no '+' line", r->name.b);
+    return -1;
+  }
 
-  /* Quality lines (may wrap over multiple lines) until qual >= seq and next '@' */
+  /* Quality lines until they cover the sequence */
   size_t qlen = 0;
-  while(read_raw_line(sf)) {
-    if(qlen >= r->seq.end && sf->line.end > 0 && sf->line.b[0] == '@') {
-      push_pending(sf);
-      break;
-    }
+  while(qlen < r->seq.end) {
+    if(!read_raw_line(sf)) break;
     for(size_t i = 0; i < sf->line.end; i++)
       if(!isspace((unsigned char)sf->line.b[i])) qlen++;
+  }
+  if(qlen != r->seq.end) {
+    seq_fail(sf, "FASTQ record '%s': quality length differs from sequence "
+                 "length", r->name.b);
+    return -1;
   }
   return 1;
 }

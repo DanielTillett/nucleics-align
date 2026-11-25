@@ -74,3 +74,11 @@ sw_linearfallback | -    | ./bin/smith_waterman --linearfallback ACGT AGT
 nw_odd           | batch | ./bin/needleman_wunsch --printscores --file @/odd.fa
 nw_files_uneven  | batch | ./bin/needleman_wunsch --printscores --files @/files_a.fa @/odd.fa
 nw_missing_file  | -     | ./bin/needleman_wunsch --printscores --file @/no_such.fa
+# Reader formats and malformed input (25 Nov 2026 review)
+nw_gz            | batch | ./bin/needleman_wunsch --printscores --file @/ties.fa.gz
+nw_crlf          | -     | ./bin/needleman_wunsch --printscores --file @/crlf.fa
+nw_fastq         | batch | ./bin/needleman_wunsch --printscores --file @/ties.fq
+nw_plain_ws      | -     | ./bin/needleman_wunsch --printscores --file @/plain_ws.txt
+nw_fastq_short   | batch | ./bin/needleman_wunsch --printscores --file @/fastq_short.fq
+nw_fastq_noplus  | batch | ./bin/needleman_wunsch --printscores --file @/fastq_noplus.fq
+nw_nul           | batch | ./bin/needleman_wunsch --printscores --file @/nul_byte.txt
