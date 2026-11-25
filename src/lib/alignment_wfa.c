@@ -22,6 +22,7 @@
 
 #include <stdlib.h>
 #include <stdint.h>
+#include <stdatomic.h>
 #include <string.h>
 #include <limits.h>
 #include <ctype.h>
@@ -512,9 +513,13 @@ static inline int32_t wf_extend_lim(const uint8_t *a, const uint8_t *b,
 #ifdef WFA_HAS_X86_AVX2
 static inline bool wfa_cpu_avx2(void)
 {
-  static int cached = -1;
-  if(cached < 0) cached = __builtin_cpu_supports("avx2") ? 1 : 0;
-  return cached != 0;
+  static _Atomic int cached = -1;
+  int v = atomic_load_explicit(&cached, memory_order_relaxed);
+  if(v < 0) {
+    v = __builtin_cpu_supports("avx2") ? 1 : 0;
+    atomic_store_explicit(&cached, v, memory_order_relaxed);
+  }
+  return v != 0;
 }
 
 __attribute__((target("avx2")))
