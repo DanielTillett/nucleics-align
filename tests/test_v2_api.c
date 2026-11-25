@@ -140,6 +140,37 @@ static void test_global_methods_and_edge_cases(void)
   CHECK(fg_checked == na_alignment_score(res));
   na_scoring_free(fg);
 
+  /* Free gaps as the DP applies them: a gap in a is free at the start while
+   * no letter of a is consumed, and at the end once all of a is; likewise
+   * for b. Not "every leading column with a gap in either sequence" */
+  na_scoring_t *fe = na_scoring_new(1, -100, -4, -1);
+  CHECK(na_scoring_set_flags(fe, NA_FREE_END_GAP) == NA_OK);
+  CHECK(na_global_align(al, "ACGT", 4, "", 0, fe, res) == NA_OK);
+  CHECK(na_alignment_score(res) == 0);
+  CHECK(na_score_alignment(na_alignment_a(res), na_alignment_b(res),
+                           na_alignment_length(res), fe, &fg_checked) == NA_OK);
+  CHECK(fg_checked == 0);
+  na_scoring_free(fe);
+  na_scoring_t *fs = na_scoring_new(1, -100, -4, -1);
+  CHECK(na_scoring_set_flags(fs, NA_FREE_START_GAP) == NA_OK);
+  CHECK(na_global_align(al, "AC", 2, "GT", 2, fs, res) == NA_OK);
+  CHECK(na_alignment_score(res) == -6); /* one free gap, one charged */
+  CHECK(na_score_alignment(na_alignment_a(res), na_alignment_b(res),
+                           na_alignment_length(res), fs, &fg_checked) == NA_OK);
+  CHECK(fg_checked == -6);
+  CHECK(na_score_alignment("AC--", "--GT", 4, fs, &fg_checked) == NA_OK);
+  CHECK(fg_checked == -6);
+  CHECK(na_score_alignment("--AC", "GT--", 4, fs, &fg_checked) == NA_OK);
+  CHECK(fg_checked == -6);
+  na_scoring_free(fs);
+
+  /* A mismatched column is an error under NA_NO_MISMATCHES, not score 0 */
+  na_scoring_t *nm = na_scoring_new(1, -1, -4, -1);
+  CHECK(na_scoring_set_flags(nm, NA_NO_MISMATCHES) == NA_OK);
+  CHECK(na_score_alignment("A", "C", 1, nm, &fg_checked) == NA_ERR_SCORING_PAIR);
+  CHECK(na_score_alignment("A", "A", 1, nm, &fg_checked) == NA_OK && fg_checked == 1);
+  na_scoring_free(nm);
+
   /* Unsupported flag combination rejected instead of fatal traceback exit */
   na_scoring_t *badf = na_scoring_new(1, -1, -2, -1);
   CHECK(na_scoring_set_flags(badf, NA_NO_MISMATCHES | NA_NO_GAPS_A) == NA_OK);

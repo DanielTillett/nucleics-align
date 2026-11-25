@@ -829,34 +829,46 @@ na_status_t na_score_alignment(const char *res_a, const char *res_b, size_t len,
         return NA_ERR_SCORING_PAIR;
     }
   }
-  // Identify leading and trailing gap columns for free start/end gap flags
-  size_t first_non_gap = 0, last_non_gap = len;
-  while(first_non_gap < len && (res_a[first_non_gap] == '-' || res_b[first_non_gap] == '-'))
-    first_non_gap++;
-  while(last_non_gap > first_non_gap &&
-        (res_a[last_non_gap - 1] == '-' || res_b[last_non_gap - 1] == '-'))
-    last_non_gap--;
+  // Letters of each sequence, to tell the DP's free edges: a gap in a (a
+  // column consuming b) is in the first column while no letter of a has
+  // been consumed, and in the last column once all have; a gap in b is in
+  // the first row while no letter of b has been consumed, and in the last
+  // row once all have. Those gaps are free under the start/end flags
+  size_t letters_a = 0, letters_b = 0;
+  for(size_t i = 0; i < len; i++) {
+    letters_a += res_a[i] != '-';
+    letters_b += res_b[i] != '-';
+  }
+  const bool free_start = sc->s.no_start_gap_penalty;
+  const bool free_end = sc->s.no_end_gap_penalty;
 
   long long total = 0;
+  size_t x = 0, y = 0; // letters of a and b consumed so far
   bool in_a = false, in_b = false;
   for(size_t i = 0; i < len; i++) {
     char ca = res_a[i], cb = res_b[i];
     if(ca == '-' && cb == '-') return NA_ERR_INVALID_ARG;
-    bool free_gap = (sc->s.no_start_gap_penalty && i < first_non_gap) ||
-                    (sc->s.no_end_gap_penalty && i >= last_non_gap);
     if(ca == '-') {
+      const bool free_gap = (free_start && x == 0) ||
+                            (free_end && x == letters_a);
       if(!free_gap)
         total += in_a ? sc->s.gap_extend : (sc->s.gap_open + sc->s.gap_extend);
       in_a = true; in_b = false;
+      y++;
     } else if(cb == '-') {
+      const bool free_gap = (free_start && y == 0) ||
+                            (free_end && y == letters_b);
       if(!free_gap)
         total += in_b ? sc->s.gap_extend : (sc->s.gap_open + sc->s.gap_extend);
       in_b = true; in_a = false;
+      x++;
     } else {
       int s = 0; bool m = false;
       scoring_lookup(&sc->s, ca, cb, &s, &m);
+      if(sc->s.no_mismatches && !m) return NA_ERR_SCORING_PAIR;
       total += s;
       in_a = false; in_b = false;
+      x++; y++;
     }
   }
   if(total < INT32_MIN || total > INT32_MAX) return NA_ERR_OVERFLOW;
