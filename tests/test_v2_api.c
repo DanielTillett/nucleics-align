@@ -164,6 +164,19 @@ static void test_global_methods_and_edge_cases(void)
   CHECK(fg_checked == -6);
   na_scoring_free(fs);
 
+  /* A rejected na_scoring_set_flags() (it would clear NA_CASE_SENSITIVE)
+   * leaves the scoring as it was: "T" against "ACGT" under a free end gap
+   * only is "T----"/"-ACGT", one charged gap of length 1 then free trailing
+   * gaps (-5); with a free start gap instead it would score +1 */
+  na_scoring_t *cs = na_scoring_new(1, -100, -4, -1);
+  CHECK(na_scoring_set_flags(cs, NA_CASE_SENSITIVE | NA_FREE_END_GAP) == NA_OK);
+  CHECK(na_global_align(al, "T", 1, "ACGT", 4, cs, res) == NA_OK);
+  CHECK(na_alignment_score(res) == -5);
+  CHECK(na_scoring_set_flags(cs, NA_FREE_START_GAP) == NA_ERR_INVALID_ARG);
+  CHECK(na_global_align(al, "T", 1, "ACGT", 4, cs, res) == NA_OK);
+  CHECK(na_alignment_score(res) == -5);
+  na_scoring_free(cs);
+
   /* A mismatched column is an error under NA_NO_MISMATCHES, not score 0 */
   na_scoring_t *nm = na_scoring_new(1, -1, -4, -1);
   CHECK(na_scoring_set_flags(nm, NA_NO_MISMATCHES) == NA_OK);

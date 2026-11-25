@@ -71,6 +71,11 @@ void scoring_init(scoring_t* scoring, int match, int mismatch,
                   bool no_gaps_in_a, bool no_gaps_in_b,
                   bool no_mismatches, bool case_sensitive);
 
+// Recompute min_penalty and max_penalty from the current scores (after
+// changing match, mismatch or the gap penalties in place; scoring_add_*()
+// keep them up to date themselves)
+void scoring_update_penalty_range(scoring_t* scoring);
+
 #define scoring_is_wildcard(scoring,c) (get_wildcard_bit(scoring,c))
 
 void scoring_add_wildcard(scoring_t* scoring, char c, int s);

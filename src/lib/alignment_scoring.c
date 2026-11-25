@@ -48,10 +48,34 @@ void scoring_init(scoring_t* scoring,
   memset(scoring->wildcards, 0, sizeof(scoring->wildcards));
   memset(scoring->swap_set, 0, sizeof(scoring->swap_set));
 
+  scoring_update_penalty_range(scoring);
+}
+
+void scoring_update_penalty_range(scoring_t* scoring)
+{
   // Gaps are always included: even with no_gaps_in_a/b set, gaps are
   // permitted at the ends of an alignment
-  scoring->min_penalty = MIN3(MIN2(match, mismatch), gap_open+gap_extend, gap_extend);
-  scoring->max_penalty = MAX3(MAX2(match, mismatch), gap_open+gap_extend, gap_extend);
+  int lo = MIN2(scoring->gap_open + scoring->gap_extend, scoring->gap_extend);
+  int hi = MAX2(scoring->gap_open + scoring->gap_extend, scoring->gap_extend);
+  if(scoring->use_match_mismatch) {
+    lo = MIN3(lo, scoring->match, scoring->mismatch);
+    hi = MAX3(hi, scoring->match, scoring->mismatch);
+  }
+  size_t a, b;
+  for(a = 0; a < 256; a++) {
+    if(get_wildcard_bit(scoring, (char)a)) {
+      lo = MIN2(lo, scoring->wildscores[a]);
+      hi = MAX2(hi, scoring->wildscores[a]);
+    }
+    for(b = 0; b < 256; b++) {
+      if(get_swap_bit(scoring, (char)a, (char)b)) {
+        lo = MIN2(lo, scoring->swap_scores[a][b]);
+        hi = MAX2(hi, scoring->swap_scores[a][b]);
+      }
+    }
+  }
+  scoring->min_penalty = lo;
+  scoring->max_penalty = hi;
 }
 
 void scoring_add_wildcard(scoring_t* scoring, char c, int score)

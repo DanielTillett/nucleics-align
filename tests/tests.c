@@ -2171,6 +2171,28 @@ static void load_matrix_text(const char *text, scoring_t *scoring)
   unlink(path);
 }
 
+// min_penalty / max_penalty follow the scores as they are changed: a harsh
+// mismatch replaced by a mild one no longer sets the DP floor
+void scoring_test_penalty_range()
+{
+  scoring_t scoring;
+  scoring_init(&scoring, 1, -500000000, -4, -1, false, false, false, false,
+               false, false);
+  ASSERT(scoring.min_penalty == -500000000);
+  scoring.mismatch = -2;
+  scoring_update_penalty_range(&scoring);
+  ASSERT(scoring.min_penalty == -5 && scoring.max_penalty == 1);
+  // Pairs and wildcards count, and only while match/mismatch are in use
+  scoring_add_mutation(&scoring, 'a', 'c', -9);
+  scoring_add_wildcard(&scoring, 'n', 7);
+  scoring_update_penalty_range(&scoring);
+  ASSERT(scoring.min_penalty == -9 && scoring.max_penalty == 7);
+  scoring.use_match_mismatch = false;
+  scoring.match = 100;
+  scoring_update_penalty_range(&scoring);
+  ASSERT(scoring.min_penalty == -9 && scoring.max_penalty == 7);
+}
+
 void scoring_test_load_matrix()
 {
   scoring_t scoring;
@@ -2960,6 +2982,7 @@ void test_misc()
   alignment_test_create_zero();
   alignment_test_roundup();
   scoring_test_load_matrix();
+  scoring_test_penalty_range();
   scoring_test_case_sensitive();
   test_global_inputs();
   test_options();

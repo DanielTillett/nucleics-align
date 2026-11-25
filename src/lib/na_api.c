@@ -191,6 +191,11 @@ na_status_t na_scoring_set_flags(na_scoring_t *sc, unsigned flags)
                               NA_NO_GAPS_LONGEST | NA_NO_MISMATCHES |
                               NA_CASE_SENSITIVE;
   if((flags & ~valid_mask) != 0) return NA_ERR_INVALID_ARG;
+  // Case sensitivity cannot be turned off again; refuse before changing
+  // anything, so a rejected call leaves the scoring as it was
+  bool cs = (flags & NA_CASE_SENSITIVE) != 0;
+  if(!cs && sc->s.case_sensitive)
+    return NA_ERR_INVALID_ARG;
 
   sc->s.no_start_gap_penalty = (flags & NA_FREE_START_GAP) != 0;
   sc->s.no_end_gap_penalty   = (flags & NA_FREE_END_GAP) != 0;
@@ -198,9 +203,6 @@ na_status_t na_scoring_set_flags(na_scoring_t *sc, unsigned flags)
   sc->s.no_gaps_in_b         = (flags & NA_NO_GAPS_B) != 0;
   sc->s.no_gaps_in_longest   = (flags & NA_NO_GAPS_LONGEST) != 0;
   sc->s.no_mismatches        = (flags & NA_NO_MISMATCHES) != 0;
-  bool cs = (flags & NA_CASE_SENSITIVE) != 0;
-  if(!cs && sc->s.case_sensitive)
-    return NA_ERR_INVALID_ARG;
   if(cs && !sc->s.case_sensitive)
     scoring_make_case_sensitive(&sc->s);
   return NA_OK;
@@ -214,10 +216,7 @@ na_status_t na_scoring_set_match_mismatch(na_scoring_t *sc, bool enable,
   sc->s.use_match_mismatch = enable;
   sc->s.match = match;
   sc->s.mismatch = mismatch;
-  if(match < sc->s.min_penalty) sc->s.min_penalty = match;
-  if(mismatch < sc->s.min_penalty) sc->s.min_penalty = mismatch;
-  if(match > sc->s.max_penalty) sc->s.max_penalty = match;
-  if(mismatch > sc->s.max_penalty) sc->s.max_penalty = mismatch;
+  scoring_update_penalty_range(&sc->s);
   return NA_OK;
 }
 
@@ -227,11 +226,7 @@ na_status_t na_scoring_set_gaps(na_scoring_t *sc, int gap_open, int gap_extend)
     return NA_ERR_INVALID_ARG;
   sc->s.gap_open = gap_open;
   sc->s.gap_extend = gap_extend;
-  int go = gap_open + gap_extend;
-  if(go < sc->s.min_penalty) sc->s.min_penalty = go;
-  if(gap_extend < sc->s.min_penalty) sc->s.min_penalty = gap_extend;
-  if(go > sc->s.max_penalty) sc->s.max_penalty = go;
-  if(gap_extend > sc->s.max_penalty) sc->s.max_penalty = gap_extend;
+  scoring_update_penalty_range(&sc->s);
   return NA_OK;
 }
 
