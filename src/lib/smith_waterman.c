@@ -30,34 +30,13 @@ static inline void _sw_reverse_move(const sw_aligner_t *sw,
   {
     // The traceback byte says which matrix the step goes to; the score is
     // the current one less the penalty of that step
-    const scoring_t *scoring = aligner->scoring;
-    const score_t open = scoring->gap_open + scoring->gap_extend;
-    const score_t ext = scoring->gap_extend;
-    int next = alignment_trace_next(aligner, *arr_index, *curr_matrix);
-    score_t step;
-    if(next == ALN_TRACE_NONE) {
-      fprintf(stderr, "Program error: traceback fail (_sw_reverse_move)\n");
-      exit(EXIT_FAILURE);
-    }
-    if(*curr_matrix == MATCH) {
-      const sub_table_t *t = &sw->table;
-      unsigned char ca = (unsigned char)aligner->seq_a[*score_x-1];
-      unsigned char cb = (unsigned char)aligner->seq_b[*score_y-1];
-      step = t->scores[t->code[cb]*t->n + t->code[ca]];
-      *arr_index -= aligner->score_width + 1;
-    }
-    else if(*curr_matrix == GAP_A) {
-      step = next == GAP_A ? ext : open;
-      *arr_index -= aligner->score_width;
-    }
-    else {
-      step = next == GAP_B ? ext : open;
-      *arr_index -= 1;
-    }
-    if(*curr_matrix != GAP_A) (*score_x)--;
-    if(*curr_matrix != GAP_B) (*score_y)--;
-    *curr_matrix = (enum Matrix)next;
-    *curr_score -= step;
+    const int next = alignment_trace_next(aligner, *arr_index, *curr_matrix);
+    if(*curr_matrix == MATCH) *arr_index -= aligner->score_width + 1;
+    else if(*curr_matrix == GAP_A) *arr_index -= aligner->score_width;
+    else *arr_index -= 1;
+    sw_trace_step(&sw->table, aligner->scoring, aligner->seq_a,
+                  aligner->seq_b, next, curr_matrix, score_x, score_y,
+                  curr_score, "_sw_reverse_move");
     return;
   }
 
@@ -299,6 +278,13 @@ aln_status_t smith_waterman_align_checked(const char *seq_a, const char *seq_b,
   return status;
 }
 
+// As smith_waterman_align_checked() without alignment_check(), printing
+// the error and exiting instead of returning it. Unlike the other
+// unchecked aligners this one keeps skipping the checks: it is the test
+// suite's way into the engine with gaps scoring 0 or above, which the
+// checked form refuses (the full, compact and rectangle fills are compared
+// under them), and a pair the scoring lacks ends the program from the
+// table build instead
 void smith_waterman_align2(const char *a, const char *b,
                            size_t len_a, size_t len_b,
                            const scoring_t *scoring, sw_aligner_t *sw)
@@ -331,8 +317,7 @@ static aln_status_t _sw_align(const char *a, const char *b,
   if(!sub_table_build(&sw->table, scoring, a, len_a, b, len_b))
     return ALN_ERR_NOMEM;
   aligner->compact = sw->compact;
-  if(aligner->options != NULL) aligner->opts = *aligner->options;
-  else alignment_options_default(&aligner->opts);
+  alignment_options_resolve(aligner->options, &aligner->opts);
 
   // Whether the quick traceback step applies to this scoring (set before
   // any path returns, so no earlier alignment's choice is left behind)

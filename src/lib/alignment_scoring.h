@@ -89,10 +89,14 @@ void scoring_add_mutation(scoring_t* scoring, char a, char b, int score);
 // where match/mismatch scoring is used)
 void scoring_make_case_sensitive(scoring_t* scoring);
 
-void scoring_print(const scoring_t* scoring);
 
+// The score of a against b, and whether they count as a match. Exits on a
+// pair the scoring has no score for; scoring_try_lookup() returns false
+// instead, setting nothing
 void scoring_lookup(const scoring_t* scoring, char a, char b,
                     int *score, bool *is_match);
+bool scoring_try_lookup(const scoring_t* scoring, char a, char b,
+                        int *score, bool *is_match);
 
 // Does scoring_lookup() find a score for (a, b)? (It exits if not)
 bool scoring_has_pair(const scoring_t* scoring, char a, char b);

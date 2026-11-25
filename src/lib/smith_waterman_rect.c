@@ -43,18 +43,9 @@ aln_status_t sw_strips_fill(sw_aligner_t *sw, size_t x0, size_t y0,
   free(sw->ckpt);
   sw->ckpt = ckpt;
   sw->strip_rows = k;
-  aligner->scoring = scoring;
-  aligner->seq_a = sw->seq_a + x0;
-  aligner->seq_b = sw->seq_b + y0;
-  aligner->score_width = rx + 1;
-  aligner->score_height = ry + 1;
-  aligner->traced = true;
-  aligner->trace_banded = false;
-  aligner->best_score = best;
-  aligner->best_index = by * (rx + 1) + bx;
-  sw->strips = sw->rect = true;
-  sw->off_a = x0;
-  sw->off_b = y0;
+  sw_describe(sw, scoring, sw->seq_a + x0, sw->seq_b + y0, rx, ry, best,
+              by * (rx + 1) + bx, x0, y0);
+  sw->strips = true;
   sw->full_best = (y0 + by) * (sw->len_a + 1) + x0 + bx;
   __atomic_add_fetch(&smith_waterman_strip_alignments, 1, __ATOMIC_RELAXED);
   *used = true;
@@ -70,8 +61,6 @@ int sw_follow_strips(sw_aligner_t *sw, alignment_t *result)
   const aligner_t *aligner = &sw->aligner;
   const scoring_t *scoring = aligner->scoring;
   const sub_table_t *t = &sw->table;
-  const score_t open = scoring->gap_open + scoring->gap_extend;
-  const score_t ext = scoring->gap_extend;
   const size_t w = aligner->score_width, k = sw->strip_rows;
   const char *a = aligner->seq_a, *b = aligner->seq_b;
   const size_t end_x = aligner->best_index % w, end_y = aligner->best_index / w;
@@ -103,22 +92,10 @@ int sw_follow_strips(sw_aligner_t *sw, alignment_t *result)
       }
     }
     // As _sw_reverse_move() steps on traceback bytes
-    int next = (trace[(y - s0) * xs + x - 1] >> (2 * (int)m)) & 3;
-    score_t step;
-    if(next == ALN_TRACE_NONE) {
-      fprintf(stderr, "Program error: traceback fail (_follow_strips)\n");
-      exit(EXIT_FAILURE);
-    }
-    if(m == MATCH)
-      step = t->scores[t->code[(unsigned char)b[y-1]] * t->n +
-                       t->code[(unsigned char)a[x-1]]];
-    else if(m == GAP_A) step = next == GAP_A ? ext : open;
-    else step = next == GAP_B ? ext : open;
+    const int next = (trace[(y - s0) * xs + x - 1] >> (2 * (int)m)) & 3;
     ops[n++] = (uint8_t)m;
-    if(m != GAP_A) x--;
-    if(m != GAP_B) y--;
-    m = (enum Matrix)next;
-    score -= step;
+    sw_trace_step(t, scoring, a, b, next, &m, &x, &y, &score,
+                  "_follow_strips");
   }
   free(trace);
 
@@ -203,16 +180,9 @@ bool sw_align_fast_rect(sw_aligner_t *sw, const char *a, const char *b,
     return false;
 
   if(best < sw->min_score) {
-    aligner->scoring = scoring;
-    aligner->seq_a = a;
-    aligner->seq_b = b;
-    aligner->score_width = len_a + 1;
-    aligner->score_height = len_b + 1;
-    aligner->traced = true;
-    aligner->best_score = best;
-    aligner->best_index = 0; // not an earlier alignment's cell
-    sw->rect = true;
-    sw->off_a = sw->off_b = 0;
+    // No hit: nothing to fill, but describe the sequences as a fill would
+    // (best_index 0: not an earlier alignment's cell)
+    sw_describe(sw, scoring, a, b, len_a, len_b, best, 0, 0, 0);
     return true;
   }
 
@@ -247,18 +217,8 @@ bool sw_align_fast_rect(sw_aligner_t *sw, const char *a, const char *b,
   sw->fast_res.len_a = rx;
   sw->fast_res.len_b = ry;
   sw->fast_hit = true;
-  sw->rect = true;
-  sw->off_a = x0;
-  sw->off_b = y0;
   sw->full_best = by * (len_a + 1) + bx;
-  aligner->scoring = scoring;
-  aligner->seq_a = a;
-  aligner->seq_b = b;
-  aligner->score_width = len_a + 1;
-  aligner->score_height = len_b + 1;
-  aligner->traced = true;
-  aligner->best_score = best;
-  aligner->best_index = sw->full_best;
+  sw_describe(sw, scoring, a, b, len_a, len_b, best, sw->full_best, x0, y0);
   return true;
 }
 
@@ -297,16 +257,8 @@ bool sw_align_rect(sw_aligner_t *sw, const char *a, const char *b,
 
   if(best < sw->min_score) {
     // No hit: nothing to fill, but describe the sequences as a fill would
-    aligner->scoring = scoring;
-    aligner->seq_a = a;
-    aligner->seq_b = b;
-    aligner->score_width = len_a+1;
-    aligner->score_height = len_b+1;
-    aligner->traced = true;
-    aligner->best_score = best;
-    aligner->best_index = 0; // not an earlier alignment's cell
-    sw->rect = true;
-    sw->off_a = sw->off_b = 0;
+    // (best_index 0: not an earlier alignment's cell)
+    sw_describe(sw, scoring, a, b, len_a, len_b, best, 0, 0, 0);
     return true;
   }
 
@@ -315,9 +267,7 @@ bool sw_align_rect(sw_aligner_t *sw, const char *a, const char *b,
   // whole prefix (exact too: nothing after (bx, by) changes it) rather than
   // scan for the rectangle. (Along the shorter side alone, a 100-letter
   // hit at (100, 100000) would have the whole 100 x 100000 prefix filled)
-  const sub_table_t *t = &sw->table;
-  score_t smax = 0;
-  for(i = 0; i < t->n * t->n; i++) smax = MAX2(smax, t->scores[i]);
+  const score_t smax = sw->table.smax;
   if(smax > 0 && (double)best >= 0.5 * smax * (double)MAX2(bx, by)) {
     rx = bx;
     ry = by;

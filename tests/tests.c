@@ -884,7 +884,7 @@ void simd_test_hirschberg_band()
 
   // The band was used (it needs the SIMD passes), and unbanded passes still
   // matched the scalar ones
-  ASSERT(hirschberg_banded_passes > banded || !hirschberg_simd_available());
+  ASSERT(hirschberg_banded_passes > banded || !hirschberg_simd_available(NULL));
   ASSERT(hirschberg_striped_mismatches == mismatches);
 
   hirschberg_band_strip_rows = strip_rows;
@@ -1082,7 +1082,7 @@ void simd_test_hirschberg_narrow()
   hb_narrow_check(seqb, seqa, &scoring, ref, aln);
 
   // Blocks were cut into parts, and every pass matched the scalar one
-  ASSERT(hirschberg_parts16 > parts + 100 || !hirschberg_simd_available());
+  ASSERT(hirschberg_parts16 > parts + 100 || !hirschberg_simd_available(NULL));
   ASSERT(hirschberg_striped_mismatches == mismatches);
 
   hirschberg_part16_max_cols = part_cols;
@@ -1626,8 +1626,8 @@ void simd_test_diff()
     ASSERT(memcmp(al_on.final_scores, al_off.final_scores,
                   sizeof(al_on.final_scores)) == 0);
   }
-  ASSERT(traced > 250);
 #ifdef ALN_STRIPED
+  ASSERT(traced > 250); // the traceback bytes come from the striped fill
   ASSERT(alignment_diff_count() - fills > 150); // the 8- and 16-bit fills
 #else
   ASSERT(alignment_diff_count() == fills);
@@ -1827,7 +1827,8 @@ void simd_test_narrow(int bits)
 }
 
 /* A gap scoring above 0 can open a local hit, which the rectangle's
- * reverse scan would miss: the compact aligner gives the same hit */
+ * reverse scan would miss: the compact aligner gives the same hit (the
+ * checked aligner refuses such scoring; the unchecked one is the way in) */
 void simd_test_rect_gap_score()
 {
   size_t rect_cells = smith_waterman_rect_min_cells;
@@ -2829,8 +2830,11 @@ void test_out_of_memory()
         hirschberg_check_striped = false;
         if(n == 0 && o == 1) {
           // The forced bands are used, so their allocations fail too
+          // (bands need the striped fill)
+#ifdef ALN_STRIPED
           if(kind == OOM_NW_COMPACT) ASSERT(c.nw->trace_banded);
-          if(kind == OOM_HB && hirschberg_simd_available())
+#endif
+          if(kind == OOM_HB && hirschberg_simd_available(NULL))
             ASSERT(hirschberg_banded_passes > banded);
         }
         bool failed = n > 0 && alignment_alloc_fail_pending() == 0;

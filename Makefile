@@ -5,9 +5,10 @@ else
 	# by 12% with where unrelated edits happened to place their loops
 	# (measured: identical instruction counts, 33.5G vs 37.5G cycles on a
 	# 200 kb band at one thread, Zen 3). -falign-loops=N needs gcc or a
-	# recent clang, so it is added only where the compiler takes it
-	OPT = -O3 -falign-functions=64 \
-	      $(shell $(CC) -falign-loops=32 -x c -c -o /dev/null /dev/null 2>/dev/null && echo -falign-loops=32)
+	# recent clang, so it is added only where the compiler takes it.
+	# := so the probe runs once per make, not once per recipe
+	OPT := -O3 -falign-functions=64 \
+	       $(shell $(CC) -falign-loops=32 -x c -c -o /dev/null /dev/null 2>/dev/null && echo -falign-loops=32)
 endif
 
 # Build with sanitizers: make SANITIZE=1 test

@@ -312,8 +312,8 @@ g++ -O3 -std=c++11 "$WORK/src/run_edlib.cpp" "$WORK/src/edlib/edlib/src/edlib.cp
   -I "$WORK/src/edlib/edlib/include" -o "$WORK/bin/run_edlib"
 
 # 6. Build fresh-process ablation driver
-gcc -O3 "$ROOT/benchmarks/ablation.c" -I "$ROOT/src" -I "$ROOT/libs" \
-  -L "$ROOT/src" -L "$ROOT/libs/string_buffer" -lalign -lstrbuf -lpthread -lz \
+gcc -O3 "$ROOT/benchmarks/ablation.c" -I "$ROOT/include" -I "$ROOT/src/lib" \
+  -L "$ROOT/src" -lalign -lpthread \
   -o "$WORK/bin/ablation"
 
 python3 - "$ROOT" "$WORK" "$THREADS" "$SECTION" <<'PY'

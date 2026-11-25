@@ -194,7 +194,7 @@ EOF
 
 gcc -O3 -mavx2 -std=c11 -D_POSIX_C_SOURCE=200809L \
   -I "$WORK/src" -I "$WORK/src/parasail" -I "$WORK/src/parasail/src" \
-  -I "$ROOT/src" -I "$ROOT/libs" \
+  -I "$ROOT/include" -I "$ROOT/src/lib" \
   "$WORK/src/inproc_prot.c" \
   "$WORK/src/parasail/src/nw_trace_scan_avx2_256_16.c" \
   "$WORK/src/parasail/src/nw_trace_striped_avx2_256_16.c" \
@@ -202,7 +202,7 @@ gcc -O3 -mavx2 -std=c11 -D_POSIX_C_SOURCE=200809L \
   "$WORK/src/parasail/src/memory_avx2.c" \
   "$WORK/src/parasail/src/cigar.c" \
   "$WORK/src/parasail/src/matrix_lookup.c" \
-  "$ROOT/src/libalign.a" "$ROOT/libs/string_buffer/libstrbuf.a" \
+  "$ROOT/src/libalign.a" \
   -lpthread -lz -o "$WORK/bin/inproc_prot"
 
 # --- Build B: parasail AVX2 32-bit global DNA (scan) & 32-bit local DNA (striped) ---

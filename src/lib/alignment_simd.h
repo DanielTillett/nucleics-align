@@ -9,7 +9,8 @@
 // alignment.c and hirschberg.c. Uses GCC/clang vector extensions rather than
 // intrinsics so it builds on x86 and ARM; with -mavx2 (or -march=native) the
 // compilers emit full-width instructions such as vpmaxsd.
-// ALN_STRIPED is defined only if the compiler supports them.
+// ALN_STRIPED is defined only if the compiler supports them (and
+// -DALN_NO_SIMD is not given: the scalar-only build, for testing it).
 
 #ifndef ALIGNMENT_SIMD_HEADER_SEEN
 #define ALIGNMENT_SIMD_HEADER_SEEN
@@ -17,7 +18,7 @@
 #include <stdbool.h>
 #include "alignment_scoring.h" // score_t
 
-#if defined(__has_builtin)
+#if defined(__has_builtin) && !defined(ALN_NO_SIMD)
 #  if __has_builtin(__builtin_shufflevector)
 #    define ALN_STRIPED 1
 #  endif
@@ -53,9 +54,6 @@
 #    define ALN_TARGET_CLONES \
        __attribute__((target_clones("avx2", "sse4.1", "default")))
 #  endif
-#endif
-#ifndef ALN_TARGET_CLONES
-#  define ALN_TARGET_CLONES
 #endif
 
 // 8 lanes with AVX2, otherwise 4 (native width for SSE2 and NEON). GCC
@@ -116,5 +114,11 @@ ALN_INLINE bool vany(vscore_t v)
 }
 
 #endif /* ALN_STRIPED */
+
+// Functions multi-versioned for the CPU where the build dispatches
+// (ALN_DISPATCH, above); plain functions otherwise, scalar builds included
+#ifndef ALN_TARGET_CLONES
+#  define ALN_TARGET_CLONES
+#endif
 
 #endif /* ALIGNMENT_SIMD_HEADER_SEEN */

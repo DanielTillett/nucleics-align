@@ -155,24 +155,6 @@ static void scoring_add_mutations(scoring_t* scoring, const char *str,
   scoring->use_match_mismatch = use_match_mismatch;
 }
 
-void scoring_print(const scoring_t* scoring)
-{
-  printf("scoring:\n");
-  printf("  match: %i; mismatch: %i; (use_match_mismatch: %i)\n",
-         scoring->match, scoring->mismatch, scoring->use_match_mismatch);
-
-  printf("  gap_open: %i; gap_extend: %i;\n",
-         scoring->gap_open, scoring->gap_extend);
-
-  printf("  no_gaps_in_a: %i; no_gaps_in_b: %i; no_gaps_in_longest: %i;\n",
-         scoring->no_gaps_in_a, scoring->no_gaps_in_b,
-         scoring->no_gaps_in_longest);
-  printf("  no_mismatches: %i;\n", scoring->no_mismatches);
-
-  printf("  no_start_gap_penalty: %i; no_end_gap_penalty: %i;\n",
-         scoring->no_start_gap_penalty, scoring->no_end_gap_penalty);
-}
-
 
 // a, b must be lowercase if !scoring->case_sensitive
 static char _scoring_check_wildcards(const scoring_t* scoring, char a, char b,
@@ -190,9 +172,10 @@ static char _scoring_check_wildcards(const scoring_t* scoring, char a, char b,
 }
 
 // Considered match if lc(a)==lc(b) or if a or b are wildcards
-// Always sets score and is_match
-void scoring_lookup(const scoring_t* scoring, char a, char b,
-                    int *score, bool *is_match)
+// Sets score and is_match, or returns false where the scoring has no
+// score for the pair
+bool scoring_try_lookup(const scoring_t* scoring, char a, char b,
+                        int *score, bool *is_match)
 {
   if(!scoring->case_sensitive)
   {
@@ -206,14 +189,14 @@ void scoring_lookup(const scoring_t* scoring, char a, char b,
   {
     // Check wildcards
     *is_match = _scoring_check_wildcards(scoring, a, b, score);
-    return;
+    return true;
   }
 
   // Look up in table
   if(get_swap_bit(scoring,a,b))
   {
     *score = scoring->swap_scores[(unsigned char)a][(unsigned char)b];
-    return;
+    return true;
   }
 
   // Check wildcards: two of them score the lower of their scores, e.g.
@@ -221,17 +204,29 @@ void scoring_lookup(const scoring_t* scoring, char a, char b,
   if(_scoring_check_wildcards(scoring, a, b, score))
   {
     *is_match = 1;
-    return;
+    return true;
   }
 
   // Use match/mismatch
   if(scoring->use_match_mismatch)
   {
     *score = (*is_match ? scoring->match : scoring->mismatch);
-    return;
+    return true;
   }
 
-  // Error
+  return false;
+}
+
+// As scoring_try_lookup(), but exits on a pair with no score
+void scoring_lookup(const scoring_t* scoring, char a, char b,
+                    int *score, bool *is_match)
+{
+  if(scoring_try_lookup(scoring, a, b, score, is_match)) return;
+  if(!scoring->case_sensitive)
+  {
+    a = (char)tolower((unsigned char)a);
+    b = (char)tolower((unsigned char)b);
+  }
   fprintf(stderr, "Error: Unknown character pair (%c,%c) and "
                    "match/mismatch have not been set\n", a, b);
   exit(EXIT_FAILURE);

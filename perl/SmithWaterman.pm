@@ -123,10 +123,24 @@ sub _proc
   return $self->{_proc};
 }
 
+# A line to the tool. If it has gone, the write fails quietly (the next
+# read then reports it) instead of SIGPIPE ending this process
+sub _send
+{
+  my ($to, $text) = @_;
+  local $SIG{PIPE} = 'IGNORE';
+  print {$to} $text;
+}
+
+# Stops the tool. kill: it may be mid-alignment (a timeout), so it would
+# not notice its input closing; terminate it before waiting
 sub _stop
 {
-  my ($self) = @_;
+  my ($self, $kill) = @_;
   my $p = delete($self->{_proc}) or return;
+  kill('TERM', $p->{pid}) if $kill;
+  # The tool may already have gone: writing to it must not kill this process
+  local $SIG{PIPE} = 'IGNORE';
   close($p->{to});
   close($p->{from});
   waitpid($p->{pid}, 0);
@@ -148,7 +162,7 @@ sub _read_line
   };
   alarm(0);
   if($@) {
-    $self->_stop();
+    $self->_stop(1);
     croak($@ eq "timeout\n" ? "Timeout reading smith_waterman output"
                             : "Cannot read smith_waterman output: $@");
   }
@@ -185,7 +199,7 @@ sub do_alignment
   if(!$self->{_waiting})
   {
     # Skip the hits left from the previous alignment
-    print $to "a\n";
+    _send($to, "a\n");
     $self->_expect('^'.quotemeta(PROMPT_LINE).'==$');
     $self->{_waiting} = 1;
   }
@@ -208,7 +222,7 @@ sub do_alignment
   $self->{_seq2} = $seq2;
   my $expected = $self->{_align_number};
 
-  print $to "$seq1\n$seq2\n";
+  _send($to, "$seq1\n$seq2\n");
   $self->{_waiting} = 0;
 
   $self->_expect("^== Alignment $expected ");
@@ -224,7 +238,7 @@ sub get_next_hit
   my ($self) = @_;
   return undef if $self->{_waiting};
 
-  print {$self->_proc()->{to}} "h\n";
+  _send($self->_proc()->{to}, "h\n");
   my $line = $self->_read_line();
   if(substr($line, 0, length(PROMPT_LINE)) ne PROMPT_LINE) {
     croak("smith_waterman said '$line' (expected its prompt)");

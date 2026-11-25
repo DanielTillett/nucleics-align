@@ -63,8 +63,9 @@ extern size_t hirschberg_band_strip_rows, hirschberg_band_min_width;
 // rows of scores (the passes use four). The result is the same
 extern size_t hirschberg_reuse_depth, hirschberg_reuse_min_rows;
 
-// Whether this build and CPU run the SIMD passes (and so banding)
-bool hirschberg_simd_available(void);
+// Whether this build and CPU run the SIMD passes (and so banding) under
+// these options (NULL: the defaults)
+bool hirschberg_simd_available(const alignment_options_t *options);
 
 // Score of the best global alignment, without the alignment itself: one
 // pass in O(len_b) memory. Same score as needleman_wunsch_align(), and the

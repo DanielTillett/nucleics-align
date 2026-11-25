@@ -247,21 +247,16 @@ aln_status_t needleman_wunsch_align_checked(const char *a, const char *b,
   return status;
 }
 
+// needleman_wunsch_align_checked(), printing the error and exiting instead
+// of returning it
 void needleman_wunsch_align2(const char *a, const char *b,
                              size_t len_a, size_t len_b,
                              const scoring_t *scoring,
                              nw_aligner_t *nw, alignment_t *result)
 {
-  // As needleman_wunsch_align_checked() without alignment_check(): a pair
-  // the scoring lacks ends the program from the table build instead
   aln_error_t e = {ALN_OK, 0, 0};
-  e.status = _nw_fast_paths(a, b, len_a, len_b, scoring, nw, result, false);
-  if(e.status == ALN_ERR_UNSUPPORTED) {
-    e.status = _nw_align(a, b, len_a, len_b, scoring, nw, result);
-    if(_nw_linear(a, b, len_a, len_b, scoring, nw, result, e.status))
-      e.status = ALN_OK;
-  }
-  if(e.status != ALN_OK) {
+  if(needleman_wunsch_align_checked(a, b, len_a, len_b, scoring, nw, result,
+                                    &e) != ALN_OK) {
     alignment_fprint_error(stderr, &e);
     exit(EXIT_FAILURE);
   }

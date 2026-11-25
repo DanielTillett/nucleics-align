@@ -16,11 +16,14 @@
 #define NA_VERSION_MAJOR 2
 #define NA_VERSION_MINOR 0
 #define NA_VERSION_PATCH 0
-#define NA_VERSION_STR   "2.0.0"
-
-/* Legacy version macros for CLI compatibility */
-#define NUCLEICS_ALIGN_VERSION_STR NA_VERSION_STR
-#define NUCLEICS_ALIGN_VERSION     0x200
+/* "2.0.0", from the three above */
+#define NA_VERSION_STR_(x) #x
+#define NA_VERSION_STR__(a, b, c) NA_VERSION_STR_(a.b.c)
+#define NA_VERSION_STR NA_VERSION_STR__(NA_VERSION_MAJOR, NA_VERSION_MINOR, \
+                                        NA_VERSION_PATCH)
+/* One number for #if checks: 2.0.0 is 0x020000 */
+#define NA_VERSION_NUMBER ((NA_VERSION_MAJOR << 16) | (NA_VERSION_MINOR << 8) \
+                           | NA_VERSION_PATCH)
 
 #ifdef __cplusplus
 extern "C" {

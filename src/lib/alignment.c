@@ -60,11 +60,14 @@ bool sub_table_build(sub_table_t *t, const scoring_t *scoring,
 
   // Only look up pairs that can be aligned (a character of a against one of
   // b): scoring_lookup() exits on pairs a substitution file does not define
+  t->smax = t->smin = 0;
   for(j = 0; j < t->n; j++) {
     for(i = 0; i < t->n; i++) {
       if(in_a[bytes[i]] && in_b[bytes[j]]) {
         scoring_lookup(scoring, (char)bytes[i], (char)bytes[j],
                        &t->scores[j*t->n+i], &t->is_match[j*t->n+i]);
+        t->smax = MAX2(t->smax, t->scores[j*t->n+i]);
+        t->smin = MIN2(t->smin, t->scores[j*t->n+i]);
       } else {
         t->scores[j*t->n+i] = 0; // never read
         t->is_match[j*t->n+i] = false;
@@ -400,8 +403,7 @@ aln_status_t aligner_align_checked(aligner_t *aligner,
                                    const scoring_t *scoring, char is_sw)
 {
   aligner->scoring = scoring;
-  if(aligner->options != NULL) aligner->opts = *aligner->options;
-  else alignment_options_default(&aligner->opts);
+  alignment_options_resolve(aligner->options, &aligner->opts);
   aligner->seq_a = seq_a;
   aligner->seq_b = seq_b;
   aligner->score_width = len_a+1;

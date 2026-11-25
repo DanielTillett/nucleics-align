@@ -49,7 +49,7 @@ Here is the checklist I use myself:
 | What you have | Command | Why |
 |---|---|---|
 | Everyday global alignment | `./bin/needleman_wunsch --printscores seqA seqB` | Exact, banded, multi-threaded, fixed tie-breaking |
-| Near-identical pairs (~0.1%–1% divergence up to 1 Mb) | `./bin/needleman_wunsch --wfa --printscores --file pairs.fa` | $O(s)$-space BiWFA with 32-byte AVX2 match extension (~92 ms / 12 MiB at 1 Mb 0.1%); raise its diagonal-update cap with `--wfabudget <n>` for longer 1% pairs |
+| Near-identical pairs (~0.1%–1% divergence up to 1 Mb) | `./bin/needleman_wunsch --wfa --printscores --file pairs.fa` | $O(s)$-space BiWFA with 32-byte AVX2 match extension (160.7 ms / 11 MiB at 1 Mb 0.1%); raise its diagonal-update cap with `--wfabudget <n>` for longer 1% pairs |
 | Long or divergent pairs (50 kb – 1 Mb+) | `./bin/needleman_wunsch --linear --printscores --file pairs.fa` | Keeps RAM at most 46–110 MiB even at 1 Mb and 5% divergence; uses Myers bit-vector split rows on 1-thread unit-cost pairs |
 | Mixed batch of short and long pairs | `./bin/needleman_wunsch --linearabove 100000 --printscores --file pairs.fa` | Exact matrices for short pairs, linear memory for long ones |
 | Just the score | `./bin/needleman_wunsch --scoreonly --file pairs.fa` | Fastest for scores alone (linear memory); uses Ukkonen-banded Myers bit-vector under unit costs (`0/-1/0/-1`), with multi-threaded striped SIMD fallback on divergent pairs |

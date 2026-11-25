@@ -122,10 +122,24 @@ sub _proc
   return $self->{_procs}{$mode};
 }
 
+# A line to the tool. If it has gone, the write fails quietly (the next
+# read then reports it) instead of SIGPIPE ending this process
+sub _send
+{
+  my ($to, $text) = @_;
+  local $SIG{PIPE} = 'IGNORE';
+  print {$to} $text;
+}
+
+# Stops the tool. kill: it may be mid-alignment (a timeout), so it would
+# not notice its input closing; terminate it before waiting
 sub _stop
 {
-  my ($self, $mode) = @_;
+  my ($self, $mode, $kill) = @_;
   my $p = delete($self->{_procs}{$mode}) or return;
+  kill('TERM', $p->{pid}) if $kill;
+  # The tool may already have gone: writing to it must not kill this process
+  local $SIG{PIPE} = 'IGNORE';
   close($p->{to});
   close($p->{from});
   waitpid($p->{pid}, 0);
@@ -144,7 +158,7 @@ sub _read_line
   };
   alarm(0);
   if($@) {
-    $self->_stop($mode) if defined($mode);
+    $self->_stop($mode, 1) if defined($mode);
     croak($@ eq "timeout\n" ? "Timeout reading needleman_wunsch output"
                             : "Cannot read needleman_wunsch output: $@");
   }
@@ -232,7 +246,7 @@ sub do_alignment
   }
   else {
     my $p = $self->_proc('align');
-    print {$p->{to}} "$seq1\n$seq2\n";
+    _send($p->{to}, "$seq1\n$seq2\n");
     @lines = map { $self->_read_line($p->{from}, 'align') } 1..5;
   }
 
@@ -250,7 +264,7 @@ sub do_score
     return _score_of(($self->_run_once('--scoreonly', '--', $seq1, $seq2))[0]);
   }
   my $p = $self->_proc('score');
-  print {$p->{to}} "$seq1\n$seq2\n";
+  _send($p->{to}, "$seq1\n$seq2\n");
   my $score = _score_of($self->_read_line($p->{from}, 'score'));
   $self->_read_line($p->{from}, 'score');
   return $score;

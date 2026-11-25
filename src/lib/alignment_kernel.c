@@ -137,12 +137,7 @@ int alignment_diff_bits(const sub_table_t *table,
   if(scoring->gap_open > 0 || scoring->gap_extend > 0) return 0;
   const long long p = -((long long)scoring->gap_open + scoring->gap_extend);
   const long long e = -(long long)scoring->gap_extend;
-  long long smax = 0, smin = 0;
-  size_t i;
-  for(i = 0; i < table->n * table->n; i++) {
-    smax = MAX2(smax, (long long)table->scores[i]);
-    smin = MAX2(smin, -(long long)table->scores[i]);
-  }
+  const long long smax = table->smax, smin = -(long long)table->smin;
   const long long K = smin + 2*smax + 5*p + e, step = smax + p;
   *ceiling = (score_t)step; // no cell is more than this above the one above
   if(K + step < 100 && e + step <= 28) { *floor = -100; return 8; }
@@ -167,16 +162,30 @@ bool alignment_narrow_limit(const sub_table_t *table,
   const long long ext = scoring->gap_extend;
   const long long lo = bits == 8 ? INT8_MIN : -16000;
   const score_t hi = bits == 8 ? INT8_MAX : INT16_MAX;
-  size_t i;
   if(min != 0 || open > 0 || ext > 0 || open < lo || ext < lo ||
      (bits == 16 && len_i / (2 * ALN_VL) + 1 >= INT16_MAX)) return false;
-  score_t smax = 0;
-  for(i = 0; i < table->n * table->n; i++) {
-    if(table->scores[i] < lo || table->scores[i] > -lo) return false;
-    smax = MAX2(smax, table->scores[i]);
-  }
-  *limit = hi - smax;
+  if(table->smin < lo || table->smax > -lo) return false;
+  *limit = hi - table->smax;
   return *limit > 0;
+}
+
+// The narrowest lanes a Smith-Waterman fill of len_i columns from min may
+// use with scores up to need in range: 8 bits where allow8 and opts allow
+// them, then 16 where opts allow them, else 32 (0). *limit then holds the
+// lanes' highest row best (see alignment_narrow_limit()); unchanged for 32
+int alignment_lane_bits(const sub_table_t *table,
+                        const alignment_options_t *opts,
+                        const scoring_t *scoring, score_t min, size_t len_i,
+                        score_t need, bool allow8, score_t *limit)
+{
+  score_t lim;
+  if(allow8 && opts->byte &&
+     alignment_narrow_limit(table, scoring, min, len_i, 8, &lim) &&
+     need <= lim) { *limit = lim; return 8; }
+  if(opts->narrow &&
+     alignment_narrow_limit(table, scoring, min, len_i, 16, &lim) &&
+     need <= lim) { *limit = lim; return 16; }
+  return 0;
 }
 
 // The narrowest lanes a Smith-Waterman fill of len_i columns may start
@@ -186,16 +195,9 @@ void alignment_lanes(alignment_block_t *tmpl,
                             const alignment_options_t *opts,
                             const scoring_t *scoring, size_t len_i)
 {
-  const sub_table_t *table = tmpl->table;
-  tmpl->bits = 0;
-  if(opts->byte &&
-     alignment_narrow_limit(table, scoring, tmpl->min, len_i, 8,
-                            &tmpl->narrow_limit) &&
-     tmpl->target <= tmpl->narrow_limit) tmpl->bits = 8;
-  else if(opts->narrow &&
-          alignment_narrow_limit(table, scoring, tmpl->min, len_i, 16,
-                                 &tmpl->narrow_limit) &&
-          tmpl->target <= tmpl->narrow_limit) tmpl->bits = 16;
+  tmpl->bits = alignment_lane_bits(tmpl->table, opts, scoring, tmpl->min,
+                                   len_i, tmpl->target, true,
+                                   &tmpl->narrow_limit);
 }
 
 static void* alignment_block_thread(void *ptr)
@@ -392,11 +394,10 @@ bool alignment_fill_blocks(alignment_block_t *tmpl)
     free(args);
     if(tmpl->bits == 8) {
       atomic_fetch_add(&aln_stat_byte_retries, 1);
-      const scoring_t *scoring = aligner->scoring;
-      tmpl->bits = aligner->opts.narrow &&
-                   alignment_narrow_limit(tmpl->table, scoring, tmpl->min,
-                                          len_i, 16, &tmpl->narrow_limit) &&
-                   tmpl->target <= tmpl->narrow_limit ? 16 : 0;
+      tmpl->bits = alignment_lane_bits(tmpl->table, &aligner->opts,
+                                       aligner->scoring, tmpl->min, len_i,
+                                       tmpl->target, false,
+                                       &tmpl->narrow_limit);
     }
     else {
       atomic_fetch_add(&aln_stat_narrow_retries, 1);
@@ -451,16 +452,10 @@ static bool alignment_sw_scan_any(const char *a, size_t len_a,
 {
   aligner_t tmp;
   aligner_init(&tmp);
-  if(opts != NULL) tmp.opts = *opts;
-  else alignment_options_default(&tmp.opts);
+  alignment_options_resolve(opts, &tmp.opts);
 
-  bool no_gaps_in_a, no_gaps_in_b;
-  alignment_no_gaps(scoring, len_a, len_b, &no_gaps_in_a, &no_gaps_in_b);
-  if(!tmp.opts.striped || len_a == 0 || len_b == 0 ||
-     len_a >= INT_MAX || len_b >= INT_MAX ||
-     len_a + len_b > SIZE_MAX / (3 * sizeof(score_t)) ||
-     scoring->no_start_gap_penalty || scoring->no_end_gap_penalty ||
-     scoring->no_mismatches || no_gaps_in_a || no_gaps_in_b) return false;
+  if(!alignment_striped_applies(&tmp.opts, scoring, len_a, len_b, true))
+    return false;
   if(alignment_scores_may_overflow(scoring, a, len_a, b, len_b, true))
     return false; // aligner_align() reports it
 
@@ -485,25 +480,18 @@ static bool alignment_sw_scan_any(const char *a, size_t len_a,
     .score_only = true, .track_best = target == 0, .target = target,
     .ckpt = ckpt, .ckpt_every = every};
   alignment_lanes(&tmpl, &tmp.opts, scoring, len_a);
-  if(min_expected > 0 && tmpl.bits != 0 && min_expected > tmpl.narrow_limit) {
-    if(tmpl.bits == 8 && tmp.opts.narrow &&
-       alignment_narrow_limit(&table, scoring, tmpl.min, len_a, 16,
-                              &tmpl.narrow_limit) &&
-       MAX2(tmpl.target, min_expected) <= tmpl.narrow_limit)
-      tmpl.bits = 16;
-    else
-      tmpl.bits = 0;
-  }
+  // A known lower bound on the score past the lanes' range: wider ones
+  if(min_expected > 0 && tmpl.bits != 0 && min_expected > tmpl.narrow_limit)
+    tmpl.bits = alignment_lane_bits(&table, &tmp.opts, scoring, tmpl.min,
+                                    len_a, MAX2(tmpl.target, min_expected),
+                                    false, &tmpl.narrow_limit);
   // Row 0 is all 0 in Smith-Waterman (the fill writes the others; column 0
   // is never read back, see alignment_sw_trace_rows())
   if(ckpt != NULL) memset(ckpt, 0, 3 * (len_a + 1) * sizeof(score_t));
   if(short_hit) {
     // A hit scoring at least half the best substitution score per row of
     // b it has crossed (see _sw_align_rect() in smith_waterman.c)
-    score_t smax = 0;
-    size_t i;
-    for(i = 0; i < table.n * table.n; i++) smax = MAX2(smax, table.scores[i]);
-    tmpl.giveup_rate = 0.5 * MAX2(smax, 1);
+    tmpl.giveup_rate = 0.5 * MAX2(table.smax, 1);
   }
   bool filled = alignment_fill_blocks(&tmpl);
   sub_table_free(&table);
@@ -576,8 +564,7 @@ bool alignment_sw_trace_rows(const char *a, size_t len_a,
 {
   aligner_t tmp;
   aligner_init(&tmp);
-  if(opts != NULL) tmp.opts = *opts;
-  else alignment_options_default(&tmp.opts);
+  alignment_options_resolve(opts, &tmp.opts);
   if(!tmp.opts.striped || xmax == 0 || xmax > len_a || y0 == 0 ||
      y0 > y1 || y1 > len_b) return false;
 
@@ -612,20 +599,9 @@ bool alignment_sw_trace_rows(const char *a, size_t len_a,
     .trace = trace, .trace_rows = trace_rows};
   // Use 8- or 16-bit lanes when the known global max_score fits safely,
   // each where the options allow it (as alignment_lanes() chooses them)
-  score_t lim = 0;
-  if(max_score > 0) {
-    if(tmp.opts.byte &&
-       alignment_narrow_limit(use_table, scoring, 0, xmax, 8, &lim) &&
-       max_score <= lim) {
-      tmpl.bits = 8;
-      tmpl.narrow_limit = lim;
-    } else if(tmp.opts.narrow &&
-              alignment_narrow_limit(use_table, scoring, 0, xmax, 16, &lim) &&
-              max_score <= lim) {
-      tmpl.bits = 16;
-      tmpl.narrow_limit = lim;
-    }
-  }
+  if(max_score > 0)
+    tmpl.bits = alignment_lane_bits(use_table, &tmp.opts, scoring, 0, xmax,
+                                    max_score, true, &tmpl.narrow_limit);
   bool filled = alignment_fill_blocks(&tmpl);
   if(table == NULL) sub_table_free(&local_table);
   free(trace_rows);

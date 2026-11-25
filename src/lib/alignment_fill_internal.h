@@ -10,6 +10,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <limits.h>
 #include <pthread.h>
 #include <stdatomic.h>
 
@@ -25,6 +26,29 @@ static inline void alignment_no_gaps(const scoring_t *scoring,
                   (scoring->no_gaps_in_longest && len_a >= len_b);
   *no_gaps_in_b = scoring->no_gaps_in_b ||
                   (scoring->no_gaps_in_longest && len_a < len_b);
+}
+
+// Whether the striped kernels may fill len_i x len_j cells under scoring:
+// they handle the uniform recurrence only, so the options that change it
+// for particular cells (no gaps or mismatches, free end gaps) take the
+// scalar fill. edges: the kernels are given the first row and column
+// (traceback bytes and scans), so free start gaps, which change those, are
+// refused too, and the lengths must fit the kernels' counters and the edge
+// buffers; the matrix fill sets its own edges
+static inline bool alignment_striped_applies(const alignment_options_t *o,
+                                             const scoring_t *scoring,
+                                             size_t len_i, size_t len_j,
+                                             bool edges)
+{
+  bool no_gaps_in_a, no_gaps_in_b;
+  alignment_no_gaps(scoring, len_i, len_j, &no_gaps_in_a, &no_gaps_in_b);
+  if(!o->striped || len_i == 0 || len_j == 0 ||
+     scoring->no_end_gap_penalty || scoring->no_mismatches ||
+     no_gaps_in_a || no_gaps_in_b) return false;
+  return !edges ||
+         (!scoring->no_start_gap_penalty &&
+          len_i < INT_MAX && len_j < INT_MAX &&
+          len_i + len_j + 2 <= SIZE_MAX / (3 * sizeof(score_t)));
 }
 
 // What a compact fill did
@@ -96,19 +120,20 @@ bool alignment_narrow_limit(const sub_table_t *table,
                             const scoring_t *scoring,
                             score_t min_score, size_t len_a,
                             int bits, score_t *limit);
+int alignment_lane_bits(const sub_table_t *table,
+                        const alignment_options_t *opts,
+                        const scoring_t *scoring, score_t min, size_t len_i,
+                        score_t need, bool allow8, score_t *limit);
 void alignment_lanes(alignment_block_t *tmpl,
                      const alignment_options_t *o,
                      const scoring_t *scoring, size_t len_a);
+// whole: a fill across the whole width (false: one strip of a band)
 size_t alignment_fill_threads(const alignment_options_t *o,
-                              size_t len_i, size_t len_j, bool band);
+                              size_t width, size_t rows, bool whole);
 bool alignment_fill_blocks(alignment_block_t *tmpl);
 
 // Defined in alignment_fill.c
 bool alignment_trace_capacity(aligner_t *aligner, size_t cells);
-// Room for cells with some to spare: the next power of two up to 1M cells,
-// then a quarter more (doubling a multi-gigabyte buffer would fail where
-// a little more fits)
-size_t alignment_grow_capacity(size_t cells);
 
 // Defined in alignment_band.c
 void trace_strips_free(void *ts_ptr);
@@ -126,6 +151,11 @@ void trace_strips_free(void *ts_ptr);
 // Defined in alignment_fill.c
 score_t alignment_min_score(const scoring_t *scoring, char is_sw);
 void* alignment_alloc_matrix(size_t mem);
+// Room for cells with some to spare: the next power of two up to 1M cells,
+// then a quarter more (doubling a multi-gigabyte buffer would fail where
+// a little more fits). Used by every build: alignment.c grows the score
+// matrices with it
+size_t alignment_grow_capacity(size_t cells);
 bool alignment_fill_matrices(aligner_t *aligner, char is_sw);
 fill_result_t alignment_fill_trace(aligner_t *aligner, char is_sw);
 

@@ -271,6 +271,14 @@ static void alignment_band_narrow(score_t *const row[3],
   *hi = MIN2(*hi, nhi);
 }
 
+// Rows per strip of a band of cols columns per row: the setting, or a
+// quarter of the columns and at least 64
+static size_t band_strip_rows(const alignment_options_t *o, double cols)
+{
+  return o->band_strip_rows ? o->band_strip_rows
+                            : MAX2(64, (size_t)(cols / 4));
+}
+
 // Compact Needleman-Wunsch fill of only the cells near the main diagonals.
 // A path through a cell far from them needs many gap characters, which caps
 // its score (alignment_band_width()). The rows run in strips, each over
@@ -303,8 +311,7 @@ fill_result_t alignment_fill_banded(aligner_t *aligner,
   if(!aligner->opts.band || scoring->gap_open > 0 ||
      scoring->gap_extend > 0) return FILL_SKIPPED;
 
-  score_t smax = 0;
-  for(i = 0; i < table->n * table->n; i++) smax = MAX2(smax, table->scores[i]);
+  const score_t smax = table->smax;
 
   // A band must cost under this much of the whole fill, whose difference-
   // encoded lanes (where they apply) take about 0.6 of the time per cell
@@ -321,8 +328,7 @@ fill_result_t alignment_fill_banded(aligner_t *aligner,
   if(full_threads <= 1.0) {
     const double min_cols = (double)(D < 0 ? -D : D) +
                             2.0 * (double)aligner->opts.band_min_width + 1.0;
-    const size_t min_strip = aligner->opts.band_strip_rows
-                             ? aligner->opts.band_strip_rows : 64;
+    const size_t min_strip = band_strip_rows(&aligner->opts, 0);
     if(min_cols + (double)min_strip >= pays * (double)len_i)
       return FILL_SKIPPED;
   }
@@ -353,9 +359,7 @@ fill_result_t alignment_fill_banded(aligner_t *aligner,
     // at least twice the columns per block, and its columns shared by as
     // many threads as the whole fill has
     const double gcols = (double)(D < 0 ? -D : D) + 2.0*need + 1;
-    const size_t gstrip = aligner->opts.band_strip_rows
-                          ? aligner->opts.band_strip_rows
-                          : MAX2(64, (size_t)(gcols / 4));
+    const size_t gstrip = band_strip_rows(&aligner->opts, gcols);
     const double one = gcols + (double)gstrip;
     const double several =
       MAX2(2.0 * (double)aligner->opts.band_block_min_cols,
@@ -386,9 +390,7 @@ fill_result_t alignment_fill_banded(aligner_t *aligner,
     // Columns per row, plus the strip height the window grows by
     if(bw >= len_i) break;
     const double cols = (double)(D < 0 ? -D : D) + 2.0*bw + 1;
-    size_t strip = aligner->opts.band_strip_rows
-                   ? aligner->opts.band_strip_rows
-                   : MAX2(64, (size_t)(cols / 4));
+    size_t strip = band_strip_rows(&aligner->opts, cols);
     double keep_max = (double)aligner->opts.band_keep_max_cells;
     if(keep_max == 0) {
       static atomic_size_t cached_keep_max = 0;

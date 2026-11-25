@@ -126,6 +126,8 @@ typedef struct
   size_t n; // number of distinct bytes
   int *scores; // scores[code_b*n + code_a]
   bool *is_match;
+  score_t smax, smin; // the highest score in the table (at least 0) and the
+                      // lowest (at most 0)
 } sub_table_t;
 
 // Matrix names
@@ -381,6 +383,15 @@ size_t alignment_wfa_default_budget(size_t len_a, size_t len_b);
 // and smith_waterman_* counterparts) as they are now
 void alignment_options_default(alignment_options_t *opts);
 
+// The settings an alignment runs under: a copy of options, or the defaults
+// when options is NULL
+static inline void alignment_options_resolve(const alignment_options_t *options,
+                                             alignment_options_t *opts)
+{
+  if(options != NULL) *opts = *options;
+  else alignment_options_default(opts);
+}
+
 // Half-width w of the band a global alignment of m x n needs for a path
 // scoring at least `lower`: such a path stays on diagonals from
 // MIN2(0, n-m) - w to MAX2(0, n-m) + w. smax is the best substitution score
@@ -461,14 +472,7 @@ void alignment_reverse_move(enum Matrix *curr_matrix, score_t *curr_score,
 void alignment_print_matrices(const aligner_t *aligner);
 void alignment_fprint_matrices(FILE *fp, const aligner_t *aligner);
 
-void alignment_colour_print_against(const char *alignment_a,
-                                    const char *alignment_b,
-                                    char case_sensitive);
-
-void alignment_print_spacer(const char* alignment_a, const char* alignment_b,
-                            const scoring_t* scoring);
-
-// The same, to out instead of stdout
+// Coloured alignments and |/* marker lines, to out
 void alignment_colour_fprint_against(FILE *out, const char *alignment_a,
                                      const char *alignment_b,
                                      char case_sensitive);

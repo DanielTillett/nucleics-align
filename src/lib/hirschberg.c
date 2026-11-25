@@ -146,7 +146,9 @@ static bool hb_myers(const hb_state_t *st, const char *a, size_t len_a,
   return true;
 }
 
-// As hb_myers(), with the banded phase only (declines on divergent pairs)
+#ifdef HB_STRIPED
+// As hb_myers(), with the banded phase only (declines on divergent pairs,
+// which the striped passes then take on several threads)
 static bool hb_myers_banded(const hb_state_t *st, const char *a, size_t len_a,
                             const char *b, size_t len_b, score_t *score)
 {
@@ -156,12 +158,15 @@ static bool hb_myers_banded(const hb_state_t *st, const char *a, size_t len_a,
   __atomic_add_fetch(&hirschberg_myers_scores, 1, __ATOMIC_RELAXED);
   return true;
 }
+#endif
 
-bool hirschberg_simd_available(void)
+bool hirschberg_simd_available(const alignment_options_t *options)
 {
 #ifdef HB_STRIPED
-  return alignment_striped_enabled && HB_FAST_VMAX();
+  const bool striped = options ? options->striped : alignment_striped_enabled;
+  return striped && HB_FAST_VMAX();
 #else
+  (void)options;
   return false;
 #endif
 }
@@ -416,8 +421,7 @@ static bool hb_state_init(hb_state_t *st, const char *a, const char *b,
 {
   memset(st, 0, sizeof(*st));
   st->scoring = scoring;
-  if(opts != NULL) st->opts = *opts;
-  else alignment_options_default(&st->opts);
+  alignment_options_resolve(opts, &st->opts);
 
   score_t *rows = aln_malloc(4 * (len_b+1) * sizeof(score_t));
   st->cc = rows;
@@ -458,13 +462,8 @@ static bool hb_state_init(hb_state_t *st, const char *a, const char *b,
   // conservative bound use the scalar passes
   {
     double gap = HB_DABS(scoring->gap_open) + HB_DABS(scoring->gap_extend);
-    double sub = 0;
-    size_t c;
-    st->smax = 0;
-    for(c = 0; c < st->table.n * st->table.n; c++) {
-      sub = MAX2(sub, HB_DABS(st->table.scores[c]));
-      st->smax = MAX2(st->smax, st->table.scores[c]);
-    }
+    st->smax = st->table.smax;
+    double sub = MAX2((double)st->smax, -(double)st->table.smin);
     double steps = (double)len_a + (double)len_b + ALN_VL + 2;
     st->simd_ok = steps * (gap + sub) < (double)(1 << 27);
 
@@ -529,15 +528,15 @@ bool hirschberg_align2(const char *a, const char *b,
   return hirschberg_align_opts(a, b, len_a, len_b, scoring, NULL, result);
 }
 
-// Exits if out of memory (ALN_ERR_NOMEM)
-static bool hb_exit_nomem(aln_status_t status)
+// The unchecked aligners' result: true for ALN_OK, false for
+// ALN_ERR_UNSUPPORTED (the scoring, or penalties too large), and the
+// error printed and the program ended for anything else
+static bool hb_unchecked(aln_status_t status, const aln_error_t *e)
 {
-  if(status == ALN_ERR_NOMEM) {
-    aln_error_t e = {status, 0, 0};
-    alignment_fprint_error(stderr, &e);
-    exit(EXIT_FAILURE);
-  }
-  return status == ALN_OK;
+  if(status == ALN_OK) return true;
+  if(status == ALN_ERR_UNSUPPORTED) return false;
+  alignment_fprint_error(stderr, e);
+  exit(EXIT_FAILURE);
 }
 
 // hirschberg_align_opts(), returning ALN_ERR_UNSUPPORTED where it returns
@@ -592,7 +591,9 @@ bool hirschberg_align_opts(const char *a, const char *b,
                            const alignment_options_t *opts,
                            alignment_t *result)
 {
-  return hb_exit_nomem(hb_align(a, b, len_a, len_b, scoring, opts, result));
+  aln_error_t e = {ALN_OK, 0, 0};
+  return hb_unchecked(hirschberg_align_checked(a, b, len_a, len_b, scoring,
+                                               opts, result, &e), &e);
 }
 
 bool hirschberg_score(const char *a, const char *b,
@@ -665,7 +666,9 @@ bool hirschberg_score_opts(const char *a, const char *b,
                            const scoring_t *scoring,
                            const alignment_options_t *opts, score_t *score)
 {
-  return hb_exit_nomem(hb_score(a, b, len_a, len_b, scoring, opts, score));
+  aln_error_t e = {ALN_OK, 0, 0};
+  return hb_unchecked(hirschberg_score_checked(a, b, len_a, len_b, scoring,
+                                               opts, score, &e), &e);
 }
 
 // hirschberg_score_opts(), returning ALN_ERR_UNSUPPORTED where it returns

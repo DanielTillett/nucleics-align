@@ -5,8 +5,8 @@
  * fresh process with exact peak RSS (MiB) and zero cross-run allocator effects.
  *
  * Build (from repo root after `make`):
- *   cc -O3 benchmarks/ablation.c -I src -I libs -L src -L libs/string_buffer \
- *      -lalign -lstrbuf -lpthread -lz -o /tmp/ablation
+ *   cc -O3 benchmarks/ablation.c -I include -I src/lib -L src \
+ *      -lalign -lpthread -o /tmp/ablation
  * Usage:
  *   /tmp/ablation <pair.fa> <mode|all> [threads]
  */

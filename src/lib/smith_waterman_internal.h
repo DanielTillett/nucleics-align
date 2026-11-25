@@ -89,6 +89,60 @@ struct sw_aligner_t {
   alignment_t fast_res;
 };
 
+// One step back along traceback bytes, shared by the walks over a whole
+// traced matrix (_sw_reverse_move()) and over a strip (sw_follow_strips()):
+// from cell (x, y) in matrix *m, whose byte says the step goes to matrix
+// next, to the predecessor, taking the step's score off *score. Exits on
+// ALN_TRACE_NONE (a byte with no predecessor: a program error), naming
+// where
+static inline void sw_trace_step(const sub_table_t *t,
+                                 const scoring_t *scoring,
+                                 const char *a, const char *b, int next,
+                                 enum Matrix *m, size_t *x, size_t *y,
+                                 score_t *score, const char *where)
+{
+  const score_t open = scoring->gap_open + scoring->gap_extend;
+  const score_t ext = scoring->gap_extend;
+  score_t step;
+  if(next == ALN_TRACE_NONE) {
+    fprintf(stderr, "Program error: traceback fail (%s)\n", where);
+    exit(EXIT_FAILURE);
+  }
+  if(*m == MATCH)
+    step = t->scores[t->code[(unsigned char)b[*y-1]] * t->n +
+                     t->code[(unsigned char)a[*x-1]]];
+  else if(*m == GAP_A) step = next == GAP_A ? ext : open;
+  else step = next == GAP_B ? ext : open;
+  if(*m != GAP_A) (*x)--;
+  if(*m != GAP_B) (*y)--;
+  *m = (enum Matrix)next;
+  *score -= step;
+}
+
+// Describe the sequences as a fill of them would, for a result found
+// without one: the best cell (best_index in a matrix of (len_a + 1)
+// columns) scoring best, found in the rectangle at (off_a, off_b)
+static inline void sw_describe(sw_aligner_t *sw, const scoring_t *scoring,
+                               const char *a, const char *b,
+                               size_t len_a, size_t len_b,
+                               score_t best, size_t best_index,
+                               size_t off_a, size_t off_b)
+{
+  aligner_t *aligner = &sw->aligner;
+  aligner->scoring = scoring;
+  aligner->seq_a = a;
+  aligner->seq_b = b;
+  aligner->score_width = len_a + 1;
+  aligner->score_height = len_b + 1;
+  aligner->traced = true;
+  aligner->trace_banded = false;
+  aligner->best_score = best;
+  aligner->best_index = best_index;
+  sw->rect = true;
+  sw->off_a = off_a;
+  sw->off_b = off_b;
+}
+
 // Defined in smith_waterman_rect.c
 aln_status_t sw_strips_fill(sw_aligner_t *sw, size_t x0, size_t y0,
                             size_t rx, size_t ry, const scoring_t *scoring,

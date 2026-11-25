@@ -20,6 +20,54 @@ fixes listed under [Changes to output](#changes-to-output).
   1 Mb at 1%: 6.2 -> 3.1 s on 8 threads with a third of the CPU; 200 kb at
   1%: 0.62 -> 0.30 s and 657 -> 128 MB (same alignments)
 
+### Fixed
+
+- Builds without the SIMD kernels (a compiler without
+  `__builtin_shufflevector`, or `-DALN_NO_SIMD`, new) compile and link
+  again: `alignment_grow_capacity()` and the `ALN_TARGET_CLONES` fallback
+  were declared only under `ALN_STRIPED`
+- `hirschberg_simd_available()` takes the options to answer for (NULL: the
+  defaults); it read the process-wide `alignment_striped_enabled` whatever
+  the aligner's options said
+- The unchecked aligners `needleman_wunsch_align()`,
+  `hirschberg_align_opts()` and `hirschberg_score_opts()` are now the
+  `*_checked()` forms plus the printed error and `exit()`, so they make
+  the same checks: the linear-space pair gains the sequence-length guard,
+  and Needleman-Wunsch reports a pair the scoring lacks with the aligners'
+  message instead of `scoring_lookup()`'s. `smith_waterman_align()` keeps
+  skipping the checks on purpose: the test suite compares the full,
+  compact and rectangle fills through it under gaps scoring 0 or above,
+  which the checked form refuses
+- Perl: a tool still running at a read timeout is terminated before it is
+  waited for (the modules could hang in `waitpid`), and a write to a tool
+  that has gone fails quietly instead of `SIGPIPE` ending the caller
+- `benchmarks/compare_harness.sh`, `journal_v130_extra.sh`, `ablation.c`
+  and `percore.c` built against the `libs/` tree removed in v2.0
+- The Makefile probed the compiler for `-falign-loops` once per recipe
+  (`OPT` is now `:=`); `.gitignore` covers the `src/lib` and `src/cli`
+  dependency files
+- README: the 1 Mb 0.1% `--wfa` figure now matches `docs/performance.md`
+  (160.7 ms / 11 MiB)
+
+### Changed
+
+- `NA_VERSION_STR` is built from `NA_VERSION_MAJOR/MINOR/PATCH`, and
+  `NA_VERSION_NUMBER` (0x020000) is new, for `#if` checks. The unused
+  `NUCLEICS_ALIGN_VERSION` and `NUCLEICS_ALIGN_VERSION_STR` macros are gone,
+  as are the unused `scoring_print()`, `alignment_colour_print_against()`
+  and `alignment_print_spacer()` (the `f`-variants taking a `FILE *` stay)
+- `scoring_try_lookup()` (new) returns false for a pair the scoring does not
+  cover; `scoring_lookup()` wraps it and exits as before. The public API no
+  longer reaches an `exit()` through `na_scoring_lookup()` or
+  `na_score_alignment()`
+- Internal tidying with no change in output: `sub_table_t` records its
+  highest and lowest score (`smax`, `smin`) once, in place of five loops;
+  `alignment_options_resolve()`, `alignment_lane_bits()`,
+  `alignment_striped_applies()`, `band_strip_rows()`, `sw_trace_step()` and
+  `sw_describe()` replace three to five copies each; the scoring-text
+  parsers share one failure path; the three `na_*` aligner calls share one
+  argument check
+
 ## 1.3.0 - 24 Nov 2026
 
 ### Added

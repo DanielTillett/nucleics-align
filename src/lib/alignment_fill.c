@@ -109,9 +109,7 @@ bool alignment_fill_matrices(aligner_t *aligner, char is_sw)
   // The striped fill handles the uniform recurrence only; options that
   // change it for particular cells use the scalar loop below (an empty
   // sequence has no cells past the edges just set: nothing to fill)
-  if(aligner->opts.striped && len_i > 0 && len_j > 0 &&
-     !scoring->no_end_gap_penalty && !scoring->no_mismatches &&
-     !no_gaps_in_a && !no_gaps_in_b)
+  if(alignment_striped_applies(&aligner->opts, scoring, len_i, len_j, false))
   {
     alignment_block_t tmpl = {
       .aligner = aligner, .table = &table, .min = min,
@@ -235,9 +233,7 @@ void* alignment_alloc_matrix(size_t mem)
   return aln_malloc(mem);
 }
 
-#ifdef ALN_STRIPED
-// Room for the traceback bytes of `cells` cells. Returns false if out of
-// memory
+// Cells of room for `cells` cells, with some to spare
 size_t alignment_grow_capacity(size_t cells)
 {
   // Doubling a multi-gigabyte buffer (e.g. 2.5 GiB -> 4 GiB) would fail
@@ -246,6 +242,9 @@ size_t alignment_grow_capacity(size_t cells)
          : (cells <= SIZE_MAX - cells / 4 ? cells + cells / 4 : cells);
 }
 
+#ifdef ALN_STRIPED
+// Room for the traceback bytes of `cells` cells. Returns false if out of
+// memory
 bool alignment_trace_capacity(aligner_t *aligner, size_t cells)
 {
   if(aligner->trace_capacity < cells) {
@@ -277,14 +276,8 @@ fill_result_t alignment_fill_trace(aligner_t *aligner, char is_sw)
   const size_t len_i = w-1, len_j = h-1;
   size_t i, m;
 
-  bool no_gaps_in_a, no_gaps_in_b;
-  alignment_no_gaps(scoring, len_i, len_j, &no_gaps_in_a, &no_gaps_in_b);
-  if(!aligner->opts.striped || len_i == 0 || len_j == 0 ||
-     len_i >= INT_MAX || len_j >= INT_MAX ||
-     w + h > SIZE_MAX / (3 * sizeof(score_t)) ||
-     scoring->no_start_gap_penalty ||
-     scoring->no_end_gap_penalty || scoring->no_mismatches ||
-     no_gaps_in_a || no_gaps_in_b) return FILL_SKIPPED;
+  if(!alignment_striped_applies(&aligner->opts, scoring, len_i, len_j, true))
+    return FILL_SKIPPED;
 
   const score_t min = alignment_min_score(scoring, is_sw);
   if(!is_sw) {

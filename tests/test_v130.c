@@ -9,9 +9,18 @@
 #include <stdlib.h>
 #include <string.h>
 #include "alignment.h"
+#include "alignment_simd.h" // ALN_STRIPED
 #include "needleman_wunsch.h"
 #include "smith_waterman.h"
 #include "hirschberg.h"
+
+// Checks on how a fill was made that hold only where the striped fill
+// exists (the scalar-only build, -DALN_NO_SIMD, still checks the results)
+#ifdef ALN_STRIPED
+#  define CHECK_STRIPED(x) CHECK(x)
+#else
+#  define CHECK_STRIPED(x) ((void)0)
+#endif
 
 // Always evaluated (assert() would vanish, calls and all, under NDEBUG)
 #define CHECK(cond) do { \
@@ -277,7 +286,7 @@ static void test_strip_col0_and_striped_trace(void)
   nw2->compact = true;  nw2->options = &o_band;
   CHECK(needleman_wunsch_align_checked(ta, tb, 35, 35, &sc, nw1, r1, NULL) == ALN_OK);
   CHECK(needleman_wunsch_align_checked(ta, tb, 35, 35, &sc, nw2, r2, NULL) == ALN_OK);
-  CHECK(nw2->trace_banded);
+  CHECK_STRIPED(nw2->trace_banded); // bands need the striped fill
   CHECK(r1->score == r2->score);
   CHECK(strcmp(r1->result_a, r2->result_a) == 0);
   CHECK(strcmp(r1->result_b, r2->result_b) == 0);
@@ -306,12 +315,12 @@ static void test_strip_col0_and_striped_trace(void)
     CHECK(needleman_wunsch_align_checked(a, b, la, lb, &sc_dna, nw1, r1, NULL) == ALN_OK);
     nw2->options = &o_diff1;
     CHECK(needleman_wunsch_align_checked(a, b, la, lb, &sc_dna, nw2, r2, NULL) == ALN_OK);
-    CHECK(nw2->trace_striped);
+    CHECK_STRIPED(nw2->trace_striped);
     size_t dna_vl = nw2->trace_vl;
     CHECK(r1->score == r2->score && strcmp(r1->result_a, r2->result_a) == 0 && strcmp(r1->result_b, r2->result_b) == 0);
     nw2->options = &o_diff4;
     CHECK(needleman_wunsch_align_checked(a, b, la, lb, &sc_dna, nw2, r2, NULL) == ALN_OK);
-    CHECK(nw2->trace_striped && nw2->trace_vl == dna_vl);
+    CHECK_STRIPED(nw2->trace_striped && nw2->trace_vl == dna_vl);
     CHECK(r1->score == r2->score && strcmp(r1->result_a, r2->result_a) == 0 && strcmp(r1->result_b, r2->result_b) == 0);
     // Protein BLOSUM62 diff16 (ensure 'W' is present so score range forces 16-bit lanes)
     for(size_t i = 0; i < la; i++) a[i] = aa20[next_rand() % 20];
@@ -321,11 +330,11 @@ static void test_strip_col0_and_striped_trace(void)
     CHECK(needleman_wunsch_align_checked(a, b, la, lb, &sc_b62, nw1, r1, NULL) == ALN_OK);
     nw2->options = &o_diff1;
     CHECK(needleman_wunsch_align_checked(a, b, la, lb, &sc_b62, nw2, r2, NULL) == ALN_OK);
-    CHECK(nw2->trace_striped && nw2->trace_vl * 2 == dna_vl);
+    CHECK_STRIPED(nw2->trace_striped && nw2->trace_vl * 2 == dna_vl);
     CHECK(r1->score == r2->score && strcmp(r1->result_a, r2->result_a) == 0 && strcmp(r1->result_b, r2->result_b) == 0);
     nw2->options = &o_diff4;
     CHECK(needleman_wunsch_align_checked(a, b, la, lb, &sc_b62, nw2, r2, NULL) == ALN_OK);
-    CHECK(nw2->trace_striped && nw2->trace_vl * 2 == dna_vl);
+    CHECK_STRIPED(nw2->trace_striped && nw2->trace_vl * 2 == dna_vl);
     CHECK(r1->score == r2->score && strcmp(r1->result_a, r2->result_a) == 0 && strcmp(r1->result_b, r2->result_b) == 0);
     free(a); free(b);
   }

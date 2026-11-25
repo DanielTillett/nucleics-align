@@ -142,17 +142,3 @@ void alignment_fprint_spacer(FILE *out, const char* alignment_a,
     }
   }
 }
-
-void alignment_colour_print_against(const char *alignment_a,
-                                    const char *alignment_b,
-                                    char case_sensitive)
-{
-  alignment_colour_fprint_against(stdout, alignment_a, alignment_b,
-                                  case_sensitive);
-}
-
-void alignment_print_spacer(const char* alignment_a, const char* alignment_b,
-                            const scoring_t* scoring)
-{
-  alignment_fprint_spacer(stdout, alignment_a, alignment_b, scoring);
-}

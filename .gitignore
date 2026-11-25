@@ -1,10 +1,12 @@
 *.o
 *.a
+*.d
 bin/
-libs/
 examples/nw_example
 examples/sw_example
 examples/nw_cpp
 examples/sw_cpp
-src/*.d
+examples/*.dSYM
 src/.build-flags
+benchmarks/real_data/
+__pycache__/
