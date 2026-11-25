@@ -610,6 +610,11 @@ static void hb_pass_banded(hb_state_t *st, const char *a, ptrdiff_t astep,
     hb_top_t top = {top_h, top_d, i0 == 0 ? t0 : top_h[0], c0 > 0, false};
     hb_pass_striped(st, a + (ptrdiff_t)i0 * astep, astep, hs, b, bstep,
                     c0, jr - c0, t0, top_h, top_d, 1, buf, &top, threads);
+    // Out of memory in a strip: the ones below would build on stale rows
+    if(__atomic_load_n(&st->nomem, __ATOMIC_RELAXED)) {
+      free(top_h);
+      return;
+    }
   }
 
   for(j = 0; j <= n; j++) {

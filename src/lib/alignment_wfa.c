@@ -51,10 +51,13 @@ typedef struct {
 typedef struct { wavefront_t m, i, d; } wf_slot_t;
 
 // Reusable all-WFA_NONE buffer so wf_compute_interior can run vectorised
-// even when one or more source wavefronts are empty
+// even when one or more source wavefronts are empty. Shared by every step
+// of one alignment, it also records whether any of them ran out of memory
+// (the steps otherwise just report failure, as they do past the budget)
 typedef struct {
   int32_t *buf;
   size_t cap;
+  bool nomem;
 } wf_null_t;
 
 static bool wf_null_ensure(wf_null_t *nl, size_t need)
@@ -153,10 +156,12 @@ typedef struct {
 } wfa_pair_t;
 
 // Set pair up for seq_a and seq_b, or return false where the scoring is not
-// one match and one mismatch score with gap penalties (or out of memory)
+// one match and one mismatch score with gap penalties, or out of memory
+// (*nomem set then)
 static bool wfa_setup(const sub_table_t *table, const scoring_t *scoring,
                       const char *seq_a, size_t len_a,
-                      const char *seq_b, size_t len_b, wfa_pair_t *pair)
+                      const char *seq_b, size_t len_b, wfa_pair_t *pair,
+                      bool *nomem)
 {
   const size_t n = table->n;
   size_t i, j;
@@ -225,7 +230,7 @@ static bool wfa_setup(const sub_table_t *table, const scoring_t *scoring,
   pair->m = (int32_t)len_a;
   pair->nb = (int32_t)len_b;
   pair->a = aln_malloc(len_a + len_b + 64);
-  if(pair->a == NULL) return false;
+  if(pair->a == NULL) { *nomem = true; return false; }
   pair->b = pair->a + len_a + 32;
   for(i = 0; i < len_a; i++)
     pair->a[i] = cls[table->code[(unsigned char)seq_a[i]]];
@@ -240,10 +245,11 @@ static bool wfa_setup(const sub_table_t *table, const scoring_t *scoring,
 // cell. With keep, every score's wavefronts are kept (slots[s], for the
 // traceback); otherwise only the last px or po + pe scores', in a ring.
 // Returns the least penalty, or -1 past budget diagonal updates (cells
-// kept, with keep) or if out of memory. *slots and *nslots hold what to
-// free (wfa_free())
+// kept, with keep) or if out of memory (*nomem set then). *slots and
+// *nslots hold what to free (wfa_free())
 static long long wfa_fill(const wfa_pair_t *pair, size_t budget, bool keep,
-                          wf_slot_t **slots_out, size_t *nslots_out)
+                          wf_slot_t **slots_out, size_t *nslots_out,
+                          bool *nomem)
 {
   const int32_t m = pair->m, nb = pair->nb, kend = nb - m;
   const long long px = pair->px, po = pair->po, pe = pair->pe;
@@ -256,6 +262,7 @@ static long long wfa_fill(const wfa_pair_t *pair, size_t budget, bool keep,
   if(!keep && slots == NULL) {
     *slots_out = NULL;
     *nslots_out = 0;
+    *nomem = true;
     return -1;
   }
   *slots_out = slots;
@@ -271,7 +278,7 @@ static long long wfa_fill(const wfa_pair_t *pair, size_t budget, bool keep,
       if((size_t)s >= nslots) {
         size_t grow = nslots ? 2 * nslots : 64;
         wf_slot_t *g = aln_realloc(slots, grow * sizeof(wf_slot_t));
-        if(g == NULL) break;
+        if(g == NULL) { *nomem = true; break; }
         slots = g;
         for(i = nslots; i < grow; i++)
           slots[i].m = slots[i].i = slots[i].d = none;
@@ -288,7 +295,7 @@ static long long wfa_fill(const wfa_pair_t *pair, size_t budget, bool keep,
     int32_t lo, hi, k;
 
     if(s == 0) {
-      if(!wf_reserve(&cur->m, 0, 0)) break;
+      if(!wf_reserve(&cur->m, 0, 0)) { *nomem = true; break; }
       cur->m.off[0] = wf_extend(pair->a, pair->b, 0, 0);
       cur->i.lo = cur->d.lo = 1;
       cur->i.hi = cur->d.hi = 0;
@@ -328,7 +335,7 @@ static long long wfa_fill(const wfa_pair_t *pair, size_t budget, bool keep,
       work += (size_t)(hi - lo + 1);
       if(work > budget) break;
       if(!wf_reserve(&cur->m, lo, hi) || !wf_reserve(&cur->i, lo, hi) ||
-         !wf_reserve(&cur->d, lo, hi)) break;
+         !wf_reserve(&cur->d, lo, hi)) { *nomem = true; break; }
       for(k = lo; k <= hi; k++) {
         // Insertion (a letter of b): from k-1, one along b
         int32_t vi = wf_get(mo, k - 1), ei = wf_get(ie, k - 1);
@@ -394,11 +401,13 @@ bool alignment_wfa_score(const sub_table_t *table, const scoring_t *scoring,
                          size_t budget, score_t *score)
 {
   wfa_pair_t pair;
-  if(!wfa_setup(table, scoring, seq_a, len_a, seq_b, len_b, &pair))
+  bool nomem = false; // scored or not either way: the caller falls back
+  if(!wfa_setup(table, scoring, seq_a, len_a, seq_b, len_b, &pair, &nomem))
     return false;
   wf_slot_t *slots;
   size_t nslots;
-  const long long penalty = wfa_fill(&pair, budget, false, &slots, &nslots);
+  const long long penalty = wfa_fill(&pair, budget, false, &slots, &nslots,
+                                     &nomem);
   wfa_free(slots, nslots);
   free(pair.a);
   return penalty >= 0 && wfa_best(&pair, penalty, score);
@@ -807,7 +816,7 @@ static size_t biwfa_base(const uint8_t *a, const char *sa, int32_t m,
     if((size_t)s >= nslots) {
       size_t grow = nslots ? 2 * nslots : 64;
       wf_slot_t *g = aln_realloc(slots, grow * sizeof(wf_slot_t));
-      if(g == NULL) break;
+      if(g == NULL) { null_wf->nomem = true; break; }
       slots = g;
       for(i = nslots; i < grow; i++)
         slots[i].m = slots[i].i = slots[i].d = none;
@@ -815,7 +824,8 @@ static size_t biwfa_base(const uint8_t *a, const char *sa, int32_t m,
     }
     size_t w = wf_step(a, m, b, nb, px, po, pe, s0, slots, 0, true,
                        padded, null_wf, s, NULL);
-    if(w == SIZE_MAX || w > *budget_left) break;
+    if(w == SIZE_MAX) { null_wf->nomem = true; break; }
+    if(w > *budget_left) break;
     *budget_left -= w;
     const wf_slot_t *cur = &slots[s];
     int32_t end_h = s1 == WFA_M ? wf_get(&cur->m, kend) :
@@ -975,7 +985,12 @@ static size_t biwfa_rec(const uint8_t *a, const uint8_t *ra, const char *sa, int
   const size_t ring = (size_t)(px > po + pe ? px : po + pe) + 1;
   wf_slot_t *fwd = aln_calloc(ring, sizeof(wf_slot_t));
   wf_slot_t *rev = aln_calloc(ring, sizeof(wf_slot_t));
-  if(fwd == NULL || rev == NULL) { free(fwd); free(rev); return 0; }
+  if(fwd == NULL || rev == NULL) {
+    free(fwd);
+    free(rev);
+    null_wf->nomem = true;
+    return 0;
+  }
   const wavefront_t none = {1, 0, 0, NULL, NULL};
   size_t i;
   for(i = 0; i < ring; i++) {
@@ -995,6 +1010,7 @@ static size_t biwfa_rec(const uint8_t *a, const uint8_t *ra, const char *sa, int
     sf++;
     size_t w = wf_step(a, m, b, nb, px, po, pe, s0, fwd, ring, false,
                        fwd_pad, null_wf, sf, &max_hf);
+    if(w == SIZE_MAX) null_wf->nomem = true;
     if(w == SIZE_MAX || w > *budget_left) { ok = false; break; }
     *budget_left -= w;
     if(w == 0) { if(++empty_f >= ring) { ok = false; break; } }
@@ -1011,6 +1027,7 @@ static size_t biwfa_rec(const uint8_t *a, const uint8_t *ra, const char *sa, int
     sr++;
     w = wf_step(ra, m, rb, nb, px, po, pe, s1, rev, ring, false,
                 rev_pad, null_wf, sr, &max_hr);
+    if(w == SIZE_MAX) null_wf->nomem = true;
     if(w == SIZE_MAX || w > *budget_left) { ok = false; break; }
     *budget_left -= w;
     if(w == 0) { if(++empty_r >= ring) { ok = false; break; } }
@@ -1056,16 +1073,19 @@ aln_status_t alignment_wfa_align(const sub_table_t *table,
                                  size_t budget, alignment_t *result)
 {
   wfa_pair_t pair;
-  if(!wfa_setup(table, scoring, seq_a, len_a, seq_b, len_b, &pair))
-    return ALN_ERR_UNSUPPORTED;
+  bool nomem = false;
+  if(!wfa_setup(table, scoring, seq_a, len_a, seq_b, len_b, &pair, &nomem))
+    return nomem ? ALN_ERR_NOMEM : ALN_ERR_UNSUPPORTED;
 
   if(len_a + len_b <= 2048) {
     wf_slot_t *slots;
     size_t nslots;
     aln_status_t status = ALN_ERR_UNSUPPORTED;
     score_t score;
-    const long long penalty = wfa_fill(&pair, budget, true, &slots, &nslots);
-    if(penalty >= 0 && wfa_best(&pair, penalty, &score)) {
+    const long long penalty = wfa_fill(&pair, budget, true, &slots, &nslots,
+                                       &nomem);
+    if(nomem) status = ALN_ERR_NOMEM;
+    else if(penalty >= 0 && wfa_best(&pair, penalty, &score)) {
       if(!alignment_reserve(result, len_a + len_b)) status = ALN_ERR_NOMEM;
       else {
         size_t n = wfa_trace(&pair, slots, penalty, seq_a, seq_b,
@@ -1108,7 +1128,7 @@ aln_status_t alignment_wfa_align(const sub_table_t *table,
   memset(ra + len_a, 0xFE, 32);
   memset(rb + len_b, 0xFF, 32);
 
-  wf_null_t null_wf = {NULL, 0};
+  wf_null_t null_wf = {NULL, 0, false};
   size_t budget_left = budget;
   long long penalty = -1;
   size_t n = biwfa_rec(pair.a, ra, seq_a, pair.m,
@@ -1119,9 +1139,10 @@ aln_status_t alignment_wfa_align(const sub_table_t *table,
                        &penalty);
   free(null_wf.buf);
   free(ra);
-  aln_status_t status = ALN_ERR_UNSUPPORTED;
+  aln_status_t status = null_wf.nomem ? ALN_ERR_NOMEM : ALN_ERR_UNSUPPORTED;
   score_t score;
-  if(n > 0 && penalty >= 0 && wfa_best(&pair, penalty, &score)) {
+  if(!null_wf.nomem && n > 0 && penalty >= 0 &&
+     wfa_best(&pair, penalty, &score)) {
     result->result_a[n] = result->result_b[n] = '\0';
     result->length = n;
     result->score = score;

@@ -77,10 +77,12 @@ static bool _nw_linear(const char *a, const char *b, size_t len_a,
 
 // By the wavefront algorithm, if the options ask (alignment_wfa_alignment)
 // and it applies: the scoring suits it and the pair is similar enough.
-// Returns true if that worked; otherwise the other aligners align it
-static bool _nw_wfa(const char *a, const char *b, size_t len_a, size_t len_b,
-                    const scoring_t *scoring, const nw_aligner_t *nw,
-                    alignment_t *result)
+// ALN_OK if that worked, ALN_ERR_NOMEM if it ran out of memory (the
+// matrices need more, so there is no point trying them), otherwise
+// ALN_ERR_UNSUPPORTED: the other aligners align it
+static aln_status_t _nw_wfa(const char *a, const char *b, size_t len_a,
+                            size_t len_b, const scoring_t *scoring,
+                            const nw_aligner_t *nw, alignment_t *result)
 {
   alignment_options_t defaults;
   const alignment_options_t *opts = nw->options;
@@ -91,27 +93,30 @@ static bool _nw_wfa(const char *a, const char *b, size_t len_a, size_t len_b,
   // (a pair the scoring lacks is left to the matrices, which report it)
   if(!opts->wfa_align ||
      !alignment_scoring_complete(scoring, a, len_a, b, len_b, NULL))
-    return false;
+    return ALN_ERR_UNSUPPORTED;
   sub_table_t table;
-  if(!sub_table_build(&table, scoring, a, len_a, b, len_b)) return false;
+  if(!sub_table_build(&table, scoring, a, len_a, b, len_b))
+    return ALN_ERR_NOMEM;
   size_t budget = opts->wfa_budget;
   if(budget == 0) {
     const size_t total = len_a <= SIZE_MAX - len_b ? len_a + len_b : SIZE_MAX;
     budget = total <= NW_WFA_MAX_CELLS / NW_WFA_PER_LETTER
              ? NW_WFA_PER_LETTER * total : NW_WFA_MAX_CELLS;
   }
-  const bool done = alignment_wfa_align(&table, scoring, a, len_a, b, len_b,
-                                        budget, result) == ALN_OK;
+  aln_status_t status = alignment_wfa_align(&table, scoring, a, len_a, b,
+                                            len_b, budget, result);
   sub_table_free(&table);
-  return done;
+  return status == ALN_OK || status == ALN_ERR_NOMEM ? status
+                                                     : ALN_ERR_UNSUPPORTED;
 }
 
 // A long pair (the longer sequence at least alignment_linear_above
 // letters): align in linear space, if the options ask and it supports the
-// scoring. Returns true if that worked; otherwise the matrices align it
-static bool _nw_long(const char *a, const char *b, size_t len_a,
-                     size_t len_b, const scoring_t *scoring,
-                     const nw_aligner_t *nw, alignment_t *result)
+// scoring. ALN_OK if that worked, ALN_ERR_NOMEM if it ran out of memory,
+// otherwise ALN_ERR_UNSUPPORTED: the matrices align it
+static aln_status_t _nw_long(const char *a, const char *b, size_t len_a,
+                             size_t len_b, const scoring_t *scoring,
+                             const nw_aligner_t *nw, alignment_t *result)
 {
   alignment_options_t defaults;
   const alignment_options_t *opts = nw->options;
@@ -119,9 +124,26 @@ static bool _nw_long(const char *a, const char *b, size_t len_a,
     alignment_options_default(&defaults);
     opts = &defaults;
   }
-  return opts->linear_above > 0 && MAX2(len_a, len_b) >= opts->linear_above &&
-         hirschberg_align_checked(a, b, len_a, len_b, scoring, opts, result,
-                                  NULL) == ALN_OK;
+  if(opts->linear_above == 0 || MAX2(len_a, len_b) < opts->linear_above)
+    return ALN_ERR_UNSUPPORTED;
+  aln_status_t status = hirschberg_align_checked(a, b, len_a, len_b, scoring,
+                                                 opts, result, NULL);
+  return status == ALN_OK || status == ALN_ERR_NOMEM ? status
+                                                     : ALN_ERR_UNSUPPORTED;
+}
+
+// The fast paths that go before the matrices: ALN_OK or ALN_ERR_NOMEM
+// settle it, ALN_ERR_UNSUPPORTED leaves it to the matrices
+static aln_status_t _nw_fast_paths(const char *a, const char *b,
+                                   size_t len_a, size_t len_b,
+                                   const scoring_t *scoring,
+                                   const nw_aligner_t *nw,
+                                   alignment_t *result)
+{
+  aln_status_t status = _nw_wfa(a, b, len_a, len_b, scoring, nw, result);
+  if(status == ALN_ERR_UNSUPPORTED)
+    status = _nw_long(a, b, len_a, len_b, scoring, nw, result);
+  return status;
 }
 
 static void _nw_finish(const nw_aligner_t *nw, alignment_t *result,
@@ -219,18 +241,14 @@ aln_status_t needleman_wunsch_align_checked(const char *a, const char *b,
 {
   aln_status_t status = alignment_check(scoring, a, len_a, b, len_b, false,
                                         err);
-  if(status == ALN_OK &&
-     (_nw_wfa(a, b, len_a, len_b, scoring, nw, result) ||
-      _nw_long(a, b, len_a, len_b, scoring, nw, result)))
-    return ALN_OK;
-  if(status == ALN_OK) {
+  if(status != ALN_OK) return status;
+  status = _nw_fast_paths(a, b, len_a, len_b, scoring, nw, result);
+  if(status == ALN_ERR_UNSUPPORTED) {
     status = _nw_align(a, b, len_a, len_b, scoring, nw, result);
-    if(err != NULL) err->status = status;
+    if(_nw_linear(a, b, len_a, len_b, scoring, nw, result, status))
+      status = ALN_OK;
   }
-  if(_nw_linear(a, b, len_a, len_b, scoring, nw, result, status)) {
-    status = ALN_OK;
-    if(err != NULL) err->status = status;
-  }
+  if(err != NULL) err->status = status;
   return status;
 }
 
@@ -239,12 +257,15 @@ void needleman_wunsch_align2(const char *a, const char *b,
                              const scoring_t *scoring,
                              nw_aligner_t *nw, alignment_t *result)
 {
+  // As needleman_wunsch_align_checked() without alignment_check(): a pair
+  // the scoring lacks ends the program from the table build instead
   aln_error_t e = {ALN_OK, 0, 0};
-  if(_nw_wfa(a, b, len_a, len_b, scoring, nw, result) ||
-     _nw_long(a, b, len_a, len_b, scoring, nw, result)) return;
-  e.status = _nw_align(a, b, len_a, len_b, scoring, nw, result);
-  if(_nw_linear(a, b, len_a, len_b, scoring, nw, result, e.status))
-    e.status = ALN_OK;
+  e.status = _nw_fast_paths(a, b, len_a, len_b, scoring, nw, result);
+  if(e.status == ALN_ERR_UNSUPPORTED) {
+    e.status = _nw_align(a, b, len_a, len_b, scoring, nw, result);
+    if(_nw_linear(a, b, len_a, len_b, scoring, nw, result, e.status))
+      e.status = ALN_OK;
+  }
   if(e.status != ALN_OK) {
     alignment_fprint_error(stderr, &e);
     exit(EXIT_FAILURE);

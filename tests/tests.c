@@ -2153,6 +2153,7 @@ void alignment_test_create_zero()
   alignment_ensure_capacity(result, 100);
   ASSERT(result->capacity >= 101);
   alignment_free(result);
+  alignment_free(NULL); // as free(NULL): nothing
 }
 
 // Write text to a temporary file and load it as a substitution matrix
@@ -2703,6 +2704,23 @@ void test_linear_above()
   ASSERT(strcmp(aln->result_a, mat->result_a) == 0 &&
          strcmp(aln->result_b, mat->result_b) == 0);
 
+  // Out of memory in linear space is reported, not retried with the
+  // matrices (which need far more)
+  opts.linear_above = la;
+  size_t k, nomem = 0;
+  for(k = 1; k <= 30; k++) {
+    aln_error_t e;
+    alignment_alloc_fail(k);
+    aln_status_t st = needleman_wunsch_align_checked(a, b, la, lb, &scoring,
+                                                     nw, aln, &e);
+    alignment_alloc_fail(0);
+    ASSERT(st == e.status && (st == ALN_OK || st == ALN_ERR_NOMEM));
+    if(st == ALN_OK)
+      ASSERT(strcmp(aln->result_a, lin->result_a) == 0); // linear space did it
+    nomem += st == ALN_ERR_NOMEM;
+  }
+  ASSERT(nomem > 0);
+
   // Free end gaps: linear space refuses them, so the matrices align it
   opts.linear_above = 1;
   scoring.no_end_gap_penalty = true;
@@ -2776,6 +2794,41 @@ void test_wfa_align()
   needleman_wunsch_align("MKTAYIAKQR", "MKTAHIAKQR", &scoring, nw, aln);
   ASSERT(aln->score == mat->score && strcmp(aln->result_a, mat->result_a) == 0);
   (void)used;
+
+  // Running out of memory is reported as that, never as "unsupported"
+  // (which would send the pair to the matrices), on both the short-pair
+  // and the bidirectional paths; and through needleman_wunsch_align_checked()
+  static char big_a[3001], big_b[6001];
+  scoring_system_default(&scoring);
+  sub_table_t table;
+  size_t k, nomem;
+  const size_t lens[] = {700, 3000};
+  for(i = 0; i < 2; i++) {
+    hb_rand_seq(big_a, lens[i], "acgt");
+    hb_mutate(big_b, big_a, 20, "acgt");
+    const size_t la = strlen(big_a), lb = strlen(big_b);
+    ASSERT(sub_table_build(&table, &scoring, big_a, la, big_b, lb));
+    for(k = 1, nomem = 0; k <= 60; k++) {
+      alignment_alloc_fail(k);
+      aln_status_t st = alignment_wfa_align(&table, &scoring, big_a, la,
+                                            big_b, lb, 50000000, aln);
+      alignment_alloc_fail(0);
+      ASSERT(st == ALN_OK || st == ALN_ERR_NOMEM);
+      nomem += st == ALN_ERR_NOMEM;
+    }
+    ASSERT(nomem > 0);
+    sub_table_free(&table);
+    for(k = 1, nomem = 0; k <= 60; k++) {
+      aln_error_t e;
+      alignment_alloc_fail(k);
+      aln_status_t st = needleman_wunsch_align_checked(big_a, big_b, la, lb,
+                                                       &scoring, nw, aln, &e);
+      alignment_alloc_fail(0);
+      ASSERT(st == e.status && (st == ALN_OK || st == ALN_ERR_NOMEM));
+      nomem += st == ALN_ERR_NOMEM;
+    }
+    ASSERT(nomem > 0);
+  }
 
   needleman_wunsch_free(nw);
   alignment_free(aln);

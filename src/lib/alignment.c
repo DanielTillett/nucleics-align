@@ -488,6 +488,7 @@ bool alignment_reserve(alignment_t* result, size_t strlength)
 
 void alignment_free(alignment_t* result)
 {
+  if(result == NULL) return;
   free(result->result_a);
   free(result->result_b);
   free(result);
