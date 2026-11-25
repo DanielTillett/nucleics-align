@@ -237,6 +237,9 @@ static void DN(alignment_fill_diff)(alignment_block_t *p)
     hfirst += MAX3((score_t)cm[0][0], (score_t)ca[0][0], (score_t)cb[0][0]);
     for(l = 0; l < ALN_D_VL; l++) hlane[l] += hend[l];
 
+    // Another block stopped (see alignment_kernel.inc): stop too
+    if(((y - p->y0) & (ALN_PUB_ROWS - 1)) == (ALN_PUB_ROWS - 1) &&
+       atomic_load_explicit(p->stop, memory_order_relaxed)) break;
     if(p->done != NULL && (((y - p->y0) & (ALN_PUB_ROWS - 1)) == (ALN_PUB_ROWS - 1) || y == p->y1))
       aln_publish_row(p->done, y);
 

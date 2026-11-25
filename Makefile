@@ -1,7 +1,11 @@
 ifdef DEBUG
 	OPT = -O0 -g -ggdb
 else
-	OPT = -O3
+	# -falign-functions=64: the striped kernels' speed moved by 12% with
+	# where unrelated edits happened to place them (measured: identical
+	# instruction counts, 33.5G vs 37.5G cycles on a 200 kb band at one
+	# thread, Zen 3); fixed alignment keeps that from drifting
+	OPT = -O3 -falign-functions=64
 endif
 
 # Build with sanitizers: make SANITIZE=1 test

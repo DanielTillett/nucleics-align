@@ -469,11 +469,44 @@ static bool _index_hits(sw_aligner_t *sw)
   for(s = max_score; s >= lo; s--) { count = starts[s]; starts[s] = total; total += count; }
   hist->num_of_hits = total;
 
-  // Column-major pass so ties are ordered by x, then y
-  for(x = 0; x < w; x++)
-    for(y = 0, pos = x; y < h; y++, pos += w)
-      if(scores[pos] >= lo)
-        hist->sorted_match_indices[starts[scores[pos]]++] = pos;
+  // Placed in column-major order, so ties are ordered by x, then y. A
+  // plain column-major walk of the row-major matrix touches a new cache
+  // line (and, on big matrices, a page) per cell; so the matrix is read a
+  // strip of 16 columns at a time, row by row (one line per row), the
+  // candidates of each column gathered, then placed column by column
+  enum { STRIP = 16 };
+  typedef struct { size_t pos; score_t s; } candidate_t;
+  candidate_t *gathered = h <= SIZE_MAX / STRIP / sizeof(candidate_t)
+                          ? aln_malloc(STRIP * h * sizeof(candidate_t)) : NULL;
+  if(gathered == NULL) {
+    // Out of memory for the gather: the slow walk needs none
+    for(x = 0; x < w; x++)
+      for(y = 0, pos = x; y < h; y++, pos += w)
+        if(scores[pos] >= lo)
+          hist->sorted_match_indices[starts[scores[pos]]++] = pos;
+  }
+  else {
+    size_t x0, i, j, n[STRIP];
+    for(x0 = 0; x0 < w; x0 += STRIP) {
+      const size_t xn = MIN2((size_t)STRIP, w - x0);
+      memset(n, 0, sizeof(n));
+      for(y = 0, pos = x0; y < h; y++, pos += w) {
+        const score_t *cell = scores + pos;
+        for(i = 0; i < xn; i++)
+          if(cell[i] >= lo) {
+            candidate_t *c = &gathered[i * h + n[i]++];
+            c->pos = pos + i;
+            c->s = cell[i];
+          }
+      }
+      for(i = 0; i < xn; i++)
+        for(j = 0; j < n[i]; j++) {
+          const candidate_t *c = &gathered[i * h + j];
+          hist->sorted_match_indices[starts[c->s]++] = c->pos;
+        }
+    }
+    free(gathered);
+  }
 
   free(starts);
   return true;

@@ -379,6 +379,11 @@ static void KN(alignment_fill_striped)(alignment_block_t *p)
         }
       }
     }
+    // Every ALN_PUB_ROWS rows, see whether another block has stopped (its
+    // narrow lanes overflowed, it gave up or ran out of memory): the fill
+    // is then discarded or redone, so stop too instead of filling on
+    if(((y - p->y0) & (ALN_PUB_ROWS - 1)) == (ALN_PUB_ROWS - 1) &&
+       atomic_load_explicit(p->stop, memory_order_relaxed)) break;
     if(p->done != NULL && (((y - p->y0) & (ALN_PUB_ROWS - 1)) == (ALN_PUB_ROWS - 1) || y == p->y1))
       aln_publish_row(p->done, y);
 
