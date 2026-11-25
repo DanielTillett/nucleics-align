@@ -486,6 +486,7 @@ static bool hb_state_init(hb_state_t *st, const char *a, const char *b,
     }
     st->pass_threads = cpus > 1 ? cpus / 2 : 1;
   }
+  if(st->pass_threads > ALN_MAX_THREADS) st->pass_threads = ALN_MAX_THREADS;
 
   st->vbuf = NULL;
   st->vbuf2 = NULL;

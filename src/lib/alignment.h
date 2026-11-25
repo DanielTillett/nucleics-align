@@ -35,9 +35,14 @@
 // smith_waterman_*_min_cells variables), which apply to any aligner
 // without options of its own; set options to use others, e.g. different
 // ones on different threads
+// The most threads a fill or pass is split over, whatever the options ask
+// (the command line tools refuse more)
+#define ALN_MAX_THREADS 4096
+
 typedef struct
 {
-  int max_threads; // full-matrix fills (0: half the CPUs)
+  int max_threads; // full-matrix fills (0: half the CPUs; at most
+                   // ALN_MAX_THREADS)
   bool striped, band, narrow, byte, diff;
   // Needleman-Wunsch too big for the matrices (too long, or out of memory):
   // align in linear space instead (see alignment_linear_fallback); and

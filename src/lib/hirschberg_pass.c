@@ -495,13 +495,17 @@ void hb_pass_striped(hb_state_t *st, const char *a, ptrdiff_t astep,
   size_t width = (n / nblocks) / unit * unit;
   size_t seg = (n - width * (nblocks-1) + ALN_VL - 1) / ALN_VL; // widest
   size_t bufsize = (3 + st->table.n) * seg * sizeof(vscore_t);
-  hb_block_args_t args[nblocks];
-  hb_boundary_t bounds[nblocks-1];
-  pthread_t thread_ids[nblocks];
-  bool started[nblocks];
+  // Per-block state on the heap: this runs on a pass thread, whose stack
+  // (512 KB on macOS) thousands of blocks would not fit
+  hb_block_args_t *args = aln_malloc(nblocks * sizeof(*args));
+  hb_boundary_t *bounds = aln_malloc((nblocks-1) * sizeof(*bounds));
+  pthread_t *thread_ids = aln_malloc(nblocks * sizeof(*thread_ids));
+  bool *started = aln_malloc(nblocks * sizeof(*started));
   void *bufs = aln_aligned_alloc(sizeof(vscore_t), bufsize * nblocks);
   score_t *edges = aln_malloc(2 * (nblocks-1) * (rows+1) * sizeof(score_t));
-  if(bufs == NULL || edges == NULL) {
+  if(args == NULL || bounds == NULL || thread_ids == NULL || started == NULL ||
+     bufs == NULL || edges == NULL) {
+    free(args); free(bounds); free(thread_ids); free(started);
     free(bufs);
     free(edges);
     hb_nomem(st);
@@ -513,22 +517,14 @@ void hb_pass_striped(hb_state_t *st, const char *a, ptrdiff_t astep,
     bounds[i].F = bounds[i].H + (rows+1);
     atomic_init(&bounds[i].done, 0);
     atomic_init(&bounds[i].waiters, 0);
-    if(pthread_mutex_init(&bounds[i].mu, NULL) != 0) {
+    const bool mu_ok = pthread_mutex_init(&bounds[i].mu, NULL) == 0;
+    if(!mu_ok || pthread_cond_init(&bounds[i].cv, NULL) != 0) {
+      if(mu_ok) pthread_mutex_destroy(&bounds[i].mu);
       for(size_t j = 0; j < i; j++) {
         pthread_cond_destroy(&bounds[j].cv);
         pthread_mutex_destroy(&bounds[j].mu);
       }
-      free(bufs);
-      free(edges);
-      hb_nomem(st);
-      return;
-    }
-    if(pthread_cond_init(&bounds[i].cv, NULL) != 0) {
-      pthread_mutex_destroy(&bounds[i].mu);
-      for(size_t j = 0; j < i; j++) {
-        pthread_cond_destroy(&bounds[j].cv);
-        pthread_mutex_destroy(&bounds[j].mu);
-      }
+      free(args); free(bounds); free(thread_ids); free(started);
       free(bufs);
       free(edges);
       hb_nomem(st);
@@ -560,6 +556,7 @@ void hb_pass_striped(hb_state_t *st, const char *a, ptrdiff_t astep,
     pthread_mutex_destroy(&bounds[i].mu);
   }
 
+  free(args); free(bounds); free(thread_ids); free(started);
   free(bufs);
   free(edges);
 }

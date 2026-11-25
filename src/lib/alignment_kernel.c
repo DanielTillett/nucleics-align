@@ -238,6 +238,7 @@ size_t alignment_fill_threads(const alignment_options_t *o,
     int cpus = alignment_online_cpus();
     threads = cpus > 1 ? cpus / 2 : 1;
   }
+  if(threads > ALN_MAX_THREADS) threads = ALN_MAX_THREADS;
   // At least one vector of columns per block, so no block is empty
   const size_t min_cols = MAX2(whole ? 2 * o->block_min_cols
                                      : o->block_min_cols, (size_t)ALN_VL);
@@ -266,10 +267,17 @@ bool alignment_fill_blocks(alignment_block_t *tmpl)
 
   // Blocks of equal width (a multiple of ALN_VL); the last takes the rest
   size_t width = (len_i / nblocks) / ALN_VL * ALN_VL;
-  alignment_block_t args[nblocks];
-  aln_done_t done[nblocks];
-  pthread_t thread_ids[nblocks];
-  bool started[nblocks];
+
+  // Per-block state on the heap: thousands of blocks would not fit a small
+  // thread stack (macOS gives threads 512 KB)
+  alignment_block_t *args = aln_malloc(nblocks * sizeof(*args));
+  aln_done_t *done = aln_malloc(nblocks * sizeof(*done));
+  pthread_t *thread_ids = aln_malloc(nblocks * sizeof(*thread_ids));
+  bool *started = aln_malloc(nblocks * sizeof(*started));
+  if(args == NULL || done == NULL || thread_ids == NULL || started == NULL) {
+    free(args); free(done); free(thread_ids); free(started);
+    return false;
+  }
 
   atomic_bool stop, nomem, gave_up;
   atomic_init(&stop, false);
@@ -284,7 +292,10 @@ bool alignment_fill_blocks(alignment_block_t *tmpl)
   if(tmpl->trace != NULL || tmpl->score_only) {
     if(h > SIZE_MAX / sizeof(score_t) / 3 / nblocks) cols = NULL;
     else cols = aln_malloc(nblocks * 3 * h * sizeof(score_t));
-    if(cols == NULL) return false;
+    if(cols == NULL) {
+      free(args); free(done); free(thread_ids); free(started);
+      return false;
+    }
   }
 
   for(i = 0; i < nblocks; i++) {
@@ -296,6 +307,7 @@ bool alignment_fill_blocks(alignment_block_t *tmpl)
         pthread_mutex_destroy(&done[j].mu);
       }
       free(cols);
+      free(args); free(done); free(thread_ids); free(started);
       return false;
     }
     if(pthread_cond_init(&done[i].cv, NULL) != 0) {
@@ -305,6 +317,7 @@ bool alignment_fill_blocks(alignment_block_t *tmpl)
         pthread_mutex_destroy(&done[j].mu);
       }
       free(cols);
+      free(args); free(done); free(thread_ids); free(started);
       return false;
     }
     alignment_block_t *b = &args[i];
@@ -344,14 +357,19 @@ bool alignment_fill_blocks(alignment_block_t *tmpl)
     pthread_cond_destroy(&done[i].cv);
     pthread_mutex_destroy(&done[i].mu);
   }
+  free(done);
+  free(thread_ids);
+  free(started);
 
   if(atomic_load(&nomem)) {
     free(cols);
+    free(args);
     return false;
   }
   tmpl->given_up = atomic_load(&gave_up);
   if(tmpl->given_up) {
     free(cols);
+    free(args);
     return true;
   }
 
@@ -359,6 +377,7 @@ bool alignment_fill_blocks(alignment_block_t *tmpl)
   // after 8 where they are allowed, else 32)
   if(tmpl->bits != 0 && atomic_load(&stop)) {
     free(cols);
+    free(args);
     if(tmpl->bits == 8) {
       atomic_fetch_add(&aln_stat_byte_retries, 1);
       const scoring_t *scoring = aligner->scoring;
@@ -397,6 +416,7 @@ bool alignment_fill_blocks(alignment_block_t *tmpl)
     }
     free(cols);
   }
+  free(args);
   return true;
 }
 

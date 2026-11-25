@@ -2633,6 +2633,66 @@ void test_out_of_memory()
 /* With linear_fallback, a Needleman-Wunsch alignment too big for the
  * matrices (here: out of memory) is made in linear space, the same as
  * hirschberg_align_opts() makes it; without it the error comes back */
+/* Thousands of column blocks must not need a stack to match: the per-block
+ * state is on the heap, so a fill on a thread with a small stack (as on
+ * macOS, where threads get 512 KB) survives a high thread count */
+
+typedef struct {
+  const char *a, *b;
+  alignment_options_t *opts;
+  score_t nw_score, hb_score;
+  bool ok;
+} stack_case_t;
+
+static void *stack_case_run(void *ptr)
+{
+  stack_case_t *c = ptr;
+  nw_aligner_t *nw = needleman_wunsch_new();
+  alignment_t *aln = alignment_create(16);
+  static scoring_t scoring; // 260 KB of tables: not on this thread's stack
+  scoring_system_default(&scoring);
+  nw->options = c->opts;
+  nw->compact = true;
+  const size_t la = strlen(c->a), lb = strlen(c->b);
+  c->ok = needleman_wunsch_align_checked(c->a, c->b, la, lb, &scoring, nw,
+                                         aln, NULL) == ALN_OK;
+  c->nw_score = aln->score;
+  c->ok = c->ok && hirschberg_align_checked(c->a, c->b, la, lb, &scoring,
+                                            c->opts, aln, NULL) == ALN_OK;
+  c->hb_score = aln->score;
+  needleman_wunsch_free(nw);
+  alignment_free(aln);
+  return NULL;
+}
+
+void test_small_stack_many_blocks()
+{
+  static char a[32769], b[201];
+  hb_rand_seq(a, 32768, "acgt");
+  hb_rand_seq(b, 200, "acgt");
+  alignment_options_t one, many;
+  alignment_options_default(&one);
+  one.max_threads = one.hb_max_threads = 1;
+  many = one;
+  many.max_threads = many.hb_max_threads = 4096;
+  many.block_min_cells = many.hb_block_min_cells = 1;
+  many.block_min_cols = many.hb_block_min_cols = 8; // 4096 blocks
+  stack_case_t ref = {a, b, &one, 0, 0, false};
+  stack_case_t small = {a, b, &many, 0, 0, false};
+  stack_case_run(&ref);
+  ASSERT(ref.ok);
+
+  pthread_attr_t attr;
+  pthread_t thread;
+  ASSERT(pthread_attr_init(&attr) == 0);
+  ASSERT(pthread_attr_setstacksize(&attr, 384 * 1024) == 0); // under macOS's
+  ASSERT(pthread_create(&thread, &attr, stack_case_run, &small) == 0);
+  pthread_join(thread, NULL);
+  pthread_attr_destroy(&attr);
+  ASSERT(small.ok && small.nw_score == ref.nw_score &&
+         small.hb_score == ref.hb_score);
+}
+
 void test_linear_fallback()
 {
   nw_aligner_t *nw = needleman_wunsch_new();
@@ -3041,6 +3101,7 @@ void test_misc()
   test_options();
   test_checked();
   test_out_of_memory();
+  test_small_stack_many_blocks();
   test_linear_fallback();
   test_linear_above();
   test_wfa_align();
