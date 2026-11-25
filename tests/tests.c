@@ -2471,6 +2471,24 @@ void test_checked()
   ASSERT(smith_waterman_align_checked("CA", "GA", 2, 2, &scoring, sw, &e)
          == ALN_OK);
 
+  // Printing the matrices of a compact alignment (there are none) says so
+  // instead of reading through NULL
+  scoring_init(&scoring, 1, -1, -2, -1, false, false, false, false, false,
+               false);
+  nw->compact = true;
+  ASSERT(needleman_wunsch_align_checked("ACGT", "AGT", 4, 3, &scoring, nw,
+                                        aln, &e) == ALN_OK);
+  if(nw->traced) {
+    char *text = NULL;
+    size_t len = 0;
+    FILE *out = open_memstream(&text, &len);
+    alignment_fprint_matrices(out, nw);
+    fclose(out);
+    ASSERT(strstr(text, "no score matrices") != NULL);
+    free(text);
+  }
+  nw->compact = false;
+
   // A score that would reach the matrices' floor exactly is refused as an
   // overflow: at the floor a cell cannot be told from an unreachable one
   scoring_init(&scoring, 1, -387483648, -530000000, -350000000, false, false,

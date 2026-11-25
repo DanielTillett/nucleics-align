@@ -21,6 +21,12 @@ const char align_col_stop[] = "\033[0m";
 void alignment_fprint_matrices(FILE *fp, const aligner_t *aligner)
 {
   if(fp == NULL || aligner == NULL) return;
+  // A compact alignment keeps traceback bytes instead (and the matrices
+  // of an earlier alignment, if any, describe that one, not this)
+  if(aligner->traced || aligner->match_scores == NULL) {
+    fprintf(fp, "(no score matrices: the alignment was made without them)\n");
+    return;
+  }
   const score_t* match_scores = aligner->match_scores;
   const score_t* gap_a_scores = aligner->gap_a_scores;
   const score_t* gap_b_scores = aligner->gap_b_scores;

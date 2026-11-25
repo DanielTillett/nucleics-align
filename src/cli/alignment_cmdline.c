@@ -688,6 +688,8 @@ cmdline_t* cmdline_new(int argc, char **argv, scoring_t *scoring,
 
   if(cmd->linear_above > 0 && cmd->print_matrices)
     usage("--linearabove cannot be used with --printmatrices");
+  if(cmd->linear_fallback && cmd->print_matrices)
+    usage("--linearfallback cannot be used with --printmatrices");
   if(cmd->wfa_align && cmd->print_matrices)
     usage("--wfa cannot be used with --printmatrices");
 
