@@ -1,5 +1,5 @@
 Error: Invalid --match argument ('') must be an int
-usage: ./bin/needleman_wunsch [OPTIONS] [seq1 seq2]
+usage: ./bin/needleman_wunsch [OPTIONS] [--] [seq1 seq2]
   Needleman-Wunsch optimal global alignment (maximises score).  
   Takes a pair of sequences on the command line, or can read from a
   file and from sequence piped in.  Can read gzip files, FASTA and FASTQ.
@@ -10,6 +10,8 @@ usage: ./bin/needleman_wunsch [OPTIONS] [seq1 seq2]
     --files <f1> <f2>    Read one sequence from each file to align at one time
     --stdin              Read pairs from STDIN one at a time, interactively
                          (for a batch, use '--file -')
+    --                   End of options: the two sequences follow, even
+                         if one starts with '-'
 
     --case_sensitive     Use case sensitive character comparison [default: off]
 

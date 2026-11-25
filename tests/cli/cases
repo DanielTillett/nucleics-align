@@ -82,3 +82,10 @@ nw_plain_ws      | -     | ./bin/needleman_wunsch --printscores --file @/plain_w
 nw_fastq_short   | batch | ./bin/needleman_wunsch --printscores --file @/fastq_short.fq
 nw_fastq_noplus  | batch | ./bin/needleman_wunsch --printscores --file @/fastq_noplus.fq
 nw_nul           | batch | ./bin/needleman_wunsch --printscores --file @/nul_byte.txt
+# Option parsing: values are not options, -- ends them, ranges (25 Nov 2026 review)
+nw_value_help    | -     | ./bin/needleman_wunsch --printscores --files @/ties.fa --help
+nw_dashdash      | -     | ./bin/needleman_wunsch --printscores -- -ACGT AGT
+nw_seq2_flag     | -     | ./bin/needleman_wunsch --printscores ACGT --printscores
+nw_missing_value | -     | ./bin/needleman_wunsch --printscores --threads
+sw_maxhits_zero  | -     | ./bin/smith_waterman --maxhits 0 ACGT ACGT
+sw_minscore_neg  | -     | ./bin/smith_waterman --minscore -5 ACGT ACGT

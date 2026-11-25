@@ -33,6 +33,21 @@
 #include "alignment_scoring_load.h"
 #include "alignment_macros.h"
 
+// How many values follow an option on the command line (0 for an option
+// that takes none, and for anything that is not an option)
+static int option_values(const char *opt)
+{
+  static const char *const one[] = {
+    "--scoring", "--substitution_matrix", "--substitution_pairs", "--match",
+    "--mismatch", "--gapopen", "--gapextend", "--minscore", "--maxhits",
+    "--context", "--threads", "--linearabove", "--wfabudget", "--file", NULL};
+  static const char *const two[] = {"--files", "--wildcard", NULL};
+  size_t i;
+  for(i = 0; one[i] != NULL; i++) if(strcasecmp(opt, one[i]) == 0) return 1;
+  for(i = 0; two[i] != NULL; i++) if(strcasecmp(opt, two[i]) == 0) return 2;
+  return 0;
+}
+
 char parse_entire_int(char *str, int *result)
 {
   size_t len = strlen(str);
@@ -102,7 +117,7 @@ static void print_usage(enum NucleicsAlignCmdType cmd_type, score_t defaults[4],
     if(errfmt[strlen(errfmt)-1] != '\n') fprintf(stderr, "\n");
   }
 
-  fprintf(stderr, "usage: %s [OPTIONS] [seq1 seq2]\n", cmdstr);
+  fprintf(stderr, "usage: %s [OPTIONS] [--] [seq1 seq2]\n", cmdstr);
 
   fprintf(stderr,
 "  %s optimal %s alignment (maximises score).  \n"
@@ -118,6 +133,8 @@ static void print_usage(enum NucleicsAlignCmdType cmd_type, score_t defaults[4],
 "    --files <f1> <f2>    Read one sequence from each file to align at one time\n"
 "    --stdin              Read pairs from STDIN one at a time, interactively\n"
 "                         (for a batch, use '--file -')\n"
+"    --                   End of options: the two sequences follow, even\n"
+"                         if one starts with '-'\n"
 "\n"
 "    --case_sensitive     Use case sensitive character comparison [default: off]\n"
 "\n"
@@ -245,9 +262,18 @@ cmdline_t* cmdline_new(int argc, char **argv, scoring_t *scoring,
   // (is is used to construct hash table for swap_scores)
   char scoring_set = 0, substitutions_set = 0, match_set = 0, mismatch_set = 0;
 
+  // First pass: --help, and the scoring system and case sensitivity, which
+  // the other options build on. Each option's values are stepped over, so
+  // a value that happens to look like one of these (a file called --help)
+  // is not taken for it; "--" ends the options
   int argi;
-  for(argi = 1; argi < argc; argi++)
+  for(argi = 1; argi < argc && strcmp(argv[argi], "--") != 0; argi++)
   {
+    const int values = option_values(argv[argi]);
+    if(argi + values >= argc)
+      usage("%s requires %s", argv[argi],
+            values == 2 ? "two arguments" : "an argument");
+
     if(strcasecmp(argv[argi], "--help") == 0 ||
        strcasecmp(argv[argi], "-help") == 0 ||
        strcasecmp(argv[argi], "-h") == 0)
@@ -265,11 +291,6 @@ cmdline_t* cmdline_new(int argc, char **argv, scoring_t *scoring,
         usage("More than one scoring system specified - not permitted");
       }
 
-      if(argi + 1 >= argc)
-      {
-        usage("--scoring requires an argument");
-      }
-
       if(!scoring_system_by_name(scoring, argv[argi+1]))
       {
         usage("Unknown --scoring choice, not one of %s",
@@ -277,16 +298,24 @@ cmdline_t* cmdline_new(int argc, char **argv, scoring_t *scoring,
       }
 
       scoring_set = 1;
-      argi++; // took an argument
     }
+    argi += values;
   }
 
   // Before wildcards and substitution files are added: they keep their case
   if(cmd->case_sensitive) scoring_make_case_sensitive(scoring);
 
+  bool options_ended = false; // after "--": sequences only, any first byte
   for(argi = 1; argi < argc; argi++)
   {
-    if(argv[argi][0] == '-')
+    if(strcmp(argv[argi], "--") == 0)
+    {
+      options_ended = true;
+      argi++;
+      if(argc - argi != 2) usage("-- must be followed by the two sequences");
+      break;
+    }
+    else if(argv[argi][0] == '-')
     {
       // strcasecmp does case insensitive comparison
       if(strcasecmp(argv[argi], "--freestartgap") == 0)
@@ -437,8 +466,10 @@ cmdline_t* cmdline_new(int argc, char **argv, scoring_t *scoring,
         if(cmd_type != NUCLEICS_ALIGN_SW_CMD)
           usage("--minscore only valid with Smith-Waterman");
 
-        if(!parse_entire_int(argv[argi+1], &cmd->min_score))
-          usage("Invalid --minscore <score> argument (must be a +ve int)");
+        // 0 and 1 alike: every hit with a positive score
+        if(!parse_entire_int(argv[argi+1], &cmd->min_score) ||
+           cmd->min_score < 0)
+          usage("Invalid --minscore <score> argument (must be an int >= 0)");
 
         cmd->min_score_set = true;
 
@@ -449,8 +480,9 @@ cmdline_t* cmdline_new(int argc, char **argv, scoring_t *scoring,
         if(cmd_type != NUCLEICS_ALIGN_SW_CMD)
           usage("--maxhits only valid with Smith-Waterman");
 
-        if(!parse_entire_uint(argv[argi+1], &cmd->max_hits_per_alignment))
-          usage("Invalid --maxhits <hits> argument (must be a +ve int)");
+        if(!parse_entire_uint(argv[argi+1], &cmd->max_hits_per_alignment) ||
+           cmd->max_hits_per_alignment == 0)
+          usage("Invalid --maxhits <hits> argument (must be at least 1)");
 
         cmd->max_hits_per_alignment_set = true;
 
@@ -622,6 +654,10 @@ cmdline_t* cmdline_new(int argc, char **argv, scoring_t *scoring,
   {
     cmd->seq1 = argv[argi];
     cmd->seq2 = argv[argi+1];
+    // An option after the first sequence is a mistake, not a sequence
+    if(!options_ended && cmd->seq2[0] == '-')
+      usage("Unknown argument '%s' (put -- before sequences that start "
+            "with -)", cmd->seq2);
   }
 
   if(cmd->seq1 == NULL && cmd->file_list_length == 0)
