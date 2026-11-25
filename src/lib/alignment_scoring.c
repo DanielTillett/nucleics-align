@@ -130,8 +130,10 @@ void scoring_add_mutation(scoring_t* scoring, char a, char b, int score)
   scoring->max_penalty = MAX2(scoring->max_penalty, score);
 }
 
-void scoring_add_mutations(scoring_t* scoring, const char *str, const int *scores,
-                           char use_match_mismatch)
+// The scores of every pair of the letters in str, from a square matrix
+// (used by the built-in scoring systems below)
+static void scoring_add_mutations(scoring_t* scoring, const char *str,
+                                  const int *scores, char use_match_mismatch)
 {
   size_t i, j, len = strlen(str);
   char a, b;

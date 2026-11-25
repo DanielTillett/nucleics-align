@@ -143,34 +143,29 @@ static inline int cmp_match_index(size_t ia, size_t ib, const MatrixSort *ctx)
   return diff > 0 ? 1 : -1;
 }
 
+// Restore the heap below root among arr[0 .. end)
+static void sw_sift_down(size_t *arr, size_t root, size_t end,
+                         const MatrixSort *ctx)
+{
+  while(root * 2 + 1 < end) {
+    size_t child = root * 2 + 1;
+    if(child + 1 < end && cmp_match_index(arr[child], arr[child + 1], ctx) < 0)
+      child++;
+    if(cmp_match_index(arr[root], arr[child], ctx) >= 0) break;
+    size_t tmp = arr[root]; arr[root] = arr[child]; arr[child] = tmp;
+    root = child;
+  }
+}
+
 // In-place O(n log n) heapsort for candidate hit indices (portable C11, no sort_r)
 static void sw_sort_match_indices(size_t *arr, size_t n, const MatrixSort *ctx)
 {
   if(n < 2) return;
-  for(size_t start = n / 2; start > 0; start--) {
-    size_t root = start - 1;
-    while(root * 2 + 1 < n) {
-      size_t child = root * 2 + 1;
-      if(child + 1 < n && cmp_match_index(arr[child], arr[child + 1], ctx) < 0)
-        child++;
-      if(cmp_match_index(arr[root], arr[child], ctx) < 0) {
-        size_t tmp = arr[root]; arr[root] = arr[child]; arr[child] = tmp;
-        root = child;
-      } else break;
-    }
-  }
+  for(size_t start = n / 2; start > 0; start--)
+    sw_sift_down(arr, start - 1, n, ctx);
   for(size_t end = n - 1; end > 0; end--) {
     size_t tmp = arr[end]; arr[end] = arr[0]; arr[0] = tmp;
-    size_t root = 0;
-    while(root * 2 + 1 < end) {
-      size_t child = root * 2 + 1;
-      if(child + 1 < end && cmp_match_index(arr[child], arr[child + 1], ctx) < 0)
-        child++;
-      if(cmp_match_index(arr[root], arr[child], ctx) < 0) {
-        size_t sw = arr[root]; arr[root] = arr[child]; arr[child] = sw;
-        root = child;
-      } else break;
-    }
+    sw_sift_down(arr, 0, end, ctx);
   }
 }
 

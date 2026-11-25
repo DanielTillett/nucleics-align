@@ -123,6 +123,13 @@ bool alignment_linear_fallback = false;
 size_t alignment_linear_above = 0;
 bool alignment_wfa_alignment = false;
 size_t alignment_wfa_budget = 0;
+
+size_t alignment_wfa_default_budget(size_t len_a, size_t len_b)
+{
+  const size_t per_letter = 256, max_cells = (size_t)1 << 28;
+  const size_t total = len_a <= SIZE_MAX - len_b ? len_a + len_b : SIZE_MAX;
+  return total <= max_cells / per_letter ? per_letter * total : max_cells;
+}
 atomic_size_t aln_stat_diff_fills;
 // Band fills (each width tried), and bands sized by alignment_wfa_score()
 atomic_size_t aln_stat_band_tries, aln_stat_band_wfa_sized;

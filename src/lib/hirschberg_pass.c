@@ -9,9 +9,7 @@
 #include <string.h>
 #include <limits.h>
 #include <pthread.h>
-#include <sched.h>
 #include <stdatomic.h>
-#include <unistd.h>
 
 #include "hirschberg_internal.h"
 

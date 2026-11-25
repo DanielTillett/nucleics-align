@@ -49,6 +49,15 @@ static aln_status_t _nw_align(const char *a, const char *b,
                               const scoring_t *scoring,
                               nw_aligner_t *nw, alignment_t *result);
 
+// The aligner's settings: its own, or the defaults (into *defaults)
+static const alignment_options_t *_nw_opts(const nw_aligner_t *nw,
+                                           alignment_options_t *defaults)
+{
+  if(nw->options != NULL) return nw->options;
+  alignment_options_default(defaults);
+  return defaults;
+}
+
 // Too big for the matrices (status): align in linear space instead, if the
 // options ask (alignment_linear_fallback) and it supports the scoring.
 // Returns true if that worked
@@ -58,21 +67,12 @@ static bool _nw_linear(const char *a, const char *b, size_t len_a,
                        aln_status_t status)
 {
   alignment_options_t defaults;
-  const alignment_options_t *opts = nw->options;
-  if(opts == NULL) {
-    alignment_options_default(&defaults);
-    opts = &defaults;
-  }
+  const alignment_options_t *opts = _nw_opts(nw, &defaults);
   return (status == ALN_ERR_TOO_LONG || status == ALN_ERR_NOMEM) &&
          opts->linear_fallback &&
          hirschberg_align_checked(a, b, len_a, len_b, scoring, opts, result,
                                   NULL) == ALN_OK;
 }
-
-// Work budget for --wfa alignment (BiWFA uses O(s) space, so this caps
-// diagonal updates to fall back quickly on divergent pairs)
-#define NW_WFA_PER_LETTER 256
-#define NW_WFA_MAX_CELLS ((size_t)1 << 28)
 
 // By the wavefront algorithm, if the options ask (alignment_wfa_alignment)
 // and it applies: the scoring suits it and the pair is similar enough.
@@ -85,11 +85,7 @@ static aln_status_t _nw_wfa(const char *a, const char *b, size_t len_a,
                             bool checked)
 {
   alignment_options_t defaults;
-  const alignment_options_t *opts = nw->options;
-  if(opts == NULL) {
-    alignment_options_default(&defaults);
-    opts = &defaults;
-  }
+  const alignment_options_t *opts = _nw_opts(nw, &defaults);
   if(!opts->wfa_align) return ALN_ERR_UNSUPPORTED;
   // (a pair the scoring lacks is left to the matrices, which report it;
   // the checked entry point has already scanned for one)
@@ -98,12 +94,9 @@ static aln_status_t _nw_wfa(const char *a, const char *b, size_t len_a,
   sub_table_t table;
   if(!sub_table_build(&table, scoring, a, len_a, b, len_b))
     return ALN_ERR_NOMEM;
-  size_t budget = opts->wfa_budget;
-  if(budget == 0) {
-    const size_t total = len_a <= SIZE_MAX - len_b ? len_a + len_b : SIZE_MAX;
-    budget = total <= NW_WFA_MAX_CELLS / NW_WFA_PER_LETTER
-             ? NW_WFA_PER_LETTER * total : NW_WFA_MAX_CELLS;
-  }
+  const size_t budget = opts->wfa_budget != 0
+                        ? opts->wfa_budget
+                        : alignment_wfa_default_budget(len_a, len_b);
   aln_status_t status = alignment_wfa_align(&table, scoring, a, len_a, b,
                                             len_b, budget, result);
   sub_table_free(&table);
@@ -120,11 +113,7 @@ static aln_status_t _nw_long(const char *a, const char *b, size_t len_a,
                              const nw_aligner_t *nw, alignment_t *result)
 {
   alignment_options_t defaults;
-  const alignment_options_t *opts = nw->options;
-  if(opts == NULL) {
-    alignment_options_default(&defaults);
-    opts = &defaults;
-  }
+  const alignment_options_t *opts = _nw_opts(nw, &defaults);
   if(opts->linear_above == 0 || MAX2(len_a, len_b) < opts->linear_above)
     return ALN_ERR_UNSUPPORTED;
   aln_status_t status = hirschberg_align_checked(a, b, len_a, len_b, scoring,
@@ -376,11 +365,8 @@ static aln_status_t _nw_align(const char *a, const char *b,
         exit(EXIT_FAILURE);
     }
 
-    if(score_x > 0 && score_y > 0)
-    {
-      alignment_reverse_move(&curr_matrix, &curr_score,
-                             &score_x, &score_y, &arr_index, nw);
-    }
+    alignment_reverse_move(&curr_matrix, &curr_score,
+                           &score_x, &score_y, &arr_index, nw);
   }
 
   _nw_finish(nw, result, score_x, score_y, next_char, longest_alignment);

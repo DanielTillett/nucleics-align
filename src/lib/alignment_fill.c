@@ -162,8 +162,8 @@ bool alignment_fill_matrices(aligner_t *aligner, char is_sw)
                  min);
       }
 
-      // Long arithmetic since some INTs are set to min and penalty is -ve
-      // (adding as ints would cause an integer overflow)
+      // (Cells hold at least min, which is SCORE_MIN plus the worst
+      // penalty, so adding a penalty to one cannot overflow)
 
       // Update gap_a_scores[i][j] from position [i][j-1]
       if(seq_i == len_i-1 && scoring->no_end_gap_penalty)

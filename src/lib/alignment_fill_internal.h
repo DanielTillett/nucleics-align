@@ -45,7 +45,22 @@ typedef struct {
   pthread_cond_t cv;
 } aln_done_t;
 
-// One column block of the striped fill (see alignment_kernel.c)
+// One column block of the striped fill (see alignment_kernel.c): rows
+// y0 .. y1 of columns c0+1 .. c0+width. Which fields are set says what it
+// produces (the kernels in alignment_kernel.inc read them so):
+//   full matrices  trace == NULL, !score_only: the three score matrices,
+//                  r0/lc the matrices themselves (lstride the row width)
+//   traceback      trace != NULL: a byte per cell (trace_rows: a band's
+//                  strip, by row; else trace_boff into the striped layout
+//                  when diff != 0), the last column in rc (from row rc_y0)
+//                  for the block on the right, and with track_best the
+//                  first best cell; lastrow for the strip below
+//   score scan     score_only: rc and the best cell (track_best), or the
+//                  cells scoring target (target > 0: tgt_x, tgt_y)
+// bits (0, 16 or 8) picks the lane width, narrow lanes stopping every
+// block (*stop) past narrow_limit; diff != 0 the difference-encoded
+// kernel with its floor/ceiling. given_up, best_*, tgt_* and nomem come
+// back out
 typedef struct {
   aligner_t *aligner; const sub_table_t *table; score_t min;
   size_t c0, width; aln_done_t *left_done, *done;

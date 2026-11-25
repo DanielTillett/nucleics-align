@@ -26,7 +26,7 @@ typedef struct {
 static inline BitSet* bitset_alloc(BitSet *bs, size_t l) {
   bs->s = l/32 + (l%32 != 0);
   bs->l = l;
-  bs->b = calloc(bs->s, sizeof(bs->b[0]));
+  bs->b = aln_calloc(bs->s, sizeof(bs->b[0]));
   return bs->b ? bs : NULL;
 }
 
@@ -54,11 +54,28 @@ typedef struct {
   bool indexed, first_done;
 } sw_history_t;
 
+// How the last alignment was made, by the flags _sw_align() leaves set
+// (_sw_fetch() reads them to find the first hit and, for a second, to fill
+// the score matrices):
+//   full matrices    !compact (or compact but the scoring needs the scalar
+//                    fill): aligner.match_scores hold every cell
+//   traceback bytes  compact, !rect: aligner.trace holds a byte per cell,
+//                    aligner.traced; best cell at aligner.best_index
+//   rectangle        rect, !strips, !fast_hit: the bytes of the rectangle
+//                    at (off_a, off_b) holding the best hit, whose cell in
+//                    the whole matrix is full_best; or no hit at all
+//                    (aligner.best_score < min_score), nothing filled
+//   strips           rect && strips: ckpt holds every strip_rows-th row of
+//                    the rectangle; sw_follow_strips() refills strips
+//   fast hit         rect && fast_hit: the first hit is already in
+//                    fast_res (wavefront or linear-memory reconstruction)
+// In every mode but the first, aligner.traced is set, whether or not
+// aligner.trace was filled
 struct sw_aligner_t {
   aligner_t aligner;
   sw_history_t history;
   sub_table_t table;
-  bool fast_walk;
+  bool fast_walk; // _sw_reverse_move() may take its quick step
   score_t min_score;
   bool compact;
   bool rect;

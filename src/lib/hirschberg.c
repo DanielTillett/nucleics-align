@@ -10,7 +10,6 @@
 #include <stdio.h>
 #include <string.h>
 #include <limits.h>
-#include <pthread.h>
 #include <stdatomic.h>
 #include <unistd.h>
 
@@ -147,6 +146,17 @@ static bool hb_myers(const hb_state_t *st, const char *a, size_t len_a,
   return true;
 }
 
+// As hb_myers(), with the banded phase only (declines on divergent pairs)
+static bool hb_myers_banded(const hb_state_t *st, const char *a, size_t len_a,
+                            const char *b, size_t len_b, score_t *score)
+{
+  if(!hirschberg_myers_enabled ||
+     !alignment_myers_score_banded(&st->table, st->scoring, a, len_a, b, len_b,
+                                   score)) return false;
+  __atomic_add_fetch(&hirschberg_myers_scores, 1, __ATOMIC_RELAXED);
+  return true;
+}
+
 bool hirschberg_simd_available(void)
 {
 #ifdef HB_STRIPED
@@ -205,10 +215,12 @@ static void hb_passes(hb_state_t *st, const char *a, const char *b,
   // Unit-cost Myers split rows on one thread (faster than unbanded striped
   // SIMD on divergent unit-cost pairs; with gap_open == 0, type 2 in
   // hb_midpoint() requires strict '>' and cannot win over type 1)
-  if(hirschberg_myers_enabled && tb == 0 && te == 0 &&
-#ifdef HB_STRIPED
-     st->pass_threads <= 1 &&
-#endif
+  #ifdef HB_STRIPED
+  const bool one_thread = st->pass_threads <= 1;
+  #else
+  const bool one_thread = true;
+  #endif
+  if(hirschberg_myers_enabled && tb == 0 && te == 0 && one_thread &&
      (!do_f || alignment_myers_row(&st->table, st->scoring, a, imid, b, n,
                                    false, st->cc)) &&
      (!do_r || alignment_myers_row(&st->table, st->scoring, a + imid, rrows,
@@ -677,31 +689,30 @@ static aln_status_t hb_score(const char *a, const char *b,
   // Unit-cost scoring: banded Myers beats speculative striped bands at any
   // thread count; on divergent pairs with multiple threads, let multi-threaded
   // striped SIMD handle the full pass instead of single-threaded full Myers
-  if((
-#ifdef HB_STRIPED
-      st.pass_threads <= 1
-        ? hb_myers(&st, a, len_a, b, len_b, score)
-        : (hirschberg_myers_enabled &&
-           alignment_myers_score_banded(&st.table, scoring, a, len_a, b, len_b,
-                                        score))
-#else
-      hb_myers(&st, a, len_a, b, len_b, score)
-#endif
-     ))
+  bool scored;
+  #ifdef HB_STRIPED
+  const bool simd = hb_simd_ok(&st, len_a, len_b);
+  if(st.pass_threads <= 1) scored = hb_myers(&st, a, len_a, b, len_b, score);
+  else scored = hb_myers_banded(&st, a, len_a, b, len_b, score);
+  #else
+  scored = hb_myers(&st, a, len_a, b, len_b, score);
+  #endif
+
+  if(scored)
   {
   }
   #ifdef HB_STRIPED
   // Banded forward and reverse passes of hb_diff(), which run at the same
   // time: every alignment crosses the middle row, so the best crossing is
   // the best score
-  else if(hb_simd_ok(&st, len_a, len_b) &&
+  else if(simd &&
           hb_passes_banded(&st, a, b, len_a, len_b, len_a / 2, g, g, HB_NO_BOUND))
   {
     if(!st.nomem) *score = hb_midpoint(&st, len_b, &midj, &type);
   }
   // Otherwise one forward pass over every row of a: cc[len_b] is the best
   // score, ending in any state
-  else if(hb_simd_ok(&st, len_a, len_b) && hb_ensure_vbuf(&st, false))
+  else if(simd && hb_ensure_vbuf(&st, false))
   {
     hb_pass_striped(&st, a, 1, len_a, b, 1, 0, len_b, g, st.cc, st.dd, 1,
                     st.vbuf, NULL, st.pass_threads);

@@ -228,12 +228,9 @@ bool sw_align_fast_rect(sw_aligner_t *sw, const char *a, const char *b,
   if(!ok || best2 != best || rx == 0 || ry == 0) return false;
 
   const size_t x0 = bx - rx, y0 = by - ry;
-  const size_t total = rx <= SIZE_MAX - ry ? rx + ry : SIZE_MAX;
-  size_t wfa_budget = aligner->opts.wfa_budget;
-  if(wfa_budget == 0) {
-    const size_t max_c = (size_t)1 << 28;
-    wfa_budget = total <= max_c / 256 ? 256 * total : max_c;
-  }
+  const size_t wfa_budget = aligner->opts.wfa_budget != 0
+                            ? aligner->opts.wfa_budget
+                            : alignment_wfa_default_budget(rx, ry);
 
   aln_status_t st = alignment_wfa_align(&sw->table, scoring, a + x0, rx,
                                         b + y0, ry, wfa_budget, &sw->fast_res);

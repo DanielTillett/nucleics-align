@@ -353,14 +353,16 @@ extern size_t alignment_linear_above;
 // Needleman-Wunsch alignments are made by the wavefront algorithm
 // (alignment_wfa_align()) where the scoring is one match and one mismatch
 // score with gap penalties and the pair is similar enough to finish within
-// 64 cells per letter (at most 2^25 cells, about 400 MB), and with the
-// matrices otherwise: much faster for near-identical pairs, with the same
-// score, but it may choose another of several equal-scoring alignments.
-// Default false
+// the budget below, and with the matrices otherwise: much faster for
+// near-identical pairs, with the same score, but it may choose another of
+// several equal-scoring alignments. Default false
 extern bool alignment_wfa_alignment;
 // Diagonal-update cap for --wfa / alignment_wfa_alignment (0: automatic,
-// min(2^28, 256 * (len_a + len_b))). Separate from alignment_band_wfa_budget
+// alignment_wfa_default_budget()). Separate from alignment_band_wfa_budget
 extern size_t alignment_wfa_budget;
+// The automatic cap: min(2^28, 256 * (len_a + len_b)) diagonal updates,
+// enough for pairs within about 1% of each other
+size_t alignment_wfa_default_budget(size_t len_a, size_t len_b);
 
 // The default settings, from the variables above (and their hirschberg_*
 // and smith_waterman_* counterparts) as they are now
