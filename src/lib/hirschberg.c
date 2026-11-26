@@ -717,8 +717,9 @@ static aln_status_t hb_score(const char *a, const char *b,
   // score, ending in any state
   else if(simd && hb_ensure_vbuf(&st, false))
   {
-    hb_pass_striped(&st, a, 1, len_a, b, 1, 0, len_b, g, st.cc, st.dd, 1,
-                    st.vbuf, NULL, st.pass_threads);
+    const hb_block_args_t pass = {&st, a, 1, len_a, b, 1, 0, len_b, g,
+                                  st.cc, st.dd, 1, st.vbuf, NULL, NULL, NULL};
+    hb_pass_striped(&pass, st.pass_threads);
     if(!st.nomem) *score = st.cc[len_b];
   }
   #endif

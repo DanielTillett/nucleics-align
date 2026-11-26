@@ -36,6 +36,7 @@
 #  define HB16_RANGE 12000
 
 typedef struct hb_top hb_top_t;
+typedef struct hb_boundary hb_boundary_t;
 #endif
 
 typedef struct {
@@ -94,13 +95,25 @@ void hb_passes_scalar(hb_state_t *st, const char *a, const char *b,
                       bool do_f, bool do_r,
                       const hb_chain_t *fsave, const hb_chain_t *rsave);
 #ifdef HB_STRIPED
+// One column block of a pass of hb_diff() (see hb_block_pass() in
+// hirschberg_pass.c): rows characters of a from a[0] stepping by astep (+1
+// forward, -1 reverse), the columns c0 .. c0+width-1 of b stepping by
+// bstep, t0 = tb or te, the last row written to oc[p*ostep] and od[p*ostep]
+// by column p, buf the block's vector buffer, left / right the boundaries
+// shared with neighbouring blocks (NULL at the ends) and top the strip
+// above (NULL: row 0). A whole pass is one block with c0 = 0
+typedef struct {
+  hb_state_t *st; const char *a; ptrdiff_t astep; size_t rows;
+  const char *b; ptrdiff_t bstep; size_t c0, width; score_t t0;
+  score_t *oc, *od; ptrdiff_t ostep; void *buf;
+  hb_boundary_t *left, *right; const hb_top_t *top;
+} hb_block_args_t;
+
 bool hb_ensure_vbuf(hb_state_t *st, bool need_second);
 bool hb_simd_ok(const hb_state_t *st, size_t m, size_t n);
-void hb_pass_striped(hb_state_t *st, const char *a, ptrdiff_t astep,
-                     size_t rows, const char *b, ptrdiff_t bstep,
-                     size_t c0, size_t n, score_t t0,
-                     score_t *oc, score_t *od, ptrdiff_t ostep,
-                     void *buf, const hb_top_t *top, int threads);
+// One pass as one block (pass->left and right NULL), or split into column
+// blocks on up to threads threads
+void hb_pass_striped(const hb_block_args_t *pass, int threads);
 void hb_check_striped(hb_state_t *st, const char *a, const char *b,
                       size_t m, size_t n, size_t imid,
                       score_t tb, score_t te, bool banded);

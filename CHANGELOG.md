@@ -60,6 +60,11 @@ fixes listed under [Changes to output](#changes-to-output).
   file with headings and no rows is refused ("No rows in matrix") instead
   of being accepted empty. The public API's error messages take the tools'
   wording. `align_scoring_load_*()` take the case setting from the scoring
+- The linear-space passes and the wavefront aligner pass argument
+  structs (`hb_block_args_t`, `hb_pass_args_t`; `wf_dir_t`, `biwfa_ctx_t`,
+  `biwfa_sub_t`, `biwfa_meet_t`) where 15 to 20 arguments went before; the
+  kernels copy the fields to locals at entry. Same output; timed the same
+  on 200 kb linear-space and banded fills and on wavefront alignment
 - The tools' option parser is a table: one entry per option with its
   name, how many values it takes, which tool takes it and a handler, so
   the "only valid with" and "requires an argument" checks are made once,

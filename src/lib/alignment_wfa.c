@@ -591,6 +591,55 @@ static int32_t wf_extend_lim_loop_avx2(const uint8_t *a, const uint8_t *b,
 
 typedef enum { WFA_M = 0, WFA_I = 1, WFA_D = 2 } wfa_state_t;
 
+// One direction of a pair for wf_step(): the class strings a and b (padded:
+// sentinel bytes after each, so extensions need no bounds), their lengths,
+// the penalties, the state the alignment starts in (s0), and the store of
+// wavefronts: every score kept (keep) in slots, or a ring of `ring` scores
+typedef struct {
+  const uint8_t *a, *b;
+  int32_t m, nb;
+  long long px, po, pe;
+  bool padded;
+  wfa_state_t s0;
+  wf_slot_t *slots;
+  size_t ring;
+  bool keep;
+  wf_null_t *null_wf;
+} wf_dir_t;
+
+// What every sub-problem of the bidirectional alignment shares: the
+// penalties, the null wavefront buffer (and the out-of-memory flag) and the
+// diagonal updates left in the budget
+typedef struct {
+  long long px, po, pe;
+  wf_null_t *null_wf;
+  size_t *budget_left;
+} biwfa_ctx_t;
+
+// A sub-problem: a[0..m) against b[0..nb) as class strings forward (a, b)
+// and reversed (ra, rb: the reversed whole strings' suffixes) and as letters
+// for the output (sa, sb), entered in state s0 and left in state s1.
+// fwd_pad / rev_pad: the forward / reversed strings have their sentinel
+// bytes after them
+typedef struct {
+  const uint8_t *a, *ra;
+  const char *sa;
+  int32_t m;
+  const uint8_t *b, *rb;
+  const char *sb;
+  int32_t nb;
+  wfa_state_t s0, s1;
+  bool fwd_pad, rev_pad;
+} biwfa_sub_t;
+
+// Where the forward and reverse wavefronts met: the least penalty and the
+// cell (v, h) and state of the meeting
+typedef struct {
+  long long s;
+  int32_t v, h;
+  wfa_state_t state;
+} biwfa_meet_t;
+
 // Vectorisable hot interior compute loop (multi-versioned for AVX2/SSE4.1/SSE2).
 // All pointers are strictly in-bounds for [0 .. len-1], and each candidate
 // (ins, del, sub) is range-checked before taking the maximum, matching the
@@ -629,12 +678,16 @@ static void wf_compute_interior(int32_t k0, int32_t len, int32_t m, int32_t nb,
 // updates performed, or SIZE_MAX on OOM. Writes max offset reached in *max_h.
 // When padded is true, a[m..m+7] and b[nb..nb+7] hold distinct sentinel bytes
 // so unchecked 8-byte wf_extend() is safe.
-static size_t wf_step(const uint8_t *a, int32_t m, const uint8_t *b, int32_t nb,
-                      long long px, long long po, long long pe,
-                      wfa_state_t s0, wf_slot_t *slots, size_t ring,
-                      bool keep, bool padded, wf_null_t *null_wf,
-                      long long s, int32_t *max_h)
+static size_t wf_step(const wf_dir_t *d, long long s, int32_t *max_h)
 {
+  const uint8_t *const a = d->a, *const b = d->b;
+  const int32_t m = d->m, nb = d->nb;
+  const long long px = d->px, po = d->po, pe = d->pe;
+  const wfa_state_t s0 = d->s0;
+  wf_slot_t *const slots = d->slots;
+  const size_t ring = d->ring;
+  const bool keep = d->keep, padded = d->padded;
+  wf_null_t *const null_wf = d->null_wf;
   const wavefront_t none = {1, 0, 0, NULL, NULL};
   #define SLOT(t) (keep ? &slots[(t)] : &slots[(size_t)(t) % ring])
   wf_slot_t *cur = SLOT(s);
@@ -799,13 +852,16 @@ static size_t wf_step(const uint8_t *a, int32_t m, const uint8_t *b, int32_t nb,
 
 // Base-case kept-wavefront fill & traceback with general start/end states.
 // Writes forward-order alignment into out_a/out_b and returns length (0 on fail)
-static size_t biwfa_base(const uint8_t *a, const char *sa, int32_t m,
-                         const uint8_t *b, const char *sb, int32_t nb,
-                         long long px, long long po, long long pe,
-                         wfa_state_t s0, wfa_state_t s1, bool padded,
-                         wf_null_t *null_wf,
-                         size_t *budget_left, char *out_a, char *out_b)
+static size_t biwfa_base(const biwfa_ctx_t *c, const biwfa_sub_t *q,
+                         char *out_a, char *out_b)
 {
+  const uint8_t *const a = q->a, *const b = q->b;
+  const char *const sa = q->sa, *const sb = q->sb;
+  const int32_t m = q->m, nb = q->nb;
+  const long long px = c->px, po = c->po, pe = c->pe;
+  const wfa_state_t s0 = q->s0, s1 = q->s1;
+  wf_null_t *const null_wf = c->null_wf;
+  size_t *const budget_left = c->budget_left;
   const int32_t kend = nb - m;
   size_t nslots = 0, i;
   wf_slot_t *slots = NULL;
@@ -822,8 +878,9 @@ static size_t biwfa_base(const uint8_t *a, const char *sa, int32_t m,
         slots[i].m = slots[i].i = slots[i].d = none;
       nslots = grow;
     }
-    size_t w = wf_step(a, m, b, nb, px, po, pe, s0, slots, 0, true,
-                       padded, null_wf, s, NULL);
+    const wf_dir_t dir = {a, b, m, nb, px, po, pe, q->fwd_pad, s0,
+                          slots, 0, true, null_wf};
+    size_t w = wf_step(&dir, s, NULL);
     if(w == SIZE_MAX) { null_wf->nomem = true; break; }
     if(w > *budget_left) break;
     *budget_left -= w;
@@ -903,52 +960,51 @@ static size_t biwfa_base(const uint8_t *a, const char *sa, int32_t m,
 static void biwfa_check(const wf_slot_t *fs, long long sf,
                         const wf_slot_t *rs, long long sr,
                         int32_t m, int32_t nb, long long po,
-                        long long *best_s, int32_t *bp_v, int32_t *bp_h,
-                        wfa_state_t *bp_state)
+                        biwfa_meet_t *best)
 {
   const int32_t kend = nb - m;
   int32_t lo, hi, k;
-  if(sf + sr < *best_s && fs->m.lo <= fs->m.hi && rs->m.lo <= rs->m.hi) {
+  if(sf + sr < best->s && fs->m.lo <= fs->m.hi && rs->m.lo <= rs->m.hi) {
     lo = fs->m.lo > kend - rs->m.hi ? fs->m.lo : kend - rs->m.hi;
     hi = fs->m.hi < kend - rs->m.lo ? fs->m.hi : kend - rs->m.lo;
     for(k = lo; k <= hi; k++) {
       int32_t hf = fs->m.off[k - fs->m.lo];
       int32_t hr = rs->m.off[(kend - k) - rs->m.lo];
       if(hf >= 0 && hr >= 0 && hf + hr >= nb) {
-        *best_s = sf + sr;
-        *bp_h = hf;
-        *bp_v = hf - k;
-        *bp_state = WFA_M;
+        best->s = sf + sr;
+        best->h = hf;
+        best->v = hf - k;
+        best->state = WFA_M;
         break;
       }
     }
   }
-  if(sf + sr - po < *best_s && fs->i.lo <= fs->i.hi && rs->i.lo <= rs->i.hi) {
+  if(sf + sr - po < best->s && fs->i.lo <= fs->i.hi && rs->i.lo <= rs->i.hi) {
     lo = fs->i.lo > kend - rs->i.hi ? fs->i.lo : kend - rs->i.hi;
     hi = fs->i.hi < kend - rs->i.lo ? fs->i.hi : kend - rs->i.lo;
     for(k = lo; k <= hi; k++) {
       int32_t hf = fs->i.off[k - fs->i.lo];
       int32_t hr = rs->i.off[(kend - k) - rs->i.lo];
       if(hf >= 1 && hr >= 1 && hf + hr >= nb) {
-        *best_s = sf + sr - po;
-        *bp_h = hf;
-        *bp_v = hf - k;
-        *bp_state = WFA_I;
+        best->s = sf + sr - po;
+        best->h = hf;
+        best->v = hf - k;
+        best->state = WFA_I;
         break;
       }
     }
   }
-  if(sf + sr - po < *best_s && fs->d.lo <= fs->d.hi && rs->d.lo <= rs->d.hi) {
+  if(sf + sr - po < best->s && fs->d.lo <= fs->d.hi && rs->d.lo <= rs->d.hi) {
     lo = fs->d.lo > kend - rs->d.hi ? fs->d.lo : kend - rs->d.hi;
     hi = fs->d.hi < kend - rs->d.lo ? fs->d.hi : kend - rs->d.lo;
     for(k = lo; k <= hi; k++) {
       int32_t hf = fs->d.off[k - fs->d.lo];
       int32_t hr = rs->d.off[(kend - k) - rs->d.lo];
       if(hf >= 0 && hr >= 0 && hf + hr >= nb && (hf - k) >= 1 && (hr - (kend - k)) >= 1) {
-        *best_s = sf + sr - po;
-        *bp_h = hf;
-        *bp_v = hf - k;
-        *bp_state = WFA_D;
+        best->s = sf + sr - po;
+        best->h = hf;
+        best->v = hf - k;
+        best->state = WFA_D;
         break;
       }
     }
@@ -956,14 +1012,17 @@ static void biwfa_check(const wf_slot_t *fs, long long sf,
 }
 
 // O(s)-space Bidirectional WFA (Marco-Sola et al., 2023)
-static size_t biwfa_rec(const uint8_t *a, const uint8_t *ra, const char *sa, int32_t m,
-                        const uint8_t *b, const uint8_t *rb, const char *sb, int32_t nb,
-                        long long px, long long po, long long pe,
-                        wfa_state_t s0, wfa_state_t s1,
-                        bool fwd_pad, bool rev_pad, wf_null_t *null_wf,
-                        size_t *budget_left, char *out_a, char *out_b,
-                        long long *penalty_out)
+static size_t biwfa_rec(const biwfa_ctx_t *c, const biwfa_sub_t *q,
+                        char *out_a, char *out_b, long long *penalty_out)
 {
+  const uint8_t *const a = q->a, *const ra = q->ra;
+  const uint8_t *const b = q->b, *const rb = q->rb;
+  const char *const sa = q->sa, *const sb = q->sb;
+  const int32_t m = q->m, nb = q->nb;
+  const long long px = c->px, po = c->po, pe = c->pe;
+  const wfa_state_t s0 = q->s0, s1 = q->s1;
+  wf_null_t *const null_wf = c->null_wf;
+  size_t *const budget_left = c->budget_left;
   if(m == 0 && nb == 0) { if(penalty_out) *penalty_out = 0; return 0; }
   if(m == 0) {
     int32_t j;
@@ -977,10 +1036,7 @@ static size_t biwfa_rec(const uint8_t *a, const uint8_t *ra, const char *sa, int
     if(penalty_out) *penalty_out = (s0 == WFA_D ? 0 : po) + (long long)m * pe;
     return (size_t)m;
   }
-  if((size_t)m + (size_t)nb <= 2048) {
-    return biwfa_base(a, sa, m, b, sb, nb, px, po, pe, s0, s1,
-                      fwd_pad, null_wf, budget_left, out_a, out_b);
-  }
+  if((size_t)m + (size_t)nb <= 2048) return biwfa_base(c, q, out_a, out_b);
 
   const size_t ring = (size_t)(px > po + pe ? px : po + pe) + 1;
   wf_slot_t *fwd = aln_calloc(ring, sizeof(wf_slot_t));
@@ -998,9 +1054,11 @@ static size_t biwfa_rec(const uint8_t *a, const uint8_t *ra, const char *sa, int
     rev[i].m = rev[i].i = rev[i].d = none;
   }
 
-  long long best_s = LLONG_MAX;
-  int32_t bp_v = 0, bp_h = 0;
-  wfa_state_t bp_state = WFA_M;
+  biwfa_meet_t meet = {LLONG_MAX, 0, 0, WFA_M};
+  const wf_dir_t df = {a, b, m, nb, px, po, pe, q->fwd_pad, s0, fwd, ring,
+                       false, null_wf};
+  const wf_dir_t dr = {ra, rb, m, nb, px, po, pe, q->rev_pad, s1, rev, ring,
+                       false, null_wf};
   long long sf = -1, sr = -1;
   int32_t max_hf = 0, max_hr = 0;
   size_t empty_f = 0, empty_r = 0;
@@ -1008,8 +1066,7 @@ static size_t biwfa_rec(const uint8_t *a, const uint8_t *ra, const char *sa, int
 
   for(;;) {
     sf++;
-    size_t w = wf_step(a, m, b, nb, px, po, pe, s0, fwd, ring, false,
-                       fwd_pad, null_wf, sf, &max_hf);
+    size_t w = wf_step(&df, sf, &max_hf);
     if(w == SIZE_MAX) null_wf->nomem = true;
     if(w == SIZE_MAX || w > *budget_left) { ok = false; break; }
     *budget_left -= w;
@@ -1020,13 +1077,12 @@ static size_t biwfa_rec(const uint8_t *a, const uint8_t *ra, const char *sa, int
       if(t0 < 0) t0 = 0;
       for(long long t = t0; t <= sr; t++)
         biwfa_check(&fwd[(size_t)sf % ring], sf, &rev[(size_t)t % ring], t,
-                    m, nb, po, &best_s, &bp_v, &bp_h, &bp_state);
+                    m, nb, po, &meet);
     }
-    if(best_s < LLONG_MAX && sf + sr >= best_s + po + (long long)ring) break;
+    if(meet.s < LLONG_MAX && sf + sr >= meet.s + po + (long long)ring) break;
 
     sr++;
-    w = wf_step(ra, m, rb, nb, px, po, pe, s1, rev, ring, false,
-                rev_pad, null_wf, sr, &max_hr);
+    w = wf_step(&dr, sr, &max_hr);
     if(w == SIZE_MAX) null_wf->nomem = true;
     if(w == SIZE_MAX || w > *budget_left) { ok = false; break; }
     *budget_left -= w;
@@ -1037,31 +1093,33 @@ static size_t biwfa_rec(const uint8_t *a, const uint8_t *ra, const char *sa, int
       if(t0 < 0) t0 = 0;
       for(long long t = t0; t <= sf; t++)
         biwfa_check(&fwd[(size_t)t % ring], t, &rev[(size_t)sr % ring], sr,
-                    m, nb, po, &best_s, &bp_v, &bp_h, &bp_state);
+                    m, nb, po, &meet);
     }
-    if(best_s < LLONG_MAX && sf + sr >= best_s + po + (long long)ring) break;
+    if(meet.s < LLONG_MAX && sf + sr >= meet.s + po + (long long)ring) break;
     if(sf > (long long)INT32_MAX / 2) { ok = false; break; }
   }
 
   wfa_free(fwd, ring);
   wfa_free(rev, ring);
-  if(!ok || best_s == LLONG_MAX) return 0;
-  if(penalty_out) *penalty_out = best_s;
+  if(!ok || meet.s == LLONG_MAX) return 0;
+  if(penalty_out) *penalty_out = meet.s;
 
-  if((bp_v <= 0 && bp_h <= 0) || (bp_v >= m && bp_h >= nb)) {
-    return biwfa_base(a, sa, m, b, sb, nb, px, po, pe, s0, s1,
-                      fwd_pad, null_wf, budget_left, out_a, out_b);
-  }
+  const int32_t bp_v = meet.v, bp_h = meet.h;
+  if((bp_v <= 0 && bp_h <= 0) || (bp_v >= m && bp_h >= nb))
+    return biwfa_base(c, q, out_a, out_b);
 
-  size_t nl = biwfa_rec(a, ra + (m - bp_v), sa, bp_v,
-                        b, rb + (nb - bp_h), sb, bp_h,
-                        px, po, pe, s0, bp_state, false, rev_pad, null_wf,
-                        budget_left, out_a, out_b, NULL);
+  // The two halves: up to the meeting cell (its reversed strings start
+  // there, and the forward ones' padding is now out of reach), and from it
+  biwfa_sub_t left = *q, right = *q;
+  left.ra = ra + (m - bp_v); left.m = bp_v;
+  left.rb = rb + (nb - bp_h); left.nb = bp_h;
+  left.s1 = meet.state; left.fwd_pad = false;
+  right.a = a + bp_v; right.sa = sa + bp_v; right.m = m - bp_v;
+  right.b = b + bp_h; right.sb = sb + bp_h; right.nb = nb - bp_h;
+  right.s0 = meet.state; right.rev_pad = false;
+  size_t nl = biwfa_rec(c, &left, out_a, out_b, NULL);
   if(nl == 0 && (bp_v > 0 || bp_h > 0)) return 0;
-  size_t nr = biwfa_rec(a + bp_v, ra, sa + bp_v, m - bp_v,
-                        b + bp_h, rb, sb + bp_h, nb - bp_h,
-                        px, po, pe, bp_state, s1, fwd_pad, false, null_wf,
-                        budget_left, out_a + nl, out_b + nl, NULL);
+  size_t nr = biwfa_rec(c, &right, out_a + nl, out_b + nl, NULL);
   if(nr == 0 && (m - bp_v > 0 || nb - bp_h > 0)) return 0;
   return nl + nr;
 }
@@ -1131,11 +1189,10 @@ aln_status_t alignment_wfa_align(const sub_table_t *table,
   wf_null_t null_wf = {NULL, 0, false};
   size_t budget_left = budget;
   long long penalty = -1;
-  size_t n = biwfa_rec(pair.a, ra, seq_a, pair.m,
-                       pair.b, rb, seq_b, pair.nb,
-                       pair.px, pair.po, pair.pe, WFA_M, WFA_M,
-                       true, true, &null_wf,
-                       &budget_left, result->result_a, result->result_b,
+  const biwfa_ctx_t ctx = {pair.px, pair.po, pair.pe, &null_wf, &budget_left};
+  const biwfa_sub_t whole = {pair.a, ra, seq_a, pair.m, pair.b, rb, seq_b,
+                             pair.nb, WFA_M, WFA_M, true, true};
+  size_t n = biwfa_rec(&ctx, &whole, result->result_a, result->result_b,
                        &penalty);
   free(null_wf.buf);
   free(ra);

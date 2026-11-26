@@ -19,7 +19,7 @@
 // H[r] best score in its last column, F[r] the insertion gap score entering
 // the next column. done counts the rows published so far (64-byte aligned
 // to avoid false sharing between adjacent blocks)
-typedef struct {
+typedef struct hb_boundary {
   _Alignas(64) score_t *H, *F;
   atomic_size_t done;
   atomic_uint waiters;
@@ -190,13 +190,17 @@ ALN_INLINE void hb16_row(hb16_part_t *s, size_t code, score_t col0,
 // reference takes the difference off the cells above, in the gap extension
 // for the deletion and once more for the diagonal
 ALN_TARGET_CLONES
-static void hb_block_pass16(hb_state_t *st, const char *a, ptrdiff_t astep,
-                            size_t rows, const char *b, ptrdiff_t bstep,
-                            size_t c0, size_t width, score_t t0,
-                            score_t *oc, score_t *od, ptrdiff_t ostep,
-                            void *buf, hb_boundary_t *left,
-                            hb_boundary_t *right, const hb_top_t *top)
+static void hb_block_pass16(const hb_block_args_t *blk)
 {
+  hb_state_t *const st = blk->st;
+  const char *const a = blk->a, *const b = blk->b;
+  const ptrdiff_t astep = blk->astep, bstep = blk->bstep, ostep = blk->ostep;
+  const size_t rows = blk->rows, c0 = blk->c0, width = blk->width;
+  const score_t t0 = blk->t0;
+  score_t *const oc = blk->oc, *const od = blk->od;
+  void *const buf = blk->buf;
+  hb_boundary_t *const left = blk->left, *const right = blk->right;
+  const hb_top_t *const top = blk->top;
   const scoring_t *scoring = st->scoring;
   const sub_table_t *t = &st->table;
   const score_t g = scoring->gap_open, h = scoring->gap_extend;
@@ -309,13 +313,17 @@ static void hb_block_pass16(hb_state_t *st, const char *a, ptrdiff_t astep,
 // ALN_VL, so its last column is the last cell of its last lane.
 // top, if not NULL, gives the top row and left column of a strip instead
 ALN_TARGET_CLONES
-static void hb_block_pass(hb_state_t *st, const char *a, ptrdiff_t astep,
-                          size_t rows, const char *b, ptrdiff_t bstep,
-                          size_t c0, size_t width, score_t t0,
-                          score_t *oc, score_t *od, ptrdiff_t ostep,
-                          void *buf, hb_boundary_t *left, hb_boundary_t *right,
-                          const hb_top_t *top)
+static void hb_block_pass(const hb_block_args_t *blk)
 {
+  hb_state_t *const st = blk->st;
+  const char *const a = blk->a, *const b = blk->b;
+  const ptrdiff_t astep = blk->astep, bstep = blk->bstep, ostep = blk->ostep;
+  const size_t rows = blk->rows, c0 = blk->c0, width = blk->width;
+  const score_t t0 = blk->t0;
+  score_t *const oc = blk->oc, *const od = blk->od;
+  void *const buf = blk->buf;
+  hb_boundary_t *const left = blk->left, *const right = blk->right;
+  const hb_top_t *const top = blk->top;
   // Twice the lanes where the scores fit (see hb_block_pass16())
   // (parts of at least 4 vectors' columns keep its rows and profiles within
   // the space this block's 32-bit ones take; at most HB16_MAX_PARTS parts,
@@ -323,8 +331,7 @@ static void hb_block_pass(hb_state_t *st, const char *a, ptrdiff_t astep,
   if((top == NULL || top->real) && st->w16 >= 4 * HB_VL16 &&
      (width + st->w16 - 1) / st->w16 <= HB16_MAX_PARTS &&
      (right == NULL || width % HB_VL16 == 0)) {
-    hb_block_pass16(st, a, astep, rows, b, bstep, c0, width, t0, oc, od,
-                    ostep, buf, left, right, top);
+    hb_block_pass16(blk);
     return;
   }
 
@@ -447,31 +454,19 @@ static void hb_block_pass(hb_state_t *st, const char *a, ptrdiff_t astep,
 }
 
 // One column block of a pass, run on its own thread
-typedef struct {
-  hb_state_t *st; const char *a; ptrdiff_t astep; size_t rows;
-  const char *b; ptrdiff_t bstep; size_t c0, width; score_t t0;
-  score_t *oc, *od; ptrdiff_t ostep; void *buf;
-  hb_boundary_t *left, *right; const hb_top_t *top;
-} hb_block_args_t;
-
 static void* hb_block_thread(void *ptr)
 {
-  hb_block_args_t *p = ptr;
-  hb_block_pass(p->st, p->a, p->astep, p->rows, p->b, p->bstep, p->c0,
-                p->width, p->t0, p->oc, p->od, p->ostep, p->buf,
-                p->left, p->right, p->top);
+  hb_block_pass(ptr);
   return NULL;
 }
 
 // One pass of hb_diff() over the n columns c0+1 .. c0+n: as one block, or
 // split into column blocks on several threads when it is big enough (see
 // hb_block_pass()). A whole pass has c0 = 0 and top = NULL
-void hb_pass_striped(hb_state_t *st, const char *a, ptrdiff_t astep,
-                            size_t rows, const char *b, ptrdiff_t bstep,
-                            size_t c0, size_t n, score_t t0,
-                            score_t *oc, score_t *od, ptrdiff_t ostep,
-                            void *buf, const hb_top_t *top, int threads)
+void hb_pass_striped(const hb_block_args_t *pass, int threads)
 {
+  hb_state_t *const st = pass->st;
+  const size_t rows = pass->rows, c0 = pass->c0, n = pass->width;
   // At least one vector of columns per block, so no block is empty
   const size_t min_cols = MAX2(st->opts.hb_block_min_cols, (size_t)ALN_VL);
   size_t nblocks = 1, i;
@@ -482,8 +477,7 @@ void hb_pass_striped(hb_state_t *st, const char *a, ptrdiff_t astep,
   }
 
   if(nblocks <= 1) {
-    hb_block_pass(st, a, astep, rows, b, bstep, c0, n, t0, oc, od, ostep, buf,
-                  NULL, NULL, top);
+    hb_block_pass(pass);
     return;
   }
 
@@ -531,12 +525,12 @@ void hb_pass_striped(hb_state_t *st, const char *a, ptrdiff_t astep,
   }
 
   for(i = 0; i < nblocks; i++) {
-    hb_block_args_t blk = {st, a, astep, rows, b, bstep, c0 + i * width,
-                           i + 1 < nblocks ? width : n - i * width, t0,
-                           oc, od, ostep, (char*)bufs + i * bufsize,
-                           i > 0 ? &bounds[i-1] : NULL,
-                           i + 1 < nblocks ? &bounds[i] : NULL, top};
-    args[i] = blk;
+    args[i] = *pass;
+    args[i].c0 = c0 + i * width;
+    args[i].width = i + 1 < nblocks ? width : n - i * width;
+    args[i].buf = (char*)bufs + i * bufsize;
+    args[i].left = i > 0 ? &bounds[i-1] : NULL;
+    args[i].right = i + 1 < nblocks ? &bounds[i] : NULL;
   }
 
   // Block 0 runs here; the rest on their own threads. A block whose thread
@@ -559,6 +553,32 @@ void hb_pass_striped(hb_state_t *st, const char *a, ptrdiff_t astep,
   free(edges);
 }
 
+// One whole pass of hb_diff() over the n columns 1 .. n (as
+// hb_block_args_t, without the block fields), on up to threads threads:
+// banded over the diagonals dlo .. dhi when dlo <= dhi
+// (hb_pass_banded()), or saving the rows of save on the way
+// (hb_pass_saving())
+typedef struct {
+  hb_state_t *st; const char *a; ptrdiff_t astep; size_t rows;
+  const char *b; ptrdiff_t bstep; size_t n; score_t t0;
+  score_t *oc, *od; ptrdiff_t ostep; void *buf; ptrdiff_t dlo, dhi;
+  int threads; const hb_chain_t *save;
+} hb_pass_args_t;
+
+// The block a pass runs as: the pass's fields, from row `from` of a, over
+// rows rows and the columns c0+1 .. c0+width, writing oc / od by column
+// with stride ostep (the pass's own, or 1 for a strip's top row)
+static hb_block_args_t hb_pass_block(const hb_pass_args_t *p, size_t from,
+                                     size_t rows, size_t c0, size_t width,
+                                     score_t *oc, score_t *od,
+                                     ptrdiff_t ostep, const hb_top_t *top)
+{
+  hb_block_args_t blk = {p->st, p->a + (ptrdiff_t)from * p->astep, p->astep,
+                         rows, p->b, p->bstep, c0, width, p->t0, oc, od,
+                         ostep, p->buf, NULL, NULL, top};
+  return blk;
+}
+
 // Banded version of hb_pass_striped() over all n columns: only cells on
 // diagonals dlo <= j - i <= dhi (row i, column j of the pass) need to be
 // right. The rows are cut into strips; each strip runs over just the columns
@@ -566,13 +586,13 @@ void hb_pass_striped(hb_state_t *st, const char *a, ptrdiff_t astep,
 // top-row cells the strip above did not compute. Cells next to those come
 // out too low, never too high, and cells whose best path stays inside the
 // band are exact. Columns of the last row outside the strip get HB_NEG
-static void hb_pass_banded(hb_state_t *st, const char *a, ptrdiff_t astep,
-                           size_t rows, const char *b, ptrdiff_t bstep,
-                           size_t n, score_t t0,
-                           score_t *oc, score_t *od, ptrdiff_t ostep,
-                           void *buf, ptrdiff_t dlo, ptrdiff_t dhi,
-                           int threads)
+static void hb_pass_banded(const hb_pass_args_t *p)
 {
+  hb_state_t *const st = p->st;
+  const size_t rows = p->rows, n = p->n;
+  const score_t t0 = p->t0;
+  score_t *const oc = p->oc, *const od = p->od;
+  const ptrdiff_t ostep = p->ostep, dlo = p->dlo, dhi = p->dhi;
   const score_t g = st->scoring->gap_open, h = st->scoring->gap_extend;
   size_t strip = st->opts.hb_band_strip_rows;
   if(strip == 0) strip = MAX2(256, (size_t)(dhi - dlo + 1) / 4);
@@ -603,8 +623,9 @@ static void hb_pass_banded(hb_state_t *st, const char *a, ptrdiff_t astep,
     jr_prev = jr;
 
     hb_top_t top = {top_h, top_d, i0 == 0 ? t0 : top_h[0], c0 > 0, false};
-    hb_pass_striped(st, a + (ptrdiff_t)i0 * astep, astep, hs, b, bstep,
-                    c0, jr - c0, t0, top_h, top_d, 1, buf, &top, threads);
+    const hb_block_args_t strip_pass =
+      hb_pass_block(p, i0, hs, c0, jr - c0, top_h, top_d, 1, &top);
+    hb_pass_striped(&strip_pass, p->threads);
     // Out of memory in a strip: the ones below would build on stale rows
     if(__atomic_load_n(&st->nomem, __ATOMIC_RELAXED)) {
       free(top_h);
@@ -624,48 +645,33 @@ static void hb_pass_banded(hb_state_t *st, const char *a, ptrdiff_t astep,
 // (NULL: none) on the way: it runs in pieces, each starting from the row the
 // one before wrote, as a strip of hb_pass_banded() starts from the strip
 // above
-static void hb_pass_saving(hb_state_t *st, const char *a, ptrdiff_t astep,
-                           size_t rows, const char *b, ptrdiff_t bstep,
-                           size_t n, score_t t0,
-                           score_t *oc, score_t *od, ptrdiff_t ostep,
-                           void *buf, int threads, const hb_chain_t *save)
+static void hb_pass_saving(const hb_pass_args_t *p)
 {
+  const hb_chain_t *save = p->save;
   hb_top_t top;
   const hb_top_t *tp = NULL;
   size_t done = 0, k;
   for(k = 0; save != NULL && k < save->len; k++) {
-    hb_pass_striped(st, a + (ptrdiff_t)done * astep, astep,
-                    save->rows[k] - done, b, bstep, 0, n, t0,
-                    save->h[k], save->d[k], 1, buf, tp, threads);
-    if(__atomic_load_n(&st->nomem, __ATOMIC_RELAXED)) return;
+    const hb_block_args_t piece =
+      hb_pass_block(p, done, save->rows[k] - done, 0, p->n,
+                    save->h[k], save->d[k], 1, tp);
+    hb_pass_striped(&piece, p->threads);
+    if(__atomic_load_n(&p->st->nomem, __ATOMIC_RELAXED)) return;
     top = (hb_top_t){save->h[k], save->d[k], save->h[k][0], false, true};
     tp = &top;
     done = save->rows[k];
   }
-  hb_pass_striped(st, a + (ptrdiff_t)done * astep, astep, rows - done,
-                  b, bstep, 0, n, t0, oc, od, ostep, buf, tp, threads);
+  const hb_block_args_t rest =
+    hb_pass_block(p, done, p->rows - done, 0, p->n, p->oc, p->od, p->ostep,
+                  tp);
+  hb_pass_striped(&rest, p->threads);
 }
-
-// Arguments for running hb_pass_saving() or hb_pass_banded() on another
-// thread: banded when dlo <= dhi
-typedef struct {
-  hb_state_t *st; const char *a; ptrdiff_t astep; size_t rows;
-  const char *b; ptrdiff_t bstep; size_t n; score_t t0;
-  score_t *oc, *od; ptrdiff_t ostep; void *buf; ptrdiff_t dlo, dhi;
-  int threads; const hb_chain_t *save;
-} hb_pass_args_t;
 
 static void* hb_pass_thread(void *ptr)
 {
-  hb_pass_args_t *p = ptr;
-  if(p->dlo <= p->dhi)
-    hb_pass_banded(p->st, p->a, p->astep, p->rows, p->b, p->bstep, p->n,
-                   p->t0, p->oc, p->od, p->ostep, p->buf, p->dlo, p->dhi,
-                   p->threads);
-  else
-    hb_pass_saving(p->st, p->a, p->astep, p->rows, p->b, p->bstep, p->n,
-                   p->t0, p->oc, p->od, p->ostep, p->buf, p->threads,
-                   p->save);
+  const hb_pass_args_t *p = ptr;
+  if(p->dlo <= p->dhi) hb_pass_banded(p);
+  else hb_pass_saving(p);
   return NULL;
 }
 
