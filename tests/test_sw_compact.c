@@ -21,7 +21,7 @@ void simd_test_compact_rect()
   size_t rect_cells = smith_waterman_rect_min_cells;
   sw_aligner_t *full = smith_waterman_new(), *rect = smith_waterman_new();
   alignment_t *r_full = alignment_create(256), *r_rect = alignment_create(256);
-  char core[701], hit[901], seqa[2001], seqb[2001];
+  char core[701], hit[1401], seqa[2001], seqb[3001];
   scoring_t scoring;
   const unsigned int rates[] = {0, 10, 60, 200};
   size_t i, h, rects = 0, hits = 0;
@@ -122,7 +122,7 @@ void simd_test_strips()
   size_t strip_cells = smith_waterman_strip_min_cells;
   sw_aligner_t *full = smith_waterman_new(), *strips = smith_waterman_new();
   alignment_t *r_full = alignment_create(256), *r_strips = alignment_create(256);
-  char core[701], hit[901], seqa[2001], seqb[2001];
+  char core[701], hit[1401], seqa[2001], seqb[3001];
   scoring_t scoring;
   const unsigned int rates[] = {0, 10, 60, 200};
   size_t i, h, hits = 0, used = smith_waterman_strip_alignments;
@@ -195,7 +195,7 @@ void simd_test_strips()
  * otherwise finds what the full scan finds */
 void simd_test_scan_short()
 {
-  static char a[3001], b[3001];
+  static char a[3001], b[6001];
   scoring_t scoring;
   score_t best, best_s;
   size_t x, y, xs, ys, i;
@@ -232,7 +232,7 @@ void simd_test_narrow(int bits)
   int max_threads = alignment_max_threads;
   sw_aligner_t *full = smith_waterman_new(), *compact = smith_waterman_new();
   alignment_t *r_full = alignment_create(256), *r_compact = alignment_create(256);
-  char seqa[1201], seqb[2001], core[1001];
+  char seqa[1201], seqb[2201], core[1001];
   scoring_t scoring;
   const unsigned int rates[] = {0, 10, 60, 300};
   const int top = bits == 8 ? INT8_MAX : INT16_MAX;

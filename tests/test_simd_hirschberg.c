@@ -311,7 +311,7 @@ void simd_test_hirschberg_narrow()
   size_t part_cols = hirschberg_part16_max_cols, parts = hirschberg_parts16;
   size_t mismatches = hirschberg_striped_mismatches;
   alignment_t *ref = alignment_create(256), *aln = alignment_create(256);
-  static char seqa[1401], seqb[1401];
+  static char seqa[1401], seqb[2801];
   scoring_t scoring;
   const unsigned int rates[] = {0, 30, 150, 400};
   size_t i;

@@ -437,7 +437,7 @@ void simd_test_compact_band(bool keep)
   bool seeds_on = alignment_seeds_enabled;
   nw_aligner_t *full = needleman_wunsch_new(), *compact = needleman_wunsch_new();
   alignment_t *r_full = alignment_create(256), *r_compact = alignment_create(256);
-  char seqa[1601], seqb[1801];
+  char seqa[1601], seqb[3201];
   scoring_t scoring;
   const size_t strips[] = {1, 5, 32, 0};
   const unsigned int rates[] = {0, 5, 30, 120};
@@ -590,7 +590,7 @@ void simd_test_compact_band(bool keep)
 // on without opening), with short seeds of various scorings
 void simd_test_seeds()
 {
-  char seqa[401], seqb[561];
+  char seqa[401], seqb[601];
   scoring_t scoring;
   const unsigned int rates[] = {0, 10, 50, 150, 400};
   size_t it, i, j, checked = 0, built = 0;

@@ -57,7 +57,7 @@ void test_global_inputs()
 #define OPT_PAIRS 40
 typedef struct {
   const alignment_options_t *opts;
-  char (*a)[401], (*b)[701];
+  char (*a)[401], (*b)[801];
   score_t nw[OPT_PAIRS], sw[OPT_PAIRS], hb[OPT_PAIRS];
 } opt_run_t;
 
@@ -92,7 +92,7 @@ static void* opt_run(void *ptr)
 
 void options_test_per_aligner()
 {
-  static char a[OPT_PAIRS][401], b[OPT_PAIRS][701];
+  static char a[OPT_PAIRS][401], b[OPT_PAIRS][801];
   alignment_options_t many, plain;
   size_t i;
   for(i = 0; i < OPT_PAIRS; i++) {

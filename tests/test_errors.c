@@ -202,8 +202,17 @@ void test_out_of_memory()
 {
   enum { CAP = 1 << 14 };
   static char a[161], b[321], ref[CAP], sig[CAP];
+  size_t i;
+  // b: a with about one letter in 25 changed, and no gaps, so the narrow
+  // bands forced below always hold the best path (a run deletion could
+  // put it outside them, and the test then could not tell a band that
+  // was not used from one whose allocations were made to fail)
   test_rand_seq(a, 160, "acgt");
-  test_mutate(b, a, 40, "acgt");
+  for(i = 0; i < 160; i++) {
+    b[i] = a[i];
+    if(test_rand(25) == 0) b[i] = "acgt"[(strchr("acgt", a[i]) - "acgt" + 1 + test_rand(3)) % 4];
+  }
+  b[160] = '\0';
   // Blocks on several threads, the Smith-Waterman rectangle, and bands
   // narrow enough to pay on these short sequences
   alignment_options_t many;
