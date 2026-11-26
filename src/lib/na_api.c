@@ -245,237 +245,44 @@ na_status_t na_scoring_lookup(const na_scoring_t *sc, char a, char b,
   return NA_OK;
 }
 
-/* --- In-memory scoring parsers (transactional, zero exit(), zero zlib) --- */
+/* --- The scoring file formats, from memory: the library's parsers
+ * (alignment_scoring_parse.c), which change nothing on an error --- */
 
-static const char *next_line(const char *p, const char *end,
-                             const char **line_start, size_t *line_len)
+static na_status_t parse_status(scoring_parse_t st, int line, na_error_t *err)
 {
-  if(p >= end) return NULL;
-  *line_start = p;
-  const char *nl = memchr(p, '\n', (size_t)(end - p));
-  const char *lend = nl ? nl : end;
-  size_t len = (size_t)(lend - p);
-  if(len > 0 && p[len - 1] == '\r') len--;
-  *line_len = len;
-  return nl ? nl + 1 : end;
-}
-
-static bool span_all_ws(const char *s, size_t len)
-{
-  for(size_t i = 0; i < len; i++)
-    if(!isspace((unsigned char)s[i])) return false;
-  return true;
-}
-
-static char fold_ch(char c, bool cs)
-{
-  return cs ? c : (char)tolower((unsigned char)c);
-}
-
-static bool parse_int_span(const char *s, size_t len, int *out)
-{
-  if(memchr(s, '\0', len) != NULL) return false;
-  while(len > 0 && isspace((unsigned char)*s)) { s++; len--; }
-  while(len > 0 && isspace((unsigned char)s[len - 1])) len--;
-  if(len == 0 || len >= 32) return false;
-  char tmp[32];
-  memcpy(tmp, s, len);
-  tmp[len] = '\0';
-  char *ep = tmp;
-  long v = strtol(tmp, &ep, 10);
-  if(ep != tmp + len) return false;
-  if(v < -SCORE_ABS_MAX || v > SCORE_ABS_MAX) return false;
-  *out = (int)v;
-  return true;
-}
-
-// The parsers below read into a copy of the scoring (tmp) and swap it in
-// only at the end, so nothing changes on an error. They share a shape:
-// every failure sets status, line and msg and jumps to the cleanup
-#define PARSE_FAIL(st, ln, m) \
-  do { status = (st); fail_line = (ln); fail_msg = (m); goto fail; } while(0)
-
-// One field of a matrix row: the score at ls[start..idx) added for from_c
-// against the column's character. False where it is not a score
-static bool matrix_field(scoring_t *tmp, const char *ls, size_t start,
-                         size_t idx, char from_c, char to_c)
-{
-  int v = 0;
-  if(idx == start || !parse_int_span(ls + start, idx - start, &v))
-    return false;
-  scoring_add_mutation(tmp, from_c, to_c, v);
-  return true;
+  if(st == SCORING_PARSE_OK) {
+    na_set_err(err, NA_OK, 0, 0, -1, NULL);
+    return NA_OK;
+  }
+  const na_status_t status = st == SCORING_PARSE_NOMEM ? NA_ERR_NOMEM
+                                                       : NA_ERR_PARSE;
+  na_set_err(err, status, 0, 0, line, scoring_parse_strerror(st));
+  return status;
 }
 
 na_status_t na_scoring_parse_matrix(na_scoring_t *sc, const char *text,
                                     size_t len, na_error_t *err)
 {
-  na_status_t status = NA_ERR_PARSE;
-  int fail_line = -1;
-  const char *fail_msg = NULL;
-  scoring_t *tmp = NULL;
-  char *chars = NULL;
-
-  if(sc == NULL || text == NULL)
-    PARSE_FAIL(NA_ERR_INVALID_ARG, -1, "invalid argument");
-  if((tmp = aln_malloc(sizeof(*tmp))) == NULL)
-    PARSE_FAIL(NA_ERR_NOMEM, -1, "out of memory");
-  *tmp = sc->s;
-  const bool cs = tmp->case_sensitive;
-  const char *p = text, *end = text + len;
-  const char *ls = NULL;
-  size_t llen = 0;
-  int line_num = 0, rows_added = 0;
-
-  // Find header line
-  bool found = false;
-  while((p = next_line(p, end, &ls, &llen)) != NULL) {
-    line_num++;
-    if(llen > 0 && ls[0] != '#' && !span_all_ws(ls, llen)) {
-      if(llen < 2) PARSE_FAIL(NA_ERR_PARSE, line_num, "too few column headings");
-      found = true;
-      break;
-    }
+  if(sc == NULL || text == NULL) {
+    na_set_err(err, NA_ERR_INVALID_ARG, 0, 0, -1, "invalid argument");
+    return NA_ERR_INVALID_ARG;
   }
-  if(!found) PARSE_FAIL(NA_ERR_PARSE, -1, "empty matrix");
-
-  char sep = ls[0];
-  if((sep >= '0' && sep <= '9') || sep == '-')
-    PARSE_FAIL(NA_ERR_PARSE, line_num, "invalid separator");
-
-  if((chars = aln_malloc(llen)) == NULL)
-    PARSE_FAIL(NA_ERR_NOMEM, -1, "out of memory");
-  size_t nchars = 0;
-
-  if(isspace((unsigned char)sep)) {
-    for(size_t i = 1; i < llen; i++) {
-      if(!isspace((unsigned char)ls[i])) {
-        chars[nchars++] = fold_ch(ls[i], cs);
-      }
-    }
-    while((p = next_line(p, end, &ls, &llen)) != NULL) {
-      line_num++;
-      if(llen == 0 || ls[0] == '#' || span_all_ws(ls, llen)) continue;
-      size_t idx = 0;
-      while(idx < llen && isspace((unsigned char)ls[idx])) idx++;
-      char from_c = fold_ch(ls[idx++], cs);
-      for(size_t c = 0; c < nchars; c++) {
-        if(idx >= llen || !isspace((unsigned char)ls[idx]))
-          PARSE_FAIL(NA_ERR_PARSE, line_num,
-                     "too few columns or missing whitespace");
-        while(idx < llen && isspace((unsigned char)ls[idx])) idx++;
-        size_t start = idx;
-        while(idx < llen && !isspace((unsigned char)ls[idx])) idx++;
-        if(!matrix_field(tmp, ls, start, idx, from_c, chars[c]))
-          PARSE_FAIL(NA_ERR_PARSE, line_num, "invalid or out-of-range score");
-      }
-      if(!span_all_ws(ls + idx, llen - idx))
-        PARSE_FAIL(NA_ERR_PARSE, line_num, "too many columns on row");
-      rows_added++;
-    }
-  } else {
-    size_t i;
-    for(i = 0; i + 1 < llen; i += 2) {
-      if(ls[i] != sep)
-        PARSE_FAIL(NA_ERR_PARSE, line_num, "separator missing from header");
-      chars[nchars++] = fold_ch(ls[i + 1], cs);
-    }
-    if(i < llen) PARSE_FAIL(NA_ERR_PARSE, line_num, "empty column heading");
-    while((p = next_line(p, end, &ls, &llen)) != NULL) {
-      line_num++;
-      if(llen == 0 || ls[0] == '#' || span_all_ws(ls, llen)) continue;
-      char from_c = fold_ch(ls[0], cs);
-      size_t idx = 1;
-      for(size_t c = 0; c < nchars; c++) {
-        if(idx >= llen || ls[idx] != sep)
-          PARSE_FAIL(NA_ERR_PARSE, line_num,
-                     "separator missing or too few columns");
-        idx++;
-        size_t start = idx;
-        while(idx < llen && ls[idx] != sep) idx++;
-        // An empty field is a parse error too: parse_int_span() refuses it
-        if(!parse_int_span(ls + start, idx - start, &(int){0}) ||
-           !matrix_field(tmp, ls, start, idx, from_c, chars[c]))
-          PARSE_FAIL(NA_ERR_PARSE, line_num, "invalid or out-of-range score");
-      }
-      if(idx < llen) PARSE_FAIL(NA_ERR_PARSE, line_num, "too many columns on row");
-      rows_added++;
-    }
-  }
-
-  if(rows_added == 0) PARSE_FAIL(NA_ERR_PARSE, -1, "no rows in matrix");
-  free(chars);
-  sc->s = *tmp;
-  free(tmp);
-  na_set_err(err, NA_OK, 0, 0, -1, NULL);
-  return NA_OK;
-
-fail:
-  free(chars);
-  free(tmp);
-  na_set_err(err, status, 0, 0, fail_line, fail_msg);
-  return status;
+  int line = -1;
+  const scoring_parse_t st = scoring_parse_matrix(&sc->s, text, len, &line);
+  return parse_status(st, line, err);
 }
 
 na_status_t na_scoring_parse_pairs(na_scoring_t *sc, const char *text,
                                    size_t len, na_error_t *err)
 {
-  na_status_t status = NA_ERR_PARSE;
-  int fail_line = -1;
-  const char *fail_msg = NULL;
-  scoring_t *tmp = NULL;
-
-  if(sc == NULL || text == NULL)
-    PARSE_FAIL(NA_ERR_INVALID_ARG, -1, "invalid argument");
-  if((tmp = aln_malloc(sizeof(*tmp))) == NULL)
-    PARSE_FAIL(NA_ERR_NOMEM, -1, "out of memory");
-  *tmp = sc->s;
-  const bool cs = tmp->case_sensitive;
-  const char *p = text, *end = text + len;
-  const char *ls = NULL;
-  size_t llen = 0;
-  int line_num = 0, added = 0;
-
-  while((p = next_line(p, end, &ls, &llen)) != NULL) {
-    line_num++;
-    if(llen == 0 || ls[0] == '#' || span_all_ws(ls, llen)) continue;
-    if(llen < 5) PARSE_FAIL(NA_ERR_PARSE, line_num, "line too short");
-    char a, b;
-    int score = 0;
-    if(isspace((unsigned char)ls[1])) {
-      a = ls[0];
-      size_t pos = 1;
-      while(pos < llen && isspace((unsigned char)ls[pos])) pos++;
-      if(pos + 2 >= llen || !isspace((unsigned char)ls[pos + 1]))
-        PARSE_FAIL(NA_ERR_PARSE, line_num, "line too short");
-      b = ls[pos];
-      if(!parse_int_span(ls + pos + 2, llen - (pos + 2), &score))
-        PARSE_FAIL(NA_ERR_PARSE, line_num, "invalid or out-of-range score");
-    } else {
-      if(ls[1] != ls[3])
-        PARSE_FAIL(NA_ERR_PARSE, line_num, "inconsistent separators");
-      a = ls[0];
-      b = ls[2];
-      if(!parse_int_span(ls + 4, llen - 4, &score))
-        PARSE_FAIL(NA_ERR_PARSE, line_num, "invalid or out-of-range score");
-    }
-    scoring_add_mutation(tmp, fold_ch(a, cs), fold_ch(b, cs), score);
-    added++;
+  if(sc == NULL || text == NULL) {
+    na_set_err(err, NA_ERR_INVALID_ARG, 0, 0, -1, "invalid argument");
+    return NA_ERR_INVALID_ARG;
   }
-
-  if(added == 0) PARSE_FAIL(NA_ERR_PARSE, -1, "no pairs added");
-  sc->s = *tmp;
-  free(tmp);
-  na_set_err(err, NA_OK, 0, 0, -1, NULL);
-  return NA_OK;
-
-fail:
-  free(tmp);
-  na_set_err(err, status, 0, 0, fail_line, fail_msg);
-  return status;
+  int line = -1;
+  const scoring_parse_t st = scoring_parse_pairs(&sc->s, text, len, &line);
+  return parse_status(st, line, err);
 }
-
-#undef PARSE_FAIL
 
 /* =========================================================================
  * Alignment Result

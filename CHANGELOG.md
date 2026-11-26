@@ -51,6 +51,15 @@ fixes listed under [Changes to output](#changes-to-output).
 
 ### Changed
 
+- One parser for the scoring file formats, in the library
+  (`scoring_parse_matrix()`, `scoring_parse_pairs()`,
+  `scoring_parse_strerror()` in `alignment_scoring.h`): the public API's
+  `na_scoring_parse_*()` and the tools' `--substitution_matrix` and
+  `--substitution_pairs` read through it. The tools now read the whole
+  (gzipped) file first, and their loads are transactional too; a matrix
+  file with headings and no rows is refused ("No rows in matrix") instead
+  of being accepted empty. The public API's error messages take the tools'
+  wording. `align_scoring_load_*()` take the case setting from the scoring
 - The unit tests are one file per subject (`tests/test_*.c`, twelve
   suites) on a shared harness (`tests/test_common.h`): one random
   generator reseeded for every test from the run's seed and the test's

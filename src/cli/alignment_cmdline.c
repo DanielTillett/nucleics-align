@@ -440,8 +440,7 @@ cmdline_t* cmdline_new(int argc, char **argv, scoring_t *scoring,
         gzFile sub_matrix_file = gzopen(argv[argi+1], "r");
         if(sub_matrix_file == NULL) usage("Couldn't read: %s", argv[argi+1]);
 
-        align_scoring_load_matrix(sub_matrix_file, argv[argi+1],
-                                  scoring, cmd->case_sensitive);
+        align_scoring_load_matrix(sub_matrix_file, argv[argi+1], scoring);
 
         gzclose(sub_matrix_file);
         substitutions_set = true;
@@ -453,8 +452,7 @@ cmdline_t* cmdline_new(int argc, char **argv, scoring_t *scoring,
         gzFile sub_pairs_file = gzopen(argv[argi+1], "r");
         if(sub_pairs_file == NULL) usage("Couldn't read: %s", argv[argi+1]);
 
-        align_scoring_load_pairwise(sub_pairs_file, argv[argi+1],
-                                    scoring, cmd->case_sensitive);
+        align_scoring_load_pairwise(sub_pairs_file, argv[argi+1], scoring);
 
         gzclose(sub_pairs_file);
         substitutions_set = true;

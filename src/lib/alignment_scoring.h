@@ -115,6 +115,38 @@ bool scoring_system_by_name(scoring_t *scoring, const char *name);
 // Their names, separated by '|'
 const char* scoring_system_names(void);
 
+// The scoring file formats in scoring/, read from memory (see
+// alignment_scoring_parse.c): a substitution matrix, or pairs. Nothing
+// changes on an error; *line (may be NULL) then gets the 1-based line it
+// is on, or -1 for one of the file as a whole
+typedef enum {
+  SCORING_PARSE_OK = 0,
+  SCORING_PARSE_NOMEM,
+  SCORING_PARSE_EMPTY,          // matrix: no header line
+  SCORING_PARSE_FEW_HEADINGS,   // matrix: a header of one character
+  SCORING_PARSE_SEPARATOR,      // matrix: a digit or - as the separator
+  SCORING_PARSE_SEP_MISSING,    // matrix: a column without its separator
+  SCORING_PARSE_EMPTY_HEADING,  // matrix: a separator with nothing after it
+  SCORING_PARSE_FEW_COLUMNS,    // matrix: a row ends before its last column
+  SCORING_PARSE_EXPECTED_WS,    // matrix: a character where whitespace
+                                // should separate scores
+  SCORING_PARSE_NUMBER,         // matrix: a score that is not a number
+  SCORING_PARSE_RANGE,          // a score beyond +-SCORE_ABS_MAX
+  SCORING_PARSE_MANY_COLUMNS,   // matrix: more scores than headings
+  SCORING_PARSE_NO_ROWS,        // matrix: headings only
+  SCORING_PARSE_SHORT_LINE,     // pairs: too short for a pair and a score
+  SCORING_PARSE_SEPARATORS,     // pairs: the two separators differ
+  SCORING_PARSE_INVALID_NUMBER, // pairs: a score that is not an int
+  SCORING_PARSE_NO_PAIRS        // pairs: nothing added
+} scoring_parse_t;
+
+scoring_parse_t scoring_parse_matrix(scoring_t *scoring, const char *text,
+                                     size_t len, int *line);
+scoring_parse_t scoring_parse_pairs(scoring_t *scoring, const char *text,
+                                    size_t len, int *line);
+// A short message for each status (the command line tools' wording)
+const char *scoring_parse_strerror(scoring_parse_t status);
+
 #ifdef __cplusplus
 }
 #endif
