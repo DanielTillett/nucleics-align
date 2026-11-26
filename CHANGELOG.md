@@ -5,7 +5,38 @@ Nucleics Align is derived from Isaac Turner's
 2017). Output is the same as seq-align's, byte for byte, except for the
 fixes listed under [Changes to output](#changes-to-output).
 
-## Unreleased
+## 2.0.0 - 26 Nov 2026
+
+### Added
+
+- A public C11 / C++ API, `include/nucleics_align.h`: opaque scoring,
+  aligner and result objects (`na_scoring_t`, `na_aligner_t`,
+  `na_alignment_t`), global and local alignment and scores, the scoring
+  file formats from memory, and status codes in place of `exit()`. See
+  [docs/library.md](docs/library.md)
+- `libalign.a` is the library alone: the sources are split into `src/lib`
+  (the library, which needs only pthreads) and `src/cli` (the tools, which
+  add zlib), and the bundled `libs/` submodules are gone
+
+### Fixed (25 Nov 2026 review)
+
+- Smith-Waterman: a failed checked alignment drops the previous pair's
+  hits; the index of later hits is sized to the cells that qualify, not
+  the whole matrix; gaps scoring above 0 are refused
+- Out of memory on the fast paths is reported as such; per-block thread
+  state is on the heap, and threads are capped at 4096
+- Public API: `na_score_alignment()` scores free start and end gaps as the
+  aligner does; `na_scoring_set_flags()` checks its flags before changing
+  anything
+- Tools: input that cannot be read in pairs ends with a failure status;
+  the sequence reader is stricter (plain-text trimming, NUL bytes, FASTQ
+  shape); option values are not taken for options, `--` ends the options,
+  and `--maxhits` and `--minscore` are range-checked; `--stdin` reads
+  through standard input itself; `--printmatrices` refuses
+  `--linearfallback`
+- Perl and Python wrappers: sequences the tools would read as headers are
+  refused, `smith_waterman` restarts after an error, and single-pair calls
+  finish the run
 
 ### Improved
 
