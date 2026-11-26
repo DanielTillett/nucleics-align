@@ -73,115 +73,111 @@ static inline int64_t seeds_gap(const seeds_t *sd, ptrdiff_t delta)
   return sd->open + sd->gamma * (int64_t)(delta < 0 ? -delta : delta);
 }
 
-seeds_t *seeds_build(const sub_table_t *t, const scoring_t *sc,
-                     const char *a, size_t len_a,
-                     const char *b, size_t len_b, score_t smax, size_t k)
+// The classes of the letters in the table: a letter of a and one of b
+// match exactly when they are in one class, and then score smax. The
+// table holds only pairs of a letter of a and one of b, so a's letters are
+// grouped by the set of b's letters they match (two sets that share a
+// letter must be the same), and the class of a letter is the lowest code
+// in its set: for one of b, of the set holding it. Letters of a matching
+// none of b get a class of their own. cls[code] is the class; *mm the best
+// mismatch score. False where the scoring does not fall into classes, or
+// has no mismatch to charge
+static bool seeds_classes(const sub_table_t *t, const char *a, size_t len_a,
+                          const char *b, size_t len_b, score_t smax,
+                          int cls[64], bool in_b[64], int *mm)
 {
   const size_t n = t->n;
-  if(n == 0 || n > 64 || sc->gap_open > 0 || sc->gap_extend > 0) return NULL;
-  // Letters must fall into classes: a letter of a and one of b match
-  // exactly when they are in one class, and then score smax. The table
-  // holds only pairs of a letter of a and one of b, so a's letters are
-  // grouped by the set of b's letters they match (two sets that share a
-  // letter must be the same), and the class of a letter is the lowest code
-  // in its set: for one of b, of the set holding it. Letters of a matching
-  // none of b get a class of their own
-  bool in_a[64] = {false}, in_b[64] = {false};
+  bool in_a[64] = {false};
   size_t i, x, y;
   for(i = 0; i < len_a; i++) in_a[t->code[(unsigned char)a[i]]] = true;
   for(i = 0; i < len_b; i++) in_b[t->code[(unsigned char)b[i]]] = true;
   uint64_t set[64] = {0};
-  int cls[64], mm = INT_MIN;
+  *mm = INT_MIN;
   for(x = 0; x < n; x++) cls[x] = -1;
   for(x = 0; x < n; x++) {
     if(!in_a[x]) continue;
     for(y = 0; y < n; y++) {
       if(!in_b[y]) continue;
       if(t->is_match[y*n + x]) {
-        if(t->scores[y*n + x] != smax) return NULL;
+        if(t->scores[y*n + x] != smax) return false;
         set[x] |= (uint64_t)1 << y;
       }
-      else mm = MAX2(mm, t->scores[y*n + x]);
+      else *mm = MAX2(*mm, t->scores[y*n + x]);
     }
   }
-  if(mm == INT_MIN || mm >= smax) return NULL;
+  if(*mm == INT_MIN || *mm >= smax) return false;
   for(x = 0; x < n; x++) {
     if(!in_a[x]) continue;
     size_t x2;
     for(x2 = 0; x2 < x; x2++)
-      if(in_a[x2] && (set[x] & set[x2]) && set[x] != set[x2]) return NULL;
+      if(in_a[x2] && (set[x] & set[x2]) && set[x] != set[x2]) return false;
     int id = (int)n + (int)x;
     if(set[x]) { id = 0; while(!((set[x] >> id) & 1)) id++; }
     cls[x] = id;
     for(y = 0; y < n; y++) {
       if(!((set[x] >> y) & 1)) continue;
-      if(cls[y] >= 0 && cls[y] != id) return NULL; // y in a as well
+      if(cls[y] >= 0 && cls[y] != id) return false; // y in a as well
       cls[y] = id;
     }
   }
   for(y = 0; y < n; y++) if(cls[y] < 0) cls[y] = (int)y;
-  int bits = 1;
-  while(((size_t)1 << bits) < 2 * n) bits++;
-  if(k == 0) {
-    // Enough letters that a seed has few copies in b by chance (every
-    // copy is looked at for every chain through it): under one for random
-    // letters of as many classes as b has, so 11 for 1 Mb of DNA
-    size_t classes = 0;
-    bool seen[128] = {false};
-    for(y = 0; y < n; y++)
-      if(in_b[y] && !seen[cls[y]]) { seen[cls[y]] = true; classes++; }
-    classes = MAX2(classes, (size_t)2);
-    double copies = (double)len_b;
-    for(k = 1; copies >= 1.0 && k < 15; k++) copies /= (double)classes;
-    k = MAX2(k, (size_t)8);
-  }
-  if(k < 2 || k * bits > 62 || len_a < k || len_b < k) return NULL;
+  return true;
+}
 
-  seeds_t *sd = aln_calloc(1, sizeof(*sd));
-  if(sd == NULL) return NULL;
-  sd->k = k;
-  sd->l = smax;
-  sd->D = (ptrdiff_t)len_a - (ptrdiff_t)len_b;
-  sd->len_a = len_a;
-  sd->len_b = len_b;
-  sd->gap_extend = sc->gap_extend;
-  sd->open = -2LL * sc->gap_open;
-  sd->gamma = (int64_t)smax - 2LL * sc->gap_extend;
-  // A run of r gapped letters of a breaks at most ceil((r-1)/k) + 1 seeds:
-  // one letter one seed, two letters up to two, and the longest runs k
-  // letters a seed, so the least cost per seed is at r = 1, r = 2 or in
-  // the limit, whichever is least
-  int64_t c = MIN2(2LL * (smax - mm), sd->open + sd->gamma);
-  c = MIN2(c, (sd->open + 2 * sd->gamma) / 2);
-  c = MIN2(c, (int64_t)k * sd->gamma);
-  sd->c = c;
-  sd->lip = MAX2(sd->open + sd->gamma, c);
-  if(c <= 0) { free(sd); return NULL; }
+// Letters per seed by the length of b: enough that a seed has few copies
+// in b by chance (every copy is looked at for every chain through it):
+// under one for random letters of as many classes as b has, so 11 for 1
+// Mb of DNA
+static size_t seeds_length(size_t n, size_t len_b, const int cls[64],
+                           const bool in_b[64])
+{
+  size_t classes = 0, k, y;
+  bool seen[128] = {false};
+  for(y = 0; y < n; y++)
+    if(in_b[y] && !seen[cls[y]]) { seen[cls[y]] = true; classes++; }
+  classes = MAX2(classes, (size_t)2);
+  double copies = (double)len_b;
+  for(k = 1; copies >= 1.0 && k < 15; k++) copies /= (double)classes;
+  return MAX2(k, (size_t)8);
+}
 
-  // b's words, sorted
+// b's words of k letters (as class numbers, bits each), sorted by word
+// then position: nb of them. NULL if out of memory
+static kmer_t *seeds_index_b(const sub_table_t *t, const char *b,
+                             size_t len_b, size_t k, int bits,
+                             const int cls[64])
+{
   const size_t nb = len_b - k + 1;
   kmer_t *bk = aln_malloc(nb * sizeof(kmer_t));
-  if(bk == NULL) { free(sd); return NULL; }
-  size_t j; uint64_t key = 0;
+  if(bk == NULL) return NULL;
+  size_t j;
+  uint64_t key = 0;
   const uint64_t mask = (((uint64_t)1 << (bits * k - 1)) << 1) - 1;
   for(j = 0; j < len_b; j++) {
     key = ((key << bits) | (uint64_t)cls[t->code[(unsigned char)b[j]]]) & mask;
     if(j + 1 >= k) { bk[j+1-k].key = key; bk[j+1-k].pos = (uint32_t)(j+1-k); }
   }
   qsort(bk, nb, sizeof(kmer_t), kmer_cmp);
+  return bk;
+}
 
-  // a's seeds and their copies
-  const size_t smaxn = len_a / k;
-  size_t mcap = smaxn * 2 + 16, M = 0, S = 0, s;
+// a's seeds (its words of k letters at every kth position) and their
+// copies in b, from b's index bk (nb words): sd->sa, mstart, mj, S and M.
+// Seeds with too many copies to look through are left out. False if out
+// of memory
+static bool seeds_find(seeds_t *sd, const sub_table_t *t, const char *a,
+                       size_t len_a, int bits, const int cls[64],
+                       const kmer_t *bk, size_t nb)
+{
+  const size_t k = sd->k, smaxn = len_a / k;
+  size_t mcap = smaxn * 2 + 16, M = 0, S = 0, s, x;
   sd->sa = aln_malloc(smaxn * sizeof(size_t));
   sd->mstart = aln_malloc((smaxn + 1) * sizeof(size_t));
   sd->mj = aln_malloc(mcap * sizeof(size_t));
-  if(sd->sa == NULL || sd->mstart == NULL || sd->mj == NULL) {
-    free(bk); seeds_free(sd); return NULL;
-  }
+  if(sd->sa == NULL || sd->mstart == NULL || sd->mj == NULL) return false;
   for(s = 0; s < smaxn; s++) {
     const size_t i = s * k;
-    key = 0;
+    uint64_t key = 0;
     for(x = 0; x < k; x++)
       key = (key << bits) | (uint64_t)cls[t->code[(unsigned char)a[i+x]]];
     size_t lo = 0, hi = nb;
@@ -195,7 +191,7 @@ seeds_t *seeds_build(const sub_table_t *t, const scoring_t *sc,
     if(M + cnt > mcap) {
       mcap = (M + cnt) * 2;
       size_t *mj = aln_realloc(sd->mj, mcap * sizeof(size_t));
-      if(mj == NULL) { free(bk); seeds_free(sd); return NULL; }
+      if(mj == NULL) return false;
       sd->mj = mj;
     }
     sd->sa[S] = i;
@@ -203,15 +199,24 @@ seeds_t *seeds_build(const sub_table_t *t, const scoring_t *sc,
     for(x = 0; x < cnt; x++) sd->mj[M++] = bk[lo+x].pos;
     S++;
   }
-  free(bk);
   sd->mstart[S] = M;
   sd->S = S;
   sd->M = M;
+  return true;
+}
 
-  // Chains from each copy, by decreasing seed
+// The least chain penalty from each copy of each seed to the end (sd->G,
+// by decreasing seed, each over the next SEEDS_WINDOW seeds' copies after
+// it), and the least c x seed + G over the copies of the seeds from each
+// on (sd->Gs). False if out of memory
+static bool seeds_chains(seeds_t *sd)
+{
+  const size_t S = sd->S, M = sd->M, k = sd->k;
+  const int64_t c = sd->c;
+  size_t s;
   sd->G = aln_malloc((M + 1) * sizeof(int64_t));
   sd->Gs = aln_malloc((S + 2) * sizeof(int64_t));
-  if(sd->G == NULL || sd->Gs == NULL) { seeds_free(sd); return NULL; }
+  if(sd->G == NULL || sd->Gs == NULL) return false;
   sd->Gs[S] = sd->Gs[S+1] = SEEDS_NONE;
   for(s = S; s-- > 0; ) {
     int64_t gs = sd->Gs[s+1];
@@ -236,6 +241,49 @@ seeds_t *seeds_build(const sub_table_t *t, const scoring_t *sc,
     }
     sd->Gs[s] = gs;
   }
+  return true;
+}
+
+seeds_t *seeds_build(const sub_table_t *t, const scoring_t *sc,
+                     const char *a, size_t len_a,
+                     const char *b, size_t len_b, score_t smax, size_t k)
+{
+  const size_t n = t->n;
+  if(n == 0 || n > 64 || sc->gap_open > 0 || sc->gap_extend > 0) return NULL;
+  int cls[64], mm;
+  bool in_b[64] = {false};
+  if(!seeds_classes(t, a, len_a, b, len_b, smax, cls, in_b, &mm)) return NULL;
+  int bits = 1;
+  while(((size_t)1 << bits) < 2 * n) bits++;
+  if(k == 0) k = seeds_length(n, len_b, cls, in_b);
+  if(k < 2 || k * bits > 62 || len_a < k || len_b < k) return NULL;
+
+  seeds_t *sd = aln_calloc(1, sizeof(*sd));
+  if(sd == NULL) return NULL;
+  sd->k = k;
+  sd->l = smax;
+  sd->D = (ptrdiff_t)len_a - (ptrdiff_t)len_b;
+  sd->len_a = len_a;
+  sd->len_b = len_b;
+  sd->gap_extend = sc->gap_extend;
+  sd->open = -2LL * sc->gap_open;
+  sd->gamma = (int64_t)smax - 2LL * sc->gap_extend;
+  // A run of r gapped letters of a breaks at most ceil((r-1)/k) + 1 seeds:
+  // one letter one seed, two letters up to two, and the longest runs k
+  // letters a seed, so the least cost per seed is at r = 1, r = 2 or in
+  // the limit, whichever is least
+  int64_t c = MIN2(2LL * (smax - mm), sd->open + sd->gamma);
+  c = MIN2(c, (sd->open + 2 * sd->gamma) / 2);
+  c = MIN2(c, (int64_t)k * sd->gamma);
+  sd->c = c;
+  sd->lip = MAX2(sd->open + sd->gamma, c);
+  if(c <= 0) { free(sd); return NULL; }
+
+  kmer_t *bk = seeds_index_b(t, b, len_b, k, bits, cls);
+  if(bk == NULL) { free(sd); return NULL; }
+  const bool found = seeds_find(sd, t, a, len_a, bits, cls, bk, len_b - k + 1);
+  free(bk);
+  if(!found || !seeds_chains(sd)) { seeds_free(sd); return NULL; }
   return sd;
 }
 
@@ -297,30 +345,39 @@ int64_t seeds_bound(const seeds_t *sd, size_t x, size_t y)
   return seeds_score(sd, x, y, seeds_h(sd, x, y));
 }
 
+// Penalty bounds along a row for columns from .. to, from samples taken
+// every SEEDS_SAMPLE columns from column sfrom (n of them, the last at
+// sto): a column's bound is the nearer samples' less lip per column
+// between, the most h changes per column
+static void seeds_interpolate(const seeds_t *sd, const int64_t *samples,
+                              size_t n, size_t sfrom, size_t sto,
+                              size_t from, size_t to, int64_t *h)
+{
+  size_t x;
+  for(x = from; x <= to; x++) {
+    const size_t i = (x - sfrom) / SEEDS_SAMPLE, xi = sfrom + i * SEEDS_SAMPLE;
+    int64_t v = samples[i] - sd->lip * (int64_t)(x - xi);
+    if(i + 1 < n) {
+      const size_t xn = MIN2(sto, xi + SEEDS_SAMPLE);
+      v = MAX2(v, samples[i+1] - sd->lip * (int64_t)(xn - x));
+    }
+    h[x - from] = v;
+  }
+}
+
 // Penalty bounds along row y for columns from .. to, exact every
-// SEEDS_SAMPLE columns (and at to) and, between, from the nearer samples:
-// h moves by at most lip per column. Returns the samples (n of them, from
-// column from) for keeping
+// SEEDS_SAMPLE columns (and at to) and, between, from the nearer samples.
+// Returns the samples (n of them, from column from) for keeping
 static int64_t *seeds_row(const seeds_t *sd, size_t y, size_t from,
                           size_t to, size_t *n_out, int64_t *h)
 {
   const size_t n = (to - from) / SEEDS_SAMPLE + 2;
   int64_t *samples = aln_malloc(n * sizeof(int64_t));
   if(samples == NULL) return NULL;
-  size_t i, x;
-  for(i = 0; i < n; i++) {
-    x = MIN2(to, from + i * SEEDS_SAMPLE);
-    samples[i] = seeds_h(sd, x, y);
-  }
-  for(x = from; x <= to; x++) {
-    const size_t i = (x - from) / SEEDS_SAMPLE, xi = from + i * SEEDS_SAMPLE;
-    int64_t v = samples[i] - sd->lip * (int64_t)(x - xi);
-    if(i + 1 < n) {
-      const size_t xn = MIN2(to, xi + SEEDS_SAMPLE);
-      v = MAX2(v, samples[i+1] - sd->lip * (int64_t)(xn - x));
-    }
-    h[x - from] = v;
-  }
+  size_t i;
+  for(i = 0; i < n; i++)
+    samples[i] = seeds_h(sd, MIN2(to, from + i * SEEDS_SAMPLE), y);
+  seeds_interpolate(sd, samples, n, from, to, from, to, h);
   *n_out = n;
   return samples;
 }
@@ -331,17 +388,8 @@ static bool seeds_row_kept(const seeds_t *sd, size_t y, size_t from,
 {
   if(sd->last == NULL || sd->last_y != y || from < sd->last_from ||
      to > sd->last_to) return false;
-  size_t x;
-  for(x = from; x <= to; x++) {
-    const size_t i = (x - sd->last_from) / SEEDS_SAMPLE;
-    const size_t xi = sd->last_from + i * SEEDS_SAMPLE;
-    int64_t v = sd->last[i] - sd->lip * (int64_t)(x - xi);
-    if(i + 1 < sd->last_n) {
-      const size_t xn = MIN2(sd->last_to, xi + SEEDS_SAMPLE);
-      v = MAX2(v, sd->last[i+1] - sd->lip * (int64_t)(xn - x));
-    }
-    h[x - from] = v;
-  }
+  seeds_interpolate(sd, sd->last, sd->last_n, sd->last_from, sd->last_to,
+                    from, to, h);
   return true;
 }
 

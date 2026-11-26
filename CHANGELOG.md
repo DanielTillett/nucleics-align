@@ -60,6 +60,12 @@ fixes listed under [Changes to output](#changes-to-output).
   file with headings and no rows is refused ("No rows in matrix") instead
   of being accepted empty. The public API's error messages take the tools'
   wording. `align_scoring_load_*()` take the case setting from the scoring
+- The banded compact fill (`alignment_fill_banded()`) runs as its phases:
+  the cost model (`band_cost_init()`, `band_first_width()`), the plan of a
+  band's strips (`band_plan()`), their room (`band_alloc()`) and the strip
+  fill (`band_fill_strips()`), and `seeds_build()` as its (classes, seed
+  length, the index of b, the seeds' copies, the chains), with one
+  interpolation for sampled rows. Same alignments, timed the same
 - The linear-space passes and the wavefront aligner pass argument
   structs (`hb_block_args_t`, `hb_pass_args_t`; `wf_dir_t`, `biwfa_ctx_t`,
   `biwfa_sub_t`, `biwfa_meet_t`) where 15 to 20 arguments went before; the

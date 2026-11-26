@@ -279,6 +279,397 @@ static size_t band_strip_rows(const alignment_options_t *o, double cols)
                             : MAX2(64, (size_t)(cols / 4));
 }
 
+// What a band costs against the whole fill: the pair's sizes, the whole
+// fill's threads and the fraction of the whole fill's time per cell a band
+// must stay under
+typedef struct {
+  size_t len_i, len_j;
+  ptrdiff_t D;         // len_i - len_j, the last cell's diagonal
+  double full_threads; // the whole fill's threads
+  double pays;         // a band must cost under this much of the whole fill
+  score_t smax;
+} band_cost_t;
+
+// A fill on t threads runs about max(1, t/2) times faster (16 threads:
+// 6-8x); a narrow band runs on one
+static double threads_speedup(double threads)
+{
+  return MAX2(1.0, threads / 2);
+}
+
+static void band_cost_init(const aligner_t *aligner, const sub_table_t *table,
+                           band_cost_t *c)
+{
+  c->len_i = aligner->score_width - 1;
+  c->len_j = aligner->score_height - 1;
+  c->D = (ptrdiff_t)c->len_i - (ptrdiff_t)c->len_j;
+  // The whole fill's threads, or one for a narrow band
+  c->full_threads =
+    (double)alignment_fill_threads(&aligner->opts, c->len_i, c->len_j, true);
+  // A band must cost under this much of the whole fill, whose difference-
+  // encoded lanes (where they apply) take about 0.6 of the time per cell
+  // of the band's absolute ones: banding at 20 kb and 3-20% divergence
+  // found the band too narrow and filled the whole matrix anyway, 0.033 ->
+  // 0.044 s
+  score_t floor, ceiling;
+  c->pays = aligner->opts.diff &&
+            alignment_diff_bits(table, aligner->scoring, &floor, &ceiling)
+            ? 0.35 : 0.6;
+  c->smax = table->smax;
+}
+
+// Columns per row of a band of half-width bw
+static double band_cols(const band_cost_t *c, size_t bw)
+{
+  return (double)(c->D < 0 ? -c->D : c->D) + 2.0 * (double)bw + 1;
+}
+
+// The first band's half-width (*bw): from the best score itself where the
+// wavefront algorithm finds it within its budget (close pairs; *have_exact
+// and *exact), so the band it needs is filled once (50 kb at 0.1%: 0.040
+// -> 0.018 s), else the narrowest allowed. False where no band could pay:
+// even the narrowest with the shortest strips against a full compact fill
+// on one thread, or one wide enough for a high guess at the best score
+// (the first, narrow band would only find that out: 20 kb at 3-20%
+// divergence, 0.044 -> 0.033 s)
+static bool band_first_width(const aligner_t *aligner, const sub_table_t *table,
+                             const band_cost_t *c, size_t *bw,
+                             bool *have_exact, score_t *exact)
+{
+  const scoring_t *scoring = aligner->scoring;
+  const size_t len_i = c->len_i, len_j = c->len_j;
+
+  if(c->full_threads <= 1.0) {
+    const double min_cols = band_cols(c, aligner->opts.band_min_width);
+    const size_t min_strip = band_strip_rows(&aligner->opts, 0);
+    if(min_cols + (double)min_strip >= c->pays * (double)len_i) return false;
+  }
+
+  double guess;
+  const size_t budget = aligner->opts.band_wfa_budget;
+  *have_exact = budget > 0 && len_i <= SIZE_MAX / budget &&
+    alignment_wfa_score(table, scoring, aligner->seq_a, len_i,
+                        aligner->seq_b, len_j, budget * len_i, exact);
+  if(*have_exact) guess = *exact;
+  if((*have_exact ||
+      alignment_score_guess(table, scoring, aligner->seq_a, len_i,
+                            aligner->seq_b, len_j, &guess)) &&
+     guess > (double)INT_MIN && guess < (double)INT_MAX) {
+    const size_t need = alignment_band_width(c->smax, scoring->gap_extend,
+                                             len_i, len_j, (score_t)guess);
+    if(need >= len_i) return false;
+    // The least any band at least that wide could cost by band_plan()'s
+    // rule. A wider band can get more threads and so cost less than a
+    // narrower one (50 kb at 3%), so: on one thread, its columns per row;
+    // on several, at least twice the columns per block, and its columns
+    // shared by as many threads as the whole fill has
+    const double gcols = band_cols(c, need);
+    const size_t gstrip = band_strip_rows(&aligner->opts, gcols);
+    const double one = gcols + (double)gstrip;
+    const double several =
+      MAX2(2.0 * (double)aligner->opts.band_block_min_cols,
+           one / threads_speedup(c->full_threads));
+    if(MIN2(one, several) >=
+       c->pays * (double)len_i / threads_speedup(c->full_threads)) return false;
+  }
+
+  *bw = aligner->opts.band_min_width;
+  if(*have_exact) {
+    *bw = MAX2(*bw, alignment_band_width(c->smax, scoring->gap_extend,
+                                         len_i, len_j, *exact));
+    atomic_fetch_add(&aln_stat_band_wfa_sized, 1);
+  }
+  return true;
+}
+
+// The strips of one band: their height, whether only one strip's bytes
+// are kept at a time (see alignment_band_keep_max_cells), the shortest a
+// narrowed strip gets, and the most strips there can be
+typedef struct {
+  size_t strip, min_rows, max_strips;
+  bool keep;
+} band_plan_t;
+
+// Cells a band may keep every byte of: the setting, or a quarter of the
+// physical memory (found once)
+static double band_keep_max(const aligner_t *aligner)
+{
+  if(aligner->opts.band_keep_max_cells != 0)
+    return (double)aligner->opts.band_keep_max_cells;
+  static atomic_size_t cached_keep_max = 0;
+  size_t km = atomic_load_explicit(&cached_keep_max, memory_order_relaxed);
+  if(km == 0) {
+    long pages = sysconf(_SC_PHYS_PAGES), page = sysconf(_SC_PAGESIZE);
+    km = pages > 0 && page > 0 && (size_t)pages <= SIZE_MAX / (size_t)page
+         ? ((size_t)pages * (size_t)page) / 4
+         : ((size_t)1 << 30);
+    if(km == 0) km = (size_t)1 << 30;
+    atomic_store_explicit(&cached_keep_max, km, memory_order_relaxed);
+  }
+  return (double)km;
+}
+
+typedef enum { PLAN_FILL, PLAN_WIDEN, PLAN_STOP } band_verdict_t;
+
+// Plan the strips of a band of half-width *bw: PLAN_FILL with the plan;
+// PLAN_WIDEN with *bw raised, where the band would not pay but a wider one
+// could get more threads and so cost less (*widened counts those in a row,
+// up to 8); PLAN_STOP once no band pays
+static band_verdict_t band_plan(const aligner_t *aligner, const band_cost_t *c,
+                                size_t *bw, int *widened, band_plan_t *p)
+{
+  if(*bw >= c->len_i) return PLAN_STOP;
+  // Columns per row, plus the strip height the window grows by
+  const double cols = band_cols(c, *bw);
+  size_t strip = band_strip_rows(&aligner->opts, cols);
+  const bool keep = (double)c->len_j * (cols + (double)strip) > band_keep_max(aligner);
+  if(keep && !aligner->opts.band_strip_rows) {
+    // Kept strips: about sqrt(12 x rows) rows, so a strip's bytes and the
+    // rows kept take about the same memory
+    size_t most;
+    for(most = 64; most * most < 12 * c->len_j; most++) {}
+    strip = MIN2(strip, most);
+  }
+  // A strip's own rows add as many columns to its band as its diagonals
+  // span, so once narrowing leaves few diagonals, strips get shorter
+  // (about half the diagonals, at least min_rows): the most strips there
+  // can be sizes the kept strips' tables
+  const size_t min_rows = MIN2((size_t)32, strip);
+  const double band_threads =
+    (double)alignment_fill_threads(&aligner->opts,
+                                   (size_t)cols + strip, strip, false);
+  if((cols + strip) / threads_speedup(band_threads) >=
+     c->pays * (double)c->len_i / threads_speedup(c->full_threads)) {
+    if(*widened < 8 && band_threads < c->full_threads && *bw < c->len_i) {
+      *bw += MAX2(*bw / 4, (size_t)1);
+      (*widened)++;
+      return PLAN_WIDEN;
+    }
+    return PLAN_STOP;
+  }
+  *widened = 0;
+  p->strip = strip;
+  p->keep = keep;
+  p->min_rows = min_rows;
+  p->max_strips = c->len_j / min_rows + 2;
+  return PLAN_FILL;
+}
+
+// The buffers of one band fill, beside the aligner's traceback bytes and
+// row offsets: the top row of the strip being filled (top, the three
+// matrices by column), the column left of a strip (lcol) and, with keep,
+// the table of kept strips (ts, with room for rows_cap scores of their
+// top rows)
+typedef struct {
+  score_t *top, *lcol;
+  trace_strips_t *ts;
+  size_t rows_cap;
+} band_bufs_t;
+
+// Room for the band: every strip's bytes, or kept strips: the biggest
+// strip's bytes, and every strip's top row (with column 0, which the first
+// strips use). Strips narrowed by a lower bound need less. False if out of
+// memory (ts freed; top and lcol stay for the caller to free)
+static bool band_alloc(aligner_t *aligner, const band_cost_t *c,
+                       const band_plan_t *p, score_t min,
+                       score_t *const col0[3], ptrdiff_t dlo, ptrdiff_t dhi,
+                       band_bufs_t *bufs)
+{
+  const size_t w = c->len_i + 1, h = c->len_j + 1;
+  size_t y0, y1, c0, c1, m;
+
+  // Each row keeps the bytes of its strip's columns
+  if(aligner->trace_rows_capacity < h) {
+    free(aligner->trace_rows);
+    aligner->trace_rows = aln_malloc(h * sizeof(ptrdiff_t));
+    aligner->trace_rows_capacity = aligner->trace_rows != NULL ? h : 0;
+  }
+  if(bufs->top == NULL) bufs->top = aln_malloc(3 * w * sizeof(score_t));
+  score_t *lc = aln_realloc(bufs->lcol, 3 * (p->strip + 1) * sizeof(score_t));
+  if(lc != NULL) bufs->lcol = lc;
+  if(aligner->trace_rows == NULL || bufs->top == NULL || lc == NULL)
+    return false;
+
+  size_t cells = 0, kept = 0;
+  for(y0 = 1; y0 <= c->len_j; y0 = y1 + 1) {
+    alignment_strip(y0, p->strip, c->len_i, c->len_j, dlo, dhi, &y1, &c0, &c1);
+    if(p->keep) {
+      cells = MAX2(cells, (y1 - y0 + 1) * (c1 - c0));
+      kept += 3 * (c1 - c0 + 1);
+    }
+    else cells += (y1 - y0 + 1) * (c1 - c0);
+  }
+  trace_strips_free(aligner->trace_strips);
+  aligner->trace_strips = NULL;
+  bufs->ts = NULL;
+  bufs->rows_cap = MAX2(kept, (size_t)3);
+  if(p->keep) {
+    trace_strips_t *ts = aln_calloc(1, sizeof(trace_strips_t));
+    if(ts != NULL) {
+      ts->strip = p->strip;
+      ts->nstrips = ts->loaded = p->max_strips;
+      ts->c0 = aln_malloc(p->max_strips * sizeof(size_t));
+      ts->y0s = aln_malloc((p->max_strips + 1) * sizeof(size_t));
+      ts->min = min;
+      ts->off = aln_malloc((p->max_strips + 1) * sizeof(size_t));
+      ts->rows = aln_malloc(bufs->rows_cap * sizeof(score_t));
+      ts->col0 = aln_malloc(3 * h * sizeof(score_t));
+      ts->top = aln_malloc(3 * w * sizeof(score_t));
+      ts->lcol = aln_malloc(3 * (p->strip + 1) * sizeof(score_t));
+    }
+    if(ts == NULL || ts->off == NULL || ts->c0 == NULL || ts->y0s == NULL ||
+       ts->rows == NULL || ts->col0 == NULL || ts->top == NULL ||
+       ts->lcol == NULL) {
+      trace_strips_free(ts);
+      return false;
+    }
+    for(m = 0; m < 3; m++)
+      memcpy(ts->col0 + m*h, col0[m], h * sizeof(score_t));
+    bufs->ts = ts;
+  }
+  if(!alignment_trace_capacity(aligner, cells)) {
+    trace_strips_free(bufs->ts);
+    bufs->ts = NULL;
+    return false;
+  }
+  return true;
+}
+
+// One band fill: what every strip needs, and what the fill learns
+typedef struct {
+  aligner_t *aligner;
+  const sub_table_t *table;
+  const band_cost_t *cost;
+  score_t min;
+  score_t *const *row0, *const *col0; // row 0 and column 0 by matrix
+  ptrdiff_t dlo, dhi; // the band's diagonals
+  band_plan_t plan;
+  band_bufs_t bufs;
+  // A lower bound on the best score, once known, narrows strips
+  bool have_lb;
+  score_t lb;
+  // Seeds narrow strips further (alignment_seeds.c), built once a lower
+  // bound is known
+  seeds_t *seeds;
+  bool seeds_tried;
+} band_fill_t;
+
+// Fill the band's strips from the top: each over the columns its rows'
+// diagonals reach, from the strip above's last row (min where that strip
+// did not reach), narrowed by the lower bound and the seeds. Each strip's
+// bytes go to the aligner's trace (with keep, over the last strip's; the
+// table ts keeps each strip's top row). *strips gets how many there were.
+// False if out of memory part way
+static bool band_fill_strips(band_fill_t *f, size_t *strips)
+{
+  aligner_t *aligner = f->aligner;
+  const scoring_t *scoring = aligner->scoring;
+  const sub_table_t *table = f->table;
+  const size_t len_i = f->cost->len_i, len_j = f->cost->len_j;
+  const size_t w = len_i + 1;
+  const score_t min = f->min, smax = f->cost->smax;
+  const size_t strip = f->plan.strip, min_rows = f->plan.min_rows;
+  const bool keep = f->plan.keep;
+  trace_strips_t *ts = f->bufs.ts;
+  size_t i, m, y0, y1, c0, c1;
+
+  // Row 0, then each strip's last row for the next
+  score_t *topm[3] = {f->bufs.top, f->bufs.top + w, f->bufs.top + 2*w}, *lcm[3];
+  for(m = 0; m < 3; m++) {
+    memcpy(topm[m], f->row0[m], w * sizeof(score_t));
+    lcm[m] = f->bufs.lcol + m * (strip + 1);
+  }
+
+  size_t jr_prev = len_i; // the top row is right up to here
+  size_t s = 0, used = 0, c0_prev = 0, rows_cap = f->bufs.rows_cap;
+  ptrdiff_t sdlo = f->dlo, sdhi = f->dhi; // this strip's diagonals
+  for(y0 = 1; y0 <= len_j; y0 = y1 + 1, s++)
+  {
+    // Not left of the strip above's left column: a path only moves right,
+    // so one reaching a cell there passes left of the strip above too
+    sdlo = MAX2(sdlo, (ptrdiff_t)c0_prev + 1 - (ptrdiff_t)y0);
+    const size_t span_d = sdhi >= sdlo ? (size_t)(sdhi - sdlo) + 1 : 1;
+    const size_t rows = s == 0 ? strip
+                        : MIN2(strip, MAX2(min_rows, span_d / 2));
+    alignment_strip(y0, rows, len_i, len_j, sdlo, sdhi, &y1, &c0, &c1);
+    c0_prev = c0;
+    // Columns the strip above did not reach
+    for(i = jr_prev + 1; i <= c1; i++)
+      topm[MATCH][i] = topm[GAP_A][i] = topm[GAP_B][i] = min;
+    jr_prev = c1;
+    if(keep) {
+      // The strip's top row, and its bytes from the start of trace
+      const size_t span = c1 - c0 + 1;
+      if(s == 0) ts->off[0] = 0;
+      ts->c0[s] = c0;
+      ts->y0s[s] = y0;
+      if(ts->off[s] + 3 * span > rows_cap) {
+        const size_t cap = MAX2(2 * rows_cap, ts->off[s] + 3 * span);
+        score_t *grown = aln_realloc(ts->rows, cap * sizeof(score_t));
+        if(grown == NULL) break; // out of memory: y0 <= len_j below
+        ts->rows = grown;
+        rows_cap = cap;
+      }
+      for(m = 0; m < 3; m++)
+        memcpy(ts->rows + ts->off[s] + m * span, topm[m] + c0,
+               span * sizeof(score_t));
+      ts->off[s+1] = ts->off[s] + 3 * span;
+      for(i = y0; i <= y1; i++)
+        aligner->trace_rows[i] = (ptrdiff_t)((i - y0) * (c1 - c0)) -
+                                 (ptrdiff_t)(c0 + 1);
+    }
+    else for(i = y0; i <= y1; i++, used += c1 - c0)
+      aligner->trace_rows[i] = (ptrdiff_t)used - (ptrdiff_t)(c0 + 1);
+
+    alignment_block_t tmpl = {
+      .aligner = aligner, .table = table, .min = min,
+      .c0 = c0, .width = c1 - c0, .y0 = y0, .y1 = y1,
+      .r0 = {topm[MATCH], topm[GAP_A], topm[GAP_B]}, .lstride = 1,
+      .band = true,
+      .trace = aligner->trace, .trace_rows = aligner->trace_rows,
+      .lastrow = {topm[MATCH], topm[GAP_A], topm[GAP_B]}};
+    for(m = 0; m < 3; m++) {
+      if(c0 == 0) tmpl.lc[m] = f->col0[m]; // the real column 0
+      else {
+        // Column c0 is outside the band, apart from the cell above the
+        // strip (diagonally before its first cell)
+        lcm[m][0] = topm[m][c0];
+        for(i = 1; i <= y1 - y0 + 1; i++) lcm[m][i] = min;
+        tmpl.lc[m] = lcm[m];
+        tmpl.ly0 = y0 - 1;
+      }
+    }
+    if(!alignment_fill_blocks(&tmpl)) break;
+    // Column c0 of the last row is outside the band, for a strip below
+    // with the same left column
+    if(c0 > 0)
+      topm[MATCH][c0] = topm[GAP_A][c0] = topm[GAP_B][c0] = min;
+    sdlo = f->dlo;
+    sdhi = f->dhi;
+    if(f->have_lb) {
+      alignment_band_narrow(topm, f->col0, y1, c0, c1, len_i, len_j, smax,
+                            scoring->gap_extend, f->lb, &sdlo, &sdhi);
+      if(aligner->opts.band_seeds && !f->seeds_tried) {
+        f->seeds_tried = true;
+        f->seeds = seeds_build(table, scoring, aligner->seq_a, len_i,
+                               aligner->seq_b, len_j, smax,
+                               aligner->opts.seed_length);
+      }
+      if(f->seeds != NULL && y1 < len_j) {
+        // Over the rows the next strip would have at these diagonals
+        // (it may get fewer: the same cells, in part)
+        const size_t next_d = sdhi >= sdlo ? (size_t)(sdhi - sdlo) + 1 : 1;
+        const size_t next = MIN2(strip, MAX2(min_rows, next_d / 2));
+        seeds_narrow(f->seeds, topm, f->col0, y1, c0, c1,
+                     MIN2(len_j, y1 + next), smax, scoring->gap_extend,
+                     f->lb, &sdlo, &sdhi);
+      }
+    }
+  }
+  *strips = s;
+  return y0 > len_j;
+}
+
 // Compact Needleman-Wunsch fill of only the cells near the main diagonals.
 // A path through a cell far from them needs many gap characters, which caps
 // its score (alignment_band_width()). The rows run in strips, each over
@@ -293,303 +684,54 @@ static size_t band_strip_rows(const alignment_options_t *o, double cols)
 // faster than the whole fill on its threads. A band of more than
 // band_keep_max_cells cells keeps one strip's bytes at a time, and each
 // strip's top row (aligner->trace_strips, see alignment_trace_load()), in
-// strips of at most about sqrt(12 x rows) rows
+// strips of at most about sqrt(12 x rows) rows.
+// In turn: band_cost_init() and band_first_width() decide whether any band
+// could pay and how wide the first is; then for each width band_plan() its
+// strips, band_alloc() their room and band_fill_strips() the fill, and the
+// best score found says whether the band held (done) or how much wider the
+// next must be
 fill_result_t alignment_fill_banded(aligner_t *aligner,
                                            const sub_table_t *table,
                                            score_t min, score_t *const row0[3],
                                            score_t *const col0[3])
 {
   const scoring_t *scoring = aligner->scoring;
-  const size_t w = aligner->score_width, h = aligner->score_height;
-  const size_t len_i = w-1, len_j = h-1;
-  const ptrdiff_t D = (ptrdiff_t)len_i - (ptrdiff_t)len_j;
-  // The whole fill's threads, or one for a narrow band
-  const double full_threads =
-    (double)alignment_fill_threads(&aligner->opts, len_i, len_j, true);
-  size_t i, m, y0, y1, c0, c1;
-
   if(!aligner->opts.band || scoring->gap_open > 0 ||
      scoring->gap_extend > 0) return FILL_SKIPPED;
 
-  const score_t smax = table->smax;
-
-  // A band must cost under this much of the whole fill, whose difference-
-  // encoded lanes (where they apply) take about 0.6 of the time per cell
-  // of the band's absolute ones: banding at 20 kb and 3-20% divergence
-  // found the band too narrow and filled the whole matrix anyway, 0.033 ->
-  // 0.044 s
-  score_t floor, ceiling;
-  const double pays = aligner->opts.diff &&
-                      alignment_diff_bits(table, scoring, &floor, &ceiling)
-                      ? 0.35 : 0.6;
-
-  // Quick reject for small single-threaded inputs where even the narrowest
-  // allowed band with the minimum strip height cannot beat a full compact fill
-  if(full_threads <= 1.0) {
-    const double min_cols = (double)(D < 0 ? -D : D) +
-                            2.0 * (double)aligner->opts.band_min_width + 1.0;
-    const size_t min_strip = band_strip_rows(&aligner->opts, 0);
-    if(min_cols + (double)min_strip >= pays * (double)len_i)
-      return FILL_SKIPPED;
-  }
-
-  // The best score itself where the wavefront algorithm finds it within
-  // its budget (close pairs): then the band it needs is filled once (50 kb
-  // at 0.1%: 0.040 -> 0.018 s). Otherwise skip the band if even a high
-  // guess at the best score needs one too wide to pay (the cost rule
-  // below): the first, narrow band would only find that out (20 kb at
-  // 3-20% divergence: 0.044 -> 0.033 s)
-  double guess;
+  band_cost_t cost;
+  band_cost_init(aligner, table, &cost);
+  size_t bw;
+  bool have_exact;
   score_t exact;
-  const size_t budget = aligner->opts.band_wfa_budget;
-  const bool have_exact = budget > 0 && len_i <= SIZE_MAX / budget &&
-    alignment_wfa_score(table, scoring, aligner->seq_a, len_i,
-                        aligner->seq_b, len_j, budget * len_i, &exact);
-  if(have_exact) guess = exact;
-  if((have_exact ||
-      alignment_score_guess(table, scoring, aligner->seq_a, len_i,
-                            aligner->seq_b, len_j, &guess)) &&
-     guess > (double)INT_MIN && guess < (double)INT_MAX) {
-    const size_t need = alignment_band_width(smax, scoring->gap_extend,
-                                             len_i, len_j, (score_t)guess);
-    if(need >= len_i) return FILL_SKIPPED;
-    // The least any band at least that wide could cost by the rule below. A
-    // wider band can get more threads and so cost less than a narrower one
-    // (50 kb at 3%), so: on one thread, its columns per row; on several,
-    // at least twice the columns per block, and its columns shared by as
-    // many threads as the whole fill has
-    const double gcols = (double)(D < 0 ? -D : D) + 2.0*need + 1;
-    const size_t gstrip = band_strip_rows(&aligner->opts, gcols);
-    const double one = gcols + (double)gstrip;
-    const double several =
-      MAX2(2.0 * (double)aligner->opts.band_block_min_cols,
-           one / MAX2(1.0, full_threads / 2));
-    if(MIN2(one, several) >=
-       pays * (double)len_i / MAX2(1.0, full_threads / 2)) return FILL_SKIPPED;
-  }
+  if(!band_first_width(aligner, table, &cost, &bw, &have_exact, &exact))
+    return FILL_SKIPPED;
 
-  size_t bw = aligner->opts.band_min_width;
-  if(have_exact) {
-    bw = MAX2(bw, alignment_band_width(smax, scoring->gap_extend,
-                                       len_i, len_j, exact));
-    atomic_fetch_add(&aln_stat_band_wfa_sized, 1);
-  }
-  // A lower bound on the best score, once known, narrows strips
-  bool have_lb = have_exact;
-  score_t lb = have_exact ? exact : 0;
-  score_t *top = NULL, *lcol = NULL;
+  band_fill_t f = {aligner, table, &cost, min, row0, col0, 0, 0,
+                   {0, 0, 0, false}, {NULL, NULL, NULL, 0},
+                   have_exact, have_exact ? exact : 0, NULL, false};
   fill_result_t done = FILL_SKIPPED;
   int widened = 0; // times this band was widened to get more threads
-  // Seeds narrow strips further (alignment_seeds.c), built once a lower
-  // bound is known
-  seeds_t *seeds = NULL;
-  bool seeds_tried = false;
 
   while(done == FILL_SKIPPED)
   {
-    // Columns per row, plus the strip height the window grows by
-    if(bw >= len_i) break;
-    const double cols = (double)(D < 0 ? -D : D) + 2.0*bw + 1;
-    size_t strip = band_strip_rows(&aligner->opts, cols);
-    double keep_max = (double)aligner->opts.band_keep_max_cells;
-    if(keep_max == 0) {
-      static atomic_size_t cached_keep_max = 0;
-      size_t km = atomic_load_explicit(&cached_keep_max, memory_order_relaxed);
-      if(km == 0) {
-        long pages = sysconf(_SC_PHYS_PAGES), page = sysconf(_SC_PAGESIZE);
-        km = pages > 0 && page > 0 && (size_t)pages <= SIZE_MAX / (size_t)page
-             ? ((size_t)pages * (size_t)page) / 4
-             : ((size_t)1 << 30);
-        if(km == 0) km = (size_t)1 << 30;
-        atomic_store_explicit(&cached_keep_max, km, memory_order_relaxed);
-      }
-      keep_max = (double)km;
-    }
-    const bool keep = (double)len_j * (cols + (double)strip) > keep_max;
-    if(keep && !aligner->opts.band_strip_rows) {
-      size_t most;
-      for(most = 64; most * most < 12 * len_j; most++) {}
-      strip = MIN2(strip, most);
-    }
-    // A strip's own rows add as many columns to its band as its diagonals
-    // span, so once narrowing leaves few diagonals, strips get shorter
-    // (about half the diagonals, at least min_rows): the most strips there
-    // can be sizes the kept strips' tables
-    const size_t min_rows = MIN2((size_t)32, strip);
-    const size_t max_strips = len_j / min_rows + 2;
-    // A fill on t threads runs about max(1, t/2) times faster (16 threads:
-    // 6-8x); a narrow band runs on one
-    const double band_threads =
-      (double)alignment_fill_threads(&aligner->opts,
-                                     (size_t)cols + strip, strip, false);
-    if((cols + strip) / MAX2(1.0, band_threads / 2) >=
-       pays * (double)len_i / MAX2(1.0, full_threads / 2)) {
-      if(widened < 8 && band_threads < full_threads && bw < len_i) {
-        bw += MAX2(bw / 4, (size_t)1);
-        widened++;
-        continue;
-      }
-      break;
-    }
-    widened = 0;
+    const band_verdict_t verdict = band_plan(aligner, &cost, &bw, &widened,
+                                             &f.plan);
+    if(verdict == PLAN_WIDEN) continue;
+    if(verdict == PLAN_STOP) break;
 
     atomic_fetch_add(&aln_stat_band_tries, 1);
-    const ptrdiff_t dlo = MIN2(0, D) - (ptrdiff_t)bw;
-    const ptrdiff_t dhi = MAX2(0, D) + (ptrdiff_t)bw;
-
-    // Each row keeps the bytes of its strip's columns
-    if(aligner->trace_rows_capacity < h) {
-      free(aligner->trace_rows);
-      aligner->trace_rows = aln_malloc(h * sizeof(ptrdiff_t));
-      aligner->trace_rows_capacity = aligner->trace_rows != NULL ? h : 0;
-    }
-    if(top == NULL) top = aln_malloc(3 * w * sizeof(score_t));
-    score_t *lc = aln_realloc(lcol, 3 * (strip + 1) * sizeof(score_t));
-    if(lc != NULL) lcol = lc;
-    if(aligner->trace_rows == NULL || top == NULL || lc == NULL) {
+    f.dlo = MIN2(0, cost.D) - (ptrdiff_t)bw;
+    f.dhi = MAX2(0, cost.D) + (ptrdiff_t)bw;
+    if(!band_alloc(aligner, &cost, &f.plan, min, col0, f.dlo, f.dhi,
+                   &f.bufs)) {
       done = FILL_NOMEM;
       break;
     }
-    // Room for every strip's bytes, or kept strips: the biggest strip's
-    // bytes, and every strip's top row (with column 0, which the first
-    // strips use). Strips narrowed by a lower bound (below) need less
-    size_t cells = 0, kept = 0;
-    for(y0 = 1; y0 <= len_j; y0 = y1 + 1) {
-      alignment_strip(y0, strip, len_i, len_j, dlo, dhi, &y1, &c0, &c1);
-      if(keep) {
-        cells = MAX2(cells, (y1 - y0 + 1) * (c1 - c0));
-        kept += 3 * (c1 - c0 + 1);
-      }
-      else cells += (y1 - y0 + 1) * (c1 - c0);
-    }
-    trace_strips_free(aligner->trace_strips);
-    aligner->trace_strips = NULL;
-    trace_strips_t *ts = NULL;
-    if(keep) {
-      ts = aln_calloc(1, sizeof(trace_strips_t));
-      if(ts != NULL) {
-        ts->strip = strip;
-        ts->nstrips = ts->loaded = max_strips;
-        ts->c0 = aln_malloc(max_strips * sizeof(size_t));
-        ts->y0s = aln_malloc((max_strips + 1) * sizeof(size_t));
-        ts->min = min;
-        ts->off = aln_malloc((max_strips + 1) * sizeof(size_t));
-        ts->rows = aln_malloc(MAX2(kept, (size_t)3) * sizeof(score_t));
-        ts->col0 = aln_malloc(3 * h * sizeof(score_t));
-        ts->top = aln_malloc(3 * w * sizeof(score_t));
-        ts->lcol = aln_malloc(3 * (strip + 1) * sizeof(score_t));
-      }
-      if(ts == NULL || ts->off == NULL || ts->c0 == NULL || ts->y0s == NULL ||
-         ts->rows == NULL || ts->col0 == NULL || ts->top == NULL ||
-         ts->lcol == NULL) {
-        trace_strips_free(ts);
-        done = FILL_NOMEM;
-        break;
-      }
-      for(m = 0; m < 3; m++)
-        memcpy(ts->col0 + m*h, col0[m], h * sizeof(score_t));
-    }
-    if(!alignment_trace_capacity(aligner, cells)) {
-      trace_strips_free(ts);
-      done = FILL_NOMEM;
-      break;
-    }
-
-    // Row 0, then each strip's last row for the next
-    score_t *topm[3] = {top, top + w, top + 2*w}, *lcm[3];
-    for(m = 0; m < 3; m++) {
-      memcpy(topm[m], row0[m], w * sizeof(score_t));
-      lcm[m] = lcol + m * (strip + 1);
-    }
-
-    size_t jr_prev = len_i; // the top row is right up to here
-    size_t s = 0, used = 0, c0_prev = 0, rows_cap = MAX2(kept, (size_t)3);
-    ptrdiff_t sdlo = dlo, sdhi = dhi; // this strip's diagonals
-    for(y0 = 1; y0 <= len_j; y0 = y1 + 1, s++)
-    {
-      // Not left of the strip above's left column: a path only moves right,
-      // so one reaching a cell there passes left of the strip above too
-      sdlo = MAX2(sdlo, (ptrdiff_t)c0_prev + 1 - (ptrdiff_t)y0);
-      const size_t span_d = sdhi >= sdlo ? (size_t)(sdhi - sdlo) + 1 : 1;
-      const size_t rows = s == 0 ? strip
-                          : MIN2(strip, MAX2(min_rows, span_d / 2));
-      alignment_strip(y0, rows, len_i, len_j, sdlo, sdhi, &y1, &c0, &c1);
-      c0_prev = c0;
-      // Columns the strip above did not reach
-      for(i = jr_prev + 1; i <= c1; i++)
-        topm[MATCH][i] = topm[GAP_A][i] = topm[GAP_B][i] = min;
-      jr_prev = c1;
-      if(keep) {
-        // The strip's top row, and its bytes from the start of trace
-        const size_t span = c1 - c0 + 1;
-        if(s == 0) ts->off[0] = 0;
-        ts->c0[s] = c0;
-        ts->y0s[s] = y0;
-        if(ts->off[s] + 3 * span > rows_cap) {
-          const size_t cap = MAX2(2 * rows_cap, ts->off[s] + 3 * span);
-          score_t *grown = aln_realloc(ts->rows, cap * sizeof(score_t));
-          if(grown == NULL) break; // out of memory: y0 <= len_j below
-          ts->rows = grown;
-          rows_cap = cap;
-        }
-        for(m = 0; m < 3; m++)
-          memcpy(ts->rows + ts->off[s] + m * span, topm[m] + c0,
-                 span * sizeof(score_t));
-        ts->off[s+1] = ts->off[s] + 3 * span;
-        for(i = y0; i <= y1; i++)
-          aligner->trace_rows[i] = (ptrdiff_t)((i - y0) * (c1 - c0)) -
-                                   (ptrdiff_t)(c0 + 1);
-      }
-      else for(i = y0; i <= y1; i++, used += c1 - c0)
-        aligner->trace_rows[i] = (ptrdiff_t)used - (ptrdiff_t)(c0 + 1);
-
-      alignment_block_t tmpl = {
-        .aligner = aligner, .table = table, .min = min,
-        .c0 = c0, .width = c1 - c0, .y0 = y0, .y1 = y1,
-        .r0 = {topm[MATCH], topm[GAP_A], topm[GAP_B]}, .lstride = 1,
-        .band = true,
-        .trace = aligner->trace, .trace_rows = aligner->trace_rows,
-        .lastrow = {topm[MATCH], topm[GAP_A], topm[GAP_B]}};
-      for(m = 0; m < 3; m++) {
-        if(c0 == 0) tmpl.lc[m] = col0[m]; // the real column 0
-        else {
-          // Column c0 is outside the band, apart from the cell above the
-          // strip (diagonally before its first cell)
-          lcm[m][0] = topm[m][c0];
-          for(i = 1; i <= y1 - y0 + 1; i++) lcm[m][i] = min;
-          tmpl.lc[m] = lcm[m];
-          tmpl.ly0 = y0 - 1;
-        }
-      }
-      if(!alignment_fill_blocks(&tmpl)) break;
-      // Column c0 of the last row is outside the band, for a strip below
-      // with the same left column
-      if(c0 > 0)
-        topm[MATCH][c0] = topm[GAP_A][c0] = topm[GAP_B][c0] = min;
-      sdlo = dlo;
-      sdhi = dhi;
-      if(have_lb) {
-        alignment_band_narrow(topm, col0, y1, c0, c1, len_i, len_j, smax,
-                              scoring->gap_extend, lb, &sdlo, &sdhi);
-        if(aligner->opts.band_seeds && !seeds_tried) {
-          seeds_tried = true;
-          seeds = seeds_build(table, scoring, aligner->seq_a, len_i,
-                              aligner->seq_b, len_j, smax,
-                              aligner->opts.seed_length);
-        }
-        if(seeds != NULL && y1 < len_j) {
-          // Over the rows the next strip would have at these diagonals
-          // (it may get fewer: the same cells, in part)
-          const size_t next_d = sdhi >= sdlo ? (size_t)(sdhi - sdlo) + 1 : 1;
-          const size_t next = MIN2(strip, MAX2(min_rows, next_d / 2));
-          seeds_narrow(seeds, topm, col0, y1, c0, c1,
-                       MIN2(len_j, y1 + next), smax, scoring->gap_extend,
-                       lb, &sdlo, &sdhi);
-        }
-      }
-    }
-    if(y0 <= len_j) {
-      trace_strips_free(ts);
+    size_t strips;
+    if(!band_fill_strips(&f, &strips)) {
+      trace_strips_free(f.bufs.ts);
+      f.bufs.ts = NULL;
       done = FILL_NOMEM;
       break;
     }
@@ -597,31 +739,34 @@ fill_result_t alignment_fill_banded(aligner_t *aligner,
     score_t best = MAX3(aligner->final_scores[MATCH],
                         aligner->final_scores[GAP_A],
                         aligner->final_scores[GAP_B]);
-    size_t need = alignment_band_width(smax, scoring->gap_extend,
-                                       len_i, len_j, best);
+    size_t need = alignment_band_width(cost.smax, scoring->gap_extend,
+                                       cost.len_i, cost.len_j, best);
     if(need <= bw) {
       done = FILL_DONE;
-      if(ts != NULL) {
+      if(f.bufs.ts != NULL) {
         // The last strip's bytes are in trace, for the start of the walk
-        ts->nstrips = s;
-        ts->y0s[s] = len_j + 1;
-        ts->loaded = s - 1;
-        ts->loaded_y = len_j;
-        ts->loaded_x = len_i;
+        trace_strips_t *ts = f.bufs.ts;
+        ts->nstrips = strips;
+        ts->y0s[strips] = cost.len_j + 1;
+        ts->loaded = strips - 1;
+        ts->loaded_y = cost.len_j;
+        ts->loaded_x = cost.len_i;
         aligner->trace_strips = ts;
+        f.bufs.ts = NULL;
       }
     }
     else {
-      trace_strips_free(ts);
+      trace_strips_free(f.bufs.ts);
+      f.bufs.ts = NULL;
       bw = MAX2(need, 2*bw);
-      have_lb = true; // a real alignment's score
-      lb = best;
+      f.have_lb = true; // a real alignment's score
+      f.lb = best;
     }
   }
 
-  seeds_free(seeds);
-  free(top);
-  free(lcol);
+  seeds_free(f.seeds);
+  free(f.bufs.top);
+  free(f.bufs.lcol);
   aligner->trace_banded = done == FILL_DONE;
   return done;
 }
