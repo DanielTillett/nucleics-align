@@ -51,6 +51,13 @@ fixes listed under [Changes to output](#changes-to-output).
 
 ### Changed
 
+- Perl: `NeedlemanWunsch.pm` and `SmithWaterman.pm` share a base package,
+  `perl/NucleicsAlign/Tool.pm` (options, starting, writing to, reading from
+  and stopping the tool, the sequence checks), which they load from beside
+  themselves. Their methods and messages are unchanged, except that
+  `NeedlemanWunsch` no longer warns about setting only `match` or only
+  `mismatch` with `nomismatches`, which the tool accepts. `perl/test.pl`
+  now checks that a tool that stops answering is timed out and killed
 - One parser for the scoring file formats, in the library
   (`scoring_parse_matrix()`, `scoring_parse_pairs()`,
   `scoring_parse_strerror()` in `alignment_scoring.h`): the public API's

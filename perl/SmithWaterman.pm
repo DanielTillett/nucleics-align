@@ -37,70 +37,31 @@ package SmithWaterman;
 use strict;
 use warnings;
 
-use File::Basename; # dirname
 use Carp;
-use IPC::Open3;
-use Symbol qw(gensym);
+use File::Basename ();
+use lib File::Basename::dirname(__FILE__); # NucleicsAlign/Tool.pm beside it
+use parent 'NucleicsAlign::Tool';
 
 # Printed before each hit, or the '==' after the last, when asked for one
 use constant {PROMPT_LINE => 'next [h]it or [a]lignment: '};
 
-my %FLAGS = map { $_ => 1 } qw(case_sensitive nogaps nogapsin1 nogapsin2
-                               nogapsinlongest nomismatches fastlocal);
-my %VALUES = map { $_ => 1 } qw(match mismatch gapopen gapextend
-                                substitution_matrix substitution_pairs
-                                minscore maxhits threads);
-my @SCORING = qw(PAM30 PAM70 BLOSUM80 BLOSUM62 DNA_HYBRIDIZATION);
+my %SPEC = (
+  name => 'smith_waterman',
+  cmd => File::Basename::dirname(__FILE__)."/../bin/smith_waterman",
+  flags => [qw(case_sensitive nogaps nogapsin1 nogapsin2 nogapsinlongest
+               nomismatches fastlocal)],
+  values => [qw(match mismatch gapopen gapextend substitution_matrix
+                substitution_pairs minscore maxhits threads)],
+);
 
 sub new
 {
   my ($class, %given) = @_;
-  my %options = map { lc($_) => $given{$_} } keys %given;
-
-  my @args;
-  my $cmd = dirname(__FILE__)."/../bin/smith_waterman";
-  my $timeout = 0;
-
-  if(!$options{'nomismatches'} &&
-     defined($options{'match'}) != defined($options{'mismatch'})) {
-    carp("Setting only one of match/mismatch");
-  }
-
-  for my $key (sort keys %options)
-  {
-    my $value = $options{$key};
-    if($FLAGS{$key}) {
-      push(@args, "--$key") if $value;
-    }
-    elsif($VALUES{$key}) {
-      push(@args, "--$key", $value);
-    }
-    elsif($key eq 'scoring') {
-      my ($name) = grep { uc($value) eq $_ } @SCORING;
-      croak("Invalid scoring '$value' (one of @SCORING)") if !defined($name);
-      push(@args, '--scoring', $name);
-    }
-    elsif($key eq 'wildcard') {
-      my %wild = ref($value) eq 'HASH' ? %$value : split(' ', $value);
-      push(@args, '--wildcard', $_, $wild{$_}) for sort keys %wild;
-    }
-    elsif($key eq 'timeout') { $timeout = $value; }
-    elsif($key eq 'cmd') { $cmd = $value; }
-    else { croak("Unknown option '$key'"); }
-  }
-
-  my $self = {
-    _cmd => $cmd,
-    _args => \@args,
-    _proc => undef, # the running tool: { pid, to, from }, started on demand
-    _timeout => $timeout,
-    _align_number => -1, # of the alignment being read
-    _seq1 => undef,
-    _seq2 => undef,
-    _waiting => 1, # the tool is waiting for a pair, not for h or a
-  };
-
-  return bless($self, $class);
+  my $self = $class->_new(\%SPEC, %given);
+  $self->{_align_number} = -1; # of the alignment being read
+  $self->{_seq1} = $self->{_seq2} = undef;
+  $self->{_waiting} = 1; # the tool is waiting for a pair, not for h or a
+  return $self;
 }
 
 # The tool, started the first time it is needed and again after an error
@@ -108,82 +69,34 @@ sub new
 sub _proc
 {
   my ($self) = @_;
-  if(!$self->{_proc})
-  {
-    my ($to, $from) = (undef, gensym());
-    # Standard error comes back with the output (its errors end a pair)
-    my $pid = eval { open3($to, $from, undef, $self->{_cmd},
-                           @{$self->{_args}}, '--stdin', '--pretty') };
-    croak("Cannot run $self->{_cmd}: $@") if !$pid;
-    $to->autoflush(1);
-    $self->{_proc} = { pid => $pid, to => $to, from => $from };
+  if(!$self->{_procs}{tool}) {
+    $self->_start('tool', '--stdin', '--pretty');
     $self->{_waiting} = 1;
     $self->{_align_number} = -1; # a new tool numbers its alignments from 0
   }
-  return $self->{_proc};
+  return 'tool';
 }
 
-# A line to the tool. If it has gone, the write fails quietly (the next
-# read then reports it) instead of SIGPIPE ending this process
-sub _send
-{
-  my ($to, $text) = @_;
-  local $SIG{PIPE} = 'IGNORE';
-  print {$to} $text;
-}
-
-# Stops the tool. kill: it may be mid-alignment (a timeout), so it would
-# not notice its input closing; terminate it before waiting
+# A stopped tool waits for nothing
 sub _stop
 {
-  my ($self, $kill) = @_;
-  my $p = delete($self->{_proc}) or return;
-  kill('TERM', $p->{pid}) if $kill;
-  # The tool may already have gone: writing to it must not kill this process
-  local $SIG{PIPE} = 'IGNORE';
-  close($p->{to});
-  close($p->{from});
-  waitpid($p->{pid}, 0);
+  my ($self, @rest) = @_;
+  $self->SUPER::_stop(@rest);
   $self->{_waiting} = 1;
 }
 
-# Lines of output with no line breaks; croaks on the tool's errors, which
-# stop it (the next alignment starts it again)
-sub _read_line
+# The pair the tool failed on, with its error
+sub _tool_error
 {
   my ($self) = @_;
-  my $from = $self->_proc()->{from};
-  my $line;
-  eval {
-    local $SIG{ALRM} = sub { die("timeout\n") };
-    alarm($self->{_timeout});
-    $line = <$from>;
-    alarm(0);
-  };
-  alarm(0);
-  if($@) {
-    $self->_stop(1);
-    croak($@ eq "timeout\n" ? "Timeout reading smith_waterman output"
-                            : "Cannot read smith_waterman output: $@");
-  }
-  if(!defined($line)) {
-    $self->_stop();
-    croak("smith_waterman stopped (have you compiled?)");
-  }
-  $line =~ s/\r?\n$//;
-  if($line =~ /^(Alignment )?(Error|Warning):/) {
-    print STDERR "ErrSeq1: '".($self->{_seq1} // '')."'\n";
-    print STDERR "ErrSeq2: '".($self->{_seq2} // '')."'\n";
-    $self->_stop();
-    croak($line);
-  }
-  return $line;
+  print STDERR "ErrSeq1: '".($self->{_seq1} // '')."'\n";
+  print STDERR "ErrSeq2: '".($self->{_seq2} // '')."'\n";
 }
 
 sub _expect
 {
   my ($self, $pattern) = @_;
-  my $line = $self->_read_line();
+  my $line = $self->_read_line('tool');
   croak("smith_waterman said '$line' (expected $pattern)")
     if $line !~ /$pattern/;
   return $line;
@@ -194,24 +107,17 @@ sub _expect
 sub do_alignment
 {
   my ($self, $seq1, $seq2) = @_;
-  my $to = $self->_proc()->{to};
+  my $tool = $self->_proc();
 
   if(!$self->{_waiting})
   {
     # Skip the hits left from the previous alignment
-    _send($to, "a\n");
+    $self->_send($tool, "a\n");
     $self->_expect('^'.quotemeta(PROMPT_LINE).'==$');
     $self->{_waiting} = 1;
   }
 
-  for my $seq ($seq1, $seq2) {
-    croak("Sequences must be defined") if !defined($seq);
-    croak("Whitespace or control characters not allowed in sequences")
-      if $seq =~ /[\x00-\x20\x7f]/;
-    # The tool would read these as a FASTA or FASTQ header and wait for
-    # the rest of the record
-    croak("Sequences cannot start with '>' or '@'") if $seq =~ /^[>@]/;
-  }
+  $self->_check_seqs($seq1, $seq2);
   if($seq1 eq '' || $seq2 eq '') {
     carp("Cannot align lengths of zero");
     return 0;
@@ -222,7 +128,7 @@ sub do_alignment
   $self->{_seq2} = $seq2;
   my $expected = $self->{_align_number};
 
-  _send($to, "$seq1\n$seq2\n");
+  $self->_send($tool, "$seq1\n$seq2\n");
   $self->{_waiting} = 0;
 
   $self->_expect("^== Alignment $expected ");
@@ -238,8 +144,8 @@ sub get_next_hit
   my ($self) = @_;
   return undef if $self->{_waiting};
 
-  _send($self->_proc()->{to}, "h\n");
-  my $line = $self->_read_line();
+  $self->_send($self->_proc(), "h\n");
+  my $line = $self->_read_line('tool');
   if(substr($line, 0, length(PROMPT_LINE)) ne PROMPT_LINE) {
     croak("smith_waterman said '$line' (expected its prompt)");
   }
@@ -258,7 +164,7 @@ sub get_next_hit
   my $part = qr/^  (.*)  \[pos: (\d+); len: (\d+)\]$/;
 
   @result{'align1', 'pos1', 'len1'} = $self->_expect($part) =~ $part;
-  $result{'sep'} = substr($self->_read_line(), 2);
+  $result{'sep'} = substr($self->_read_line('tool'), 2);
   @result{'align2', 'pos2', 'len2'} = $self->_expect($part) =~ $part;
   $self->_expect('^$');
 
@@ -283,20 +189,6 @@ sub print_hit
   print $out "  $hit->{'align1'}  [pos: $hit->{'pos1'}; len: $hit->{'len1'}]\n";
   print $out "  $hit->{'sep'}\n";
   print $out "  $hit->{'align2'}  [pos: $hit->{'pos2'}; len: $hit->{'len2'}]\n";
-}
-
-# Stop the tool (also done when the object goes)
-sub destructor
-{
-  my ($self) = @_;
-  $self->_stop();
-}
-
-sub DESTROY
-{
-  my ($self) = @_;
-  local ($?, $@);
-  $self->destructor();
 }
 
 1;

@@ -170,7 +170,7 @@ $sw->do_alignment('ttacgtacgtaa', 'acgtacgt');
 $sw->print_hit($_) for $sw->get_all_hits();
 ```
 
-Tests: `perl perl/test.pl`.
+Both run the tools over pipes through a shared base, [`perl/NucleicsAlign/Tool.pm`](perl/NucleicsAlign/Tool.pm), which they find beside themselves: copy the `perl/` directory whole. Tests: `perl perl/test.pl`.
 
 ## C library
 

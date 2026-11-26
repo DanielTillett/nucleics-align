@@ -43,183 +43,38 @@ package NeedlemanWunsch;
 use strict;
 use warnings;
 
-use File::Basename; # dirname
 use Carp;
-use IPC::Open3;
-use Symbol qw(gensym);
+use File::Basename ();
+use lib File::Basename::dirname(__FILE__); # NucleicsAlign/Tool.pm beside it
+use parent 'NucleicsAlign::Tool';
 
-my %FLAGS = map { $_ => 1 } qw(case_sensitive freestartgap freeendgap linear
-                               linearfallback wfa nogaps nogapsin1 nogapsin2
-                               nogapsinlongest nomismatches);
-my %VALUES = map { $_ => 1 } qw(match mismatch gapopen gapextend
-                                substitution_matrix substitution_pairs
-                                linearabove wfabudget threads);
-my @SCORING = qw(PAM30 PAM70 BLOSUM80 BLOSUM62 DNA_HYBRIDIZATION);
+my %SPEC = (
+  name => 'needleman_wunsch',
+  cmd => File::Basename::dirname(__FILE__)."/../bin/needleman_wunsch",
+  flags => [qw(case_sensitive freestartgap freeendgap linear linearfallback
+               wfa nogaps nogapsin1 nogapsin2 nogapsinlongest nomismatches)],
+  values => [qw(match mismatch gapopen gapextend substitution_matrix
+                substitution_pairs linearabove wfabudget threads)],
+);
 
 sub new
 {
   my ($class, %given) = @_;
-  my %options = map { lc($_) => $given{$_} } keys %given;
-
-  my @args;
-  my $cmd = dirname(__FILE__)."/../bin/needleman_wunsch";
-  my $timeout = 0;
-
-  if(defined($options{'match'}) != defined($options{'mismatch'})) {
-    carp("Setting only one of match/mismatch");
-  }
-
-  for my $key (sort keys %options)
-  {
-    my $value = $options{$key};
-    if($FLAGS{$key}) {
-      push(@args, "--$key") if $value;
-    }
-    elsif($VALUES{$key}) {
-      push(@args, "--$key", $value);
-    }
-    elsif($key eq 'scoring') {
-      my ($name) = grep { uc($value) eq $_ } @SCORING;
-      croak("Invalid scoring '$value' (one of @SCORING)") if !defined($name);
-      push(@args, '--scoring', $name);
-    }
-    elsif($key eq 'wildcard') {
-      my %wild = ref($value) eq 'HASH' ? %$value : split(' ', $value);
-      push(@args, '--wildcard', $_, $wild{$_}) for sort keys %wild;
-    }
-    elsif($key eq 'timeout') { $timeout = $value; }
-    elsif($key eq 'cmd') { $cmd = $value; }
-    else { croak("Unknown option '$key'"); }
-  }
-
-  my $self = {
-    _cmd => $cmd,
-    _args => \@args,
-    _timeout => $timeout,
-    _align_number => 0,
-    _procs => {}, # running tools, by mode: 'align', 'score'
-  };
-
-  return bless($self, $class);
+  my $self = $class->_new(\%SPEC, %given);
+  $self->{_align_number} = 0;
+  return $self;
 }
 
 # The tool for mode ('align' or 'score'), started the first time
 sub _proc
 {
   my ($self, $mode) = @_;
-  if(!$self->{_procs}{$mode})
-  {
+  if(!$self->{_procs}{$mode}) {
     my @extra = $mode eq 'score' ? ('--scoreonly')
                                  : ('--pretty', '--printscores');
-    my ($to, $from) = (undef, gensym());
-    # Standard error comes back with the output (its errors end a pair)
-    my $pid = eval { open3($to, $from, undef, $self->{_cmd},
-                           @{$self->{_args}}, @extra, '--stdin') };
-    croak("Cannot run $self->{_cmd}: $@") if !$pid;
-    $to->autoflush(1);
-    $self->{_procs}{$mode} = { pid => $pid, to => $to, from => $from };
+    $self->_start($mode, @extra, '--stdin');
   }
-  return $self->{_procs}{$mode};
-}
-
-# A line to the tool. If it has gone, the write fails quietly (the next
-# read then reports it) instead of SIGPIPE ending this process
-sub _send
-{
-  my ($to, $text) = @_;
-  local $SIG{PIPE} = 'IGNORE';
-  print {$to} $text;
-}
-
-# Stops the tool. kill: it may be mid-alignment (a timeout), so it would
-# not notice its input closing; terminate it before waiting
-sub _stop
-{
-  my ($self, $mode, $kill) = @_;
-  my $p = delete($self->{_procs}{$mode}) or return;
-  kill('TERM', $p->{pid}) if $kill;
-  # The tool may already have gone: writing to it must not kill this process
-  local $SIG{PIPE} = 'IGNORE';
-  close($p->{to});
-  close($p->{from});
-  waitpid($p->{pid}, 0);
-}
-
-# Lines of output with no line breaks; croaks on the tool's errors
-sub _read_line
-{
-  my ($self, $from, $mode) = @_;
-  my $line;
-  eval {
-    local $SIG{ALRM} = sub { die("timeout\n") };
-    alarm($self->{_timeout});
-    $line = <$from>;
-    alarm(0);
-  };
-  alarm(0);
-  if($@) {
-    $self->_stop($mode, 1) if defined($mode);
-    croak($@ eq "timeout\n" ? "Timeout reading needleman_wunsch output"
-                            : "Cannot read needleman_wunsch output: $@");
-  }
-  if(!defined($line)) {
-    $self->_stop($mode) if defined($mode);
-    croak("needleman_wunsch stopped (have you compiled?)");
-  }
-  $line =~ s/\r?\n$//;
-  if($line =~ /^(Alignment )?(Error|Warning):/) {
-    $self->_stop($mode) if defined($mode);
-    croak($line);
-  }
-  return $line;
-}
-
-sub _check
-{
-  my ($seq1, $seq2) = @_;
-  for my $seq ($seq1, $seq2) {
-    croak("Sequences must be defined") if !defined($seq);
-    croak("Whitespace or control characters not allowed in sequences")
-      if $seq =~ /[\x00-\x20\x7f]/;
-    # The tool would read these as a FASTA or FASTQ header and wait for
-    # the rest of the record
-    croak("Sequences cannot start with '>' or '@'") if $seq =~ /^[>@]/;
-  }
-}
-
-# Lines of the tool's output for one pair given on its command line: for
-# pairs with an empty sequence, which its line-by-line input cannot carry.
-# The pair comes after "--", so a sequence may start with '-'
-sub _run_once
-{
-  my ($self, @extra) = @_;
-  my ($to, $from) = (undef, gensym());
-  my $pid = eval { open3($to, $from, undef, $self->{_cmd},
-                         @{$self->{_args}}, @extra) };
-  croak("Cannot run $self->{_cmd}: $@") if !$pid;
-  close($to);
-  my @lines;
-  my $error;
-  eval {
-    local $SIG{ALRM} = sub { die("timeout\n") };
-    alarm($self->{_timeout});
-    while(defined(my $line = <$from>)) {
-      $line =~ s/\r?\n$//;
-      if($line =~ /^(Alignment )?(Error|Warning):/) { $error = $line; last; }
-      push(@lines, $line);
-    }
-    alarm(0);
-  };
-  alarm(0);
-  my $failed = $@;
-  close($from);
-  kill('TERM', $pid) if $failed || defined($error);
-  waitpid($pid, 0);
-  croak($failed eq "timeout\n" ? "Timeout reading $self->{_cmd} output"
-                               : "Cannot read $self->{_cmd} output: $failed")
-    if $failed;
-  croak($error) if defined($error);
-  return @lines;
+  return $mode;
 }
 
 sub _score_of
@@ -236,18 +91,19 @@ sub _score_of
 sub do_alignment
 {
   my ($self, $seq1, $seq2) = @_;
-  _check($seq1, $seq2);
+  $self->_check_seqs($seq1, $seq2);
   my %result = ('seq1' => $seq1, 'seq2' => $seq2,
                 'number' => $self->{_align_number}++);
   my @lines;
 
   if($seq1 eq '' || $seq2 eq '') {
+    # The pair comes after "--", so a sequence may start with '-'
     @lines = $self->_run_once('--pretty', '--printscores', '--', $seq1, $seq2);
   }
   else {
-    my $p = $self->_proc('align');
-    _send($p->{to}, "$seq1\n$seq2\n");
-    @lines = map { $self->_read_line($p->{from}, 'align') } 1..5;
+    my $mode = $self->_proc('align');
+    $self->_send($mode, "$seq1\n$seq2\n");
+    @lines = map { $self->_read_line($mode) } 1..5;
   }
 
   @result{'align1', 'sep', 'align2'} = @lines[0..2];
@@ -259,14 +115,14 @@ sub do_alignment
 sub do_score
 {
   my ($self, $seq1, $seq2) = @_;
-  _check($seq1, $seq2);
+  $self->_check_seqs($seq1, $seq2);
   if($seq1 eq '' || $seq2 eq '') {
     return _score_of(($self->_run_once('--scoreonly', '--', $seq1, $seq2))[0]);
   }
-  my $p = $self->_proc('score');
-  _send($p->{to}, "$seq1\n$seq2\n");
-  my $score = _score_of($self->_read_line($p->{from}, 'score'));
-  $self->_read_line($p->{from}, 'score');
+  my $mode = $self->_proc('score');
+  $self->_send($mode, "$seq1\n$seq2\n");
+  my $score = _score_of($self->_read_line($mode));
+  $self->_read_line($mode);
   return $score;
 }
 
@@ -278,20 +134,6 @@ sub print_alignment
   print $out $hit->{'sep'}."\n";
   print $out $hit->{'align2'}."\n";
   print $out "score: $hit->{'score'}\n\n";
-}
-
-# Stop the tool (also done when the object goes)
-sub destructor
-{
-  my ($self) = @_;
-  $self->_stop($_) for keys %{$self->{_procs}};
-}
-
-sub DESTROY
-{
-  my ($self) = @_;
-  local ($?, $@);
-  $self->destructor();
 }
 
 1;
