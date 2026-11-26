@@ -33,21 +33,6 @@
 #include "alignment_scoring_load.h"
 #include "alignment_macros.h"
 
-// How many values follow an option on the command line (0 for an option
-// that takes none, and for anything that is not an option)
-static int option_values(const char *opt)
-{
-  static const char *const one[] = {
-    "--scoring", "--substitution_matrix", "--substitution_pairs", "--match",
-    "--mismatch", "--gapopen", "--gapextend", "--minscore", "--maxhits",
-    "--context", "--threads", "--linearabove", "--wfabudget", "--file", NULL};
-  static const char *const two[] = {"--files", "--wildcard", NULL};
-  size_t i;
-  for(i = 0; one[i] != NULL; i++) if(strcasecmp(opt, one[i]) == 0) return 1;
-  for(i = 0; two[i] != NULL; i++) if(strcasecmp(opt, two[i]) == 0) return 2;
-  return 0;
-}
-
 char parse_entire_int(char *str, int *result)
 {
   size_t len = strlen(str);
@@ -99,21 +84,19 @@ static bool score_in_range(int score)
   return score >= -SCORE_ABS_MAX && score <= SCORE_ABS_MAX;
 }
 
-static void print_usage(enum NucleicsAlignCmdType cmd_type, score_t defaults[4],
-                        const char *cmdstr, const char *errfmt, ...)
-  __attribute__((format(printf, 4, 5)))
+static void vprint_usage(enum NucleicsAlignCmdType cmd_type,
+                         const score_t defaults[4], const char *cmdstr,
+                         const char *errfmt, va_list argptr)
   __attribute__((noreturn));
 
-static void print_usage(enum NucleicsAlignCmdType cmd_type, score_t defaults[4],
-                        const char *cmdstr, const char *errfmt, ...)
+// The usage text, after the error given (NULL: none), then exit
+static void vprint_usage(enum NucleicsAlignCmdType cmd_type,
+                         const score_t defaults[4], const char *cmdstr,
+                         const char *errfmt, va_list argptr)
 {
   if(errfmt != NULL) {
     fprintf(stderr, "Error: ");
-    va_list argptr;
-    va_start(argptr, errfmt);
     vfprintf(stderr, errfmt, argptr);
-    va_end(argptr);
-
     if(errfmt[strlen(errfmt)-1] != '\n') fprintf(stderr, "\n");
   }
 
@@ -229,7 +212,373 @@ void cmdline_free(cmdline_t *cmd)
   free(cmd);
 }
 
-#define usage(fmt,...) print_usage(cmd_type,defaults,argv[0],fmt, ##__VA_ARGS__)
+// Everything an option's handler needs while the arguments are read
+typedef struct {
+  cmdline_t *cmd;
+  scoring_t *scoring;
+  enum NucleicsAlignCmdType cmd_type;
+  score_t defaults[4];
+  const char *cmdstr;
+  bool scoring_set, substitutions_set, match_set, mismatch_set;
+} parse_ctx_t;
+
+static void ctx_usage(const parse_ctx_t *c, const char *errfmt, ...)
+  __attribute__((format(printf, 2, 3)))
+  __attribute__((noreturn));
+
+static void ctx_usage(const parse_ctx_t *c, const char *errfmt, ...)
+{
+  va_list argptr;
+  va_start(argptr, errfmt);
+  vprint_usage(c->cmd_type, c->defaults, c->cmdstr, errfmt, argptr);
+}
+
+// An option: its name, how many values follow it, which tool takes it
+// (TOOL_ANY: both), whether the first pass over the arguments applies it
+// (--help, and the scoring system and case sensitivity, which the other
+// options build on), and what it does with its values v[0], v[1]
+enum { TOOL_ANY, TOOL_NW, TOOL_SW };
+
+typedef struct {
+  const char *name;
+  int values;
+  int tool;
+  bool early;
+  void (*apply)(parse_ctx_t *c, char *const *v);
+} option_t;
+
+// --- Handlers: the scoring's rules ---
+
+static void opt_freestartgap(parse_ctx_t *c, char *const *v)
+{ (void)v; c->scoring->no_start_gap_penalty = true; }
+static void opt_freeendgap(parse_ctx_t *c, char *const *v)
+{ (void)v; c->scoring->no_end_gap_penalty = true; }
+static void opt_nogaps(parse_ctx_t *c, char *const *v)
+{ (void)v; c->scoring->no_gaps_in_a = c->scoring->no_gaps_in_b = true; }
+static void opt_nogapsin1(parse_ctx_t *c, char *const *v)
+{ (void)v; c->scoring->no_gaps_in_a = true; }
+static void opt_nogapsin2(parse_ctx_t *c, char *const *v)
+{ (void)v; c->scoring->no_gaps_in_b = true; }
+static void opt_nogapsinlongest(parse_ctx_t *c, char *const *v)
+{ (void)v; c->scoring->no_gaps_in_longest = true; }
+static void opt_nomismatches(parse_ctx_t *c, char *const *v)
+{ (void)v; c->scoring->no_mismatches = true; }
+
+// --- Handlers: the first pass's options ---
+
+static void opt_help(parse_ctx_t *c, char *const *v)
+{ (void)v; ctx_usage(c, NULL); }
+static void opt_case_sensitive(parse_ctx_t *c, char *const *v)
+{ (void)v; c->cmd->case_sensitive = 1; }
+static void opt_scoring(parse_ctx_t *c, char *const *v)
+{
+  if(c->scoring_set)
+    ctx_usage(c, "More than one scoring system specified - not permitted");
+  if(!scoring_system_by_name(c->scoring, v[0]))
+    ctx_usage(c, "Unknown --scoring choice, not one of %s",
+              scoring_system_names());
+  c->scoring_set = true;
+}
+
+// --- Handlers: output and modes ---
+
+static void opt_printseq(parse_ctx_t *c, char *const *v)
+{ (void)v; c->cmd->print_seq = true; }
+static void opt_printmatrices(parse_ctx_t *c, char *const *v)
+{ (void)v; c->cmd->print_matrices = true; }
+static void opt_printscores(parse_ctx_t *c, char *const *v)
+{ (void)v; c->cmd->print_scores = true; }
+static void opt_printfasta(parse_ctx_t *c, char *const *v)
+{ (void)v; c->cmd->print_fasta = true; }
+static void opt_pretty(parse_ctx_t *c, char *const *v)
+{ (void)v; c->cmd->print_pretty = true; }
+static void opt_colour(parse_ctx_t *c, char *const *v)
+{ (void)v; c->cmd->print_colour = true; }
+static void opt_zam(parse_ctx_t *c, char *const *v)
+{ (void)v; c->cmd->zam_stle_output = true; }
+static void opt_scoreonly(parse_ctx_t *c, char *const *v)
+{ (void)v; c->cmd->score_only = true; }
+static void opt_linear(parse_ctx_t *c, char *const *v)
+{ (void)v; c->cmd->linear_space = true; }
+static void opt_linearfallback(parse_ctx_t *c, char *const *v)
+{ (void)v; c->cmd->linear_fallback = true; }
+static void opt_wfa(parse_ctx_t *c, char *const *v)
+{ (void)v; c->cmd->wfa_align = true; }
+static void opt_fastlocal(parse_ctx_t *c, char *const *v)
+{ (void)v; c->cmd->fast_local = true; }
+static void opt_stdin(parse_ctx_t *c, char *const *v)
+{
+  (void)v;
+  // Similar to --file below
+  cmdline_add_files(c->cmd, "", NULL);
+  c->cmd->interactive = true;
+}
+
+// --- Handlers: options with values ---
+
+static void opt_substitution_matrix(parse_ctx_t *c, char *const *v)
+{
+  gzFile file = gzopen(v[0], "r");
+  if(file == NULL) ctx_usage(c, "Couldn't read: %s", v[0]);
+  align_scoring_load_matrix(file, v[0], c->scoring);
+  gzclose(file);
+  c->substitutions_set = true;
+}
+static void opt_substitution_pairs(parse_ctx_t *c, char *const *v)
+{
+  gzFile file = gzopen(v[0], "r");
+  if(file == NULL) ctx_usage(c, "Couldn't read: %s", v[0]);
+  align_scoring_load_pairwise(file, v[0], c->scoring);
+  gzclose(file);
+  c->substitutions_set = true;
+}
+static void opt_minscore(parse_ctx_t *c, char *const *v)
+{
+  // 0 and 1 alike: every hit with a positive score
+  if(!parse_entire_int(v[0], &c->cmd->min_score) || c->cmd->min_score < 0)
+    ctx_usage(c, "Invalid --minscore <score> argument (must be an int >= 0)");
+  c->cmd->min_score_set = true;
+}
+static void opt_maxhits(parse_ctx_t *c, char *const *v)
+{
+  if(!parse_entire_uint(v[0], &c->cmd->max_hits_per_alignment) ||
+     c->cmd->max_hits_per_alignment == 0)
+    ctx_usage(c, "Invalid --maxhits <hits> argument (must be at least 1)");
+  c->cmd->max_hits_per_alignment_set = true;
+}
+static void opt_linearabove(parse_ctx_t *c, char *const *v)
+{
+  if(!parse_entire_uint(v[0], &c->cmd->linear_above) ||
+     c->cmd->linear_above == 0)
+    ctx_usage(c, "Invalid --linearabove <n> argument (must be at least 1)");
+}
+static void opt_wfabudget(parse_ctx_t *c, char *const *v)
+{
+  const char *arg = v[0];
+  if(arg[0] == '\0' || !isdigit((unsigned char)arg[0]))
+    ctx_usage(c, "Invalid --wfabudget <n> argument (must be a positive integer)");
+  char *end = NULL;
+  errno = 0;
+  unsigned long long n = strtoull(arg, &end, 10);
+  if(errno == ERANGE || end == NULL || *end != '\0' || n == 0 ||
+     n > (unsigned long long)SIZE_MAX)
+    ctx_usage(c, "Invalid --wfabudget <n> argument (must be a positive integer)");
+  c->cmd->wfa_budget = (size_t)n;
+}
+static void opt_threads(parse_ctx_t *c, char *const *v)
+{
+  if(!parse_entire_uint(v[0], &c->cmd->threads) ||
+     c->cmd->threads == 0 || c->cmd->threads > 4096)
+    ctx_usage(c, "Invalid --threads <n> argument (must be 1 to 4096)");
+}
+static void opt_context(parse_ctx_t *c, char *const *v)
+{
+  if(!parse_entire_uint(v[0], &c->cmd->print_context))
+    ctx_usage(c, "Invalid --context <c> argument (must be >= 0)");
+}
+static void opt_match(parse_ctx_t *c, char *const *v)
+{
+  if(!parse_entire_int(v[0], &c->scoring->match))
+    ctx_usage(c, "Invalid --match argument ('%s') must be an int", v[0]);
+  c->match_set = true;
+}
+static void opt_mismatch(parse_ctx_t *c, char *const *v)
+{
+  if(!parse_entire_int(v[0], &c->scoring->mismatch))
+    ctx_usage(c, "Invalid --mismatch argument ('%s') must be an int", v[0]);
+  c->mismatch_set = true;
+}
+static void opt_gapopen(parse_ctx_t *c, char *const *v)
+{
+  if(!parse_entire_int(v[0], &c->scoring->gap_open))
+    ctx_usage(c, "Invalid --gapopen argument ('%s') must be an int", v[0]);
+}
+static void opt_gapextend(parse_ctx_t *c, char *const *v)
+{
+  if(!parse_entire_int(v[0], &c->scoring->gap_extend))
+    ctx_usage(c, "Invalid --gapextend argument ('%s') must be an int", v[0]);
+}
+static void opt_file(parse_ctx_t *c, char *const *v)
+{ cmdline_add_files(c->cmd, v[0], NULL); }
+static void opt_files(parse_ctx_t *c, char *const *v)
+{
+  // "- -": both from stdin
+  if(strcmp(v[0], "-") == 0 && strcmp(v[1], "-") == 0)
+    cmdline_add_files(c->cmd, v[0], NULL);
+  else
+    cmdline_add_files(c->cmd, v[0], v[1]);
+}
+static void opt_wildcard(parse_ctx_t *c, char *const *v)
+{
+  int wildscore = 0;
+  if(strlen(v[0]) != 1 || !parse_entire_int(v[1], &wildscore))
+    ctx_usage(c, "--wildcard <w> <s> takes a single character and a number");
+  if(!score_in_range(wildscore))
+    ctx_usage(c, "Scores must be between %i and %i", -SCORE_ABS_MAX,
+              SCORE_ABS_MAX);
+  scoring_add_wildcard(c->scoring, v[0][0], wildscore);
+}
+
+// The options, matched ignoring case. An unknown option is an error, as is
+// a value-taking option without its values
+static const option_t options[] = {
+  {"--help",                0, TOOL_ANY, true,  opt_help},
+  {"-help",                 0, TOOL_ANY, true,  opt_help},
+  {"-h",                    0, TOOL_ANY, true,  opt_help},
+  {"--case_sensitive",      0, TOOL_ANY, true,  opt_case_sensitive},
+  {"--scoring",             1, TOOL_ANY, true,  opt_scoring},
+  {"--freestartgap",        0, TOOL_NW,  false, opt_freestartgap},
+  {"--freeendgap",          0, TOOL_NW,  false, opt_freeendgap},
+  {"--nogaps",              0, TOOL_ANY, false, opt_nogaps},
+  {"--nogapsin1",           0, TOOL_ANY, false, opt_nogapsin1},
+  {"--nogapsin2",           0, TOOL_ANY, false, opt_nogapsin2},
+  {"--nogapsinlongest",     0, TOOL_ANY, false, opt_nogapsinlongest},
+  {"--nomismatches",        0, TOOL_ANY, false, opt_nomismatches},
+  {"--printseq",            0, TOOL_SW,  false, opt_printseq},
+  {"--printmatrices",       0, TOOL_ANY, false, opt_printmatrices},
+  {"--printscores",         0, TOOL_NW,  false, opt_printscores},
+  {"--printfasta",          0, TOOL_ANY, false, opt_printfasta},
+  {"--pretty",              0, TOOL_ANY, false, opt_pretty},
+  {"--colour",              0, TOOL_ANY, false, opt_colour},
+  {"--zam",                 0, TOOL_NW,  false, opt_zam},
+  {"--scoreonly",           0, TOOL_NW,  false, opt_scoreonly},
+  {"--linear",              0, TOOL_NW,  false, opt_linear},
+  {"--linearfallback",      0, TOOL_NW,  false, opt_linearfallback},
+  {"--wfa",                 0, TOOL_NW,  false, opt_wfa},
+  {"--fastlocal",           0, TOOL_SW,  false, opt_fastlocal},
+  {"--stdin",               0, TOOL_ANY, false, opt_stdin},
+  {"--substitution_matrix", 1, TOOL_ANY, false, opt_substitution_matrix},
+  {"--substitution_pairs",  1, TOOL_ANY, false, opt_substitution_pairs},
+  {"--minscore",            1, TOOL_SW,  false, opt_minscore},
+  {"--maxhits",             1, TOOL_SW,  false, opt_maxhits},
+  {"--linearabove",         1, TOOL_NW,  false, opt_linearabove},
+  {"--wfabudget",           1, TOOL_NW,  false, opt_wfabudget},
+  {"--threads",             1, TOOL_ANY, false, opt_threads},
+  {"--context",             1, TOOL_SW,  false, opt_context},
+  {"--match",               1, TOOL_ANY, false, opt_match},
+  {"--mismatch",            1, TOOL_ANY, false, opt_mismatch},
+  {"--gapopen",             1, TOOL_ANY, false, opt_gapopen},
+  {"--gapextend",           1, TOOL_ANY, false, opt_gapextend},
+  {"--file",                1, TOOL_ANY, false, opt_file},
+  {"--files",               2, TOOL_ANY, false, opt_files},
+  {"--wildcard",            2, TOOL_ANY, false, opt_wildcard},
+};
+
+static const option_t *option_find(const char *arg)
+{
+  size_t i;
+  for(i = 0; i < sizeof(options) / sizeof(options[0]); i++)
+    if(strcasecmp(arg, options[i].name) == 0) return &options[i];
+  return NULL;
+}
+
+// The options the other options build on: --help, --case_sensitive and
+// --scoring, applied before the rest (case sensitivity shapes the tables
+// the scoring and substitution files fill), stepping over each option's
+// values so a value that happens to look like one of these (a file called
+// --help) is not taken for it. "--" ends the options. Also the first check
+// that every value-taking option has its values
+static void parse_early(parse_ctx_t *c, int argc, char **argv)
+{
+  int argi;
+  for(argi = 1; argi < argc && strcmp(argv[argi], "--") != 0; argi++)
+  {
+    const option_t *opt = option_find(argv[argi]);
+    const int values = opt != NULL ? opt->values : 0;
+    if(argi + values >= argc)
+      ctx_usage(c, "%s requires %s", argv[argi],
+                values == 2 ? "two arguments" : "an argument");
+    if(opt != NULL && opt->early) opt->apply(c, &argv[argi+1]);
+    argi += values;
+  }
+}
+
+// The checks across options, once every option is read
+static void validate(parse_ctx_t *c, bool options_ended)
+{
+  cmdline_t *cmd = c->cmd;
+  scoring_t *scoring = c->scoring;
+
+  if(!score_in_range(scoring->match) || !score_in_range(scoring->mismatch) ||
+     !score_in_range(scoring->gap_open) || !score_in_range(scoring->gap_extend))
+  {
+    ctx_usage(c, "Scores must be between %i and %i", -SCORE_ABS_MAX,
+              SCORE_ABS_MAX);
+  }
+
+  if((c->match_set && !c->mismatch_set && !scoring->no_mismatches) ||
+     (!c->match_set && c->mismatch_set))
+  {
+    ctx_usage(c, "--match --mismatch must both be set or neither set");
+  }
+  else if(c->substitutions_set && !c->match_set)
+  {
+    // if substitution table set and not match/mismatch
+    scoring->use_match_mismatch = 0;
+  }
+
+  if(scoring->use_match_mismatch && scoring->match < scoring->mismatch) {
+    ctx_usage(c, "Match value should not be less than mismatch penalty");
+  }
+
+  // A gap scoring above 0 would grow out of Smith-Waterman's empty cells
+  if(c->cmd_type == NUCLEICS_ALIGN_SW_CMD &&
+     alignment_sw_gaps_unsupported(scoring))
+    ctx_usage(c, "Smith-Waterman gaps must not score above 0: --gapextend, "
+                 "and --gapopen plus --gapextend, must be at most 0");
+
+  // Cannot guarantee that we can perform a global alignment if nomismatches
+  // and nogaps is true
+  if(c->cmd_type == NUCLEICS_ALIGN_NW_CMD && scoring->no_mismatches &&
+     (scoring->no_gaps_in_a || scoring->no_gaps_in_b ||
+      scoring->no_gaps_in_longest))
+  {
+    ctx_usage(c, "--nogaps.. --nomismatches cannot be used at together");
+  }
+
+  // An option after the first sequence is a mistake, not a sequence
+  if(cmd->seq2 != NULL && !options_ended && cmd->seq2[0] == '-')
+    ctx_usage(c, "Unknown argument '%s' (put -- before sequences that start "
+                 "with -)", cmd->seq2);
+
+  if(cmd->seq1 == NULL && cmd->file_list_length == 0)
+  {
+    ctx_usage(c, "No input specified");
+  }
+
+  if(cmd->zam_stle_output &&
+     (cmd->print_pretty || cmd->print_scores ||
+      cmd->print_colour || cmd->print_fasta))
+  {
+    ctx_usage(c, "Cannot use --printscore, --printfasta, --pretty or --colour "
+                 "with --zam");
+  }
+
+  if(cmd->score_only &&
+     (cmd->zam_stle_output || cmd->print_pretty || cmd->print_colour ||
+      cmd->print_matrices))
+  {
+    ctx_usage(c, "--scoreonly cannot be used with --zam, --pretty, --colour or "
+                 "--printmatrices");
+  }
+
+  if(cmd->linear_above > 0 && cmd->print_matrices)
+    ctx_usage(c, "--linearabove cannot be used with --printmatrices");
+  if(cmd->linear_fallback && cmd->print_matrices)
+    ctx_usage(c, "--linearfallback cannot be used with --printmatrices");
+  if(cmd->wfa_align && cmd->print_matrices)
+    ctx_usage(c, "--wfa cannot be used with --printmatrices");
+
+  if(cmd->linear_space &&
+     (scoring->no_start_gap_penalty || scoring->no_end_gap_penalty ||
+      scoring->no_gaps_in_a || scoring->no_gaps_in_b ||
+      scoring->no_gaps_in_longest || scoring->no_mismatches ||
+      cmd->print_matrices))
+  {
+    ctx_usage(c, "--linear cannot be used with --freestartgap, --freeendgap, "
+                 "--nogaps.., --nomismatches or --printmatrices");
+  }
+}
 
 cmdline_t* cmdline_new(int argc, char **argv, scoring_t *scoring,
                        enum NucleicsAlignCmdType cmd_type)
@@ -251,404 +600,53 @@ cmdline_t* cmdline_new(int argc, char **argv, scoring_t *scoring,
   // All values initially 0
 
   // Store defaults
-  score_t defaults[4] = {scoring->match, scoring->mismatch,
-                         scoring->gap_open, scoring->gap_extend};
+  parse_ctx_t ctx = {cmd, scoring, cmd_type,
+                     {scoring->match, scoring->mismatch, scoring->gap_open,
+                      scoring->gap_extend},
+                     argv[0], false, false, false, false};
+  parse_ctx_t *c = &ctx;
 
-  if(argc == 1) usage(NULL);
+  if(argc == 1) ctx_usage(c, NULL);
 
-  // First run through arguments to set up case_sensitive and scoring system
-
-  // case sensitive needs to be dealt with first
-  // (is is used to construct hash table for swap_scores)
-  char scoring_set = 0, substitutions_set = 0, match_set = 0, mismatch_set = 0;
-
-  // First pass: --help, and the scoring system and case sensitivity, which
-  // the other options build on. Each option's values are stepped over, so
-  // a value that happens to look like one of these (a file called --help)
-  // is not taken for it; "--" ends the options
-  int argi;
-  for(argi = 1; argi < argc && strcmp(argv[argi], "--") != 0; argi++)
-  {
-    const int values = option_values(argv[argi]);
-    if(argi + values >= argc)
-      usage("%s requires %s", argv[argi],
-            values == 2 ? "two arguments" : "an argument");
-
-    if(strcasecmp(argv[argi], "--help") == 0 ||
-       strcasecmp(argv[argi], "-help") == 0 ||
-       strcasecmp(argv[argi], "-h") == 0)
-    {
-      usage(NULL);
-    }
-    else if(strcasecmp(argv[argi], "--case_sensitive") == 0)
-    {
-      cmd->case_sensitive = 1;
-    }
-    else if(strcasecmp(argv[argi], "--scoring") == 0)
-    {
-      if(scoring_set)
-      {
-        usage("More than one scoring system specified - not permitted");
-      }
-
-      if(!scoring_system_by_name(scoring, argv[argi+1]))
-      {
-        usage("Unknown --scoring choice, not one of %s",
-              scoring_system_names());
-      }
-
-      scoring_set = 1;
-    }
-    argi += values;
-  }
+  parse_early(c, argc, argv);
 
   // Before wildcards and substitution files are added: they keep their case
   if(cmd->case_sensitive) scoring_make_case_sensitive(scoring);
 
+  const int tool = cmd_type == NUCLEICS_ALIGN_NW_CMD ? TOOL_NW : TOOL_SW;
   bool options_ended = false; // after "--": sequences only, any first byte
+  int argi;
   for(argi = 1; argi < argc; argi++)
   {
     if(strcmp(argv[argi], "--") == 0)
     {
       options_ended = true;
       argi++;
-      if(argc - argi != 2) usage("-- must be followed by the two sequences");
+      if(argc - argi != 2)
+        ctx_usage(c, "-- must be followed by the two sequences");
       break;
     }
     else if(argv[argi][0] == '-')
     {
-      // strcasecmp does case insensitive comparison
-      if(strcasecmp(argv[argi], "--freestartgap") == 0)
-      {
-        if(cmd_type != NUCLEICS_ALIGN_NW_CMD)
-          usage("--freestartgap only valid with Needleman-Wunsch");
-        scoring->no_start_gap_penalty = true;
+      const option_t *opt = option_find(argv[argi]);
+      if(opt == NULL) {
+        if(argi == argc-1)
+          ctx_usage(c, "Unknown argument without parameter: %s", argv[argi]);
+        ctx_usage(c, "Unknown argument '%s'", argv[argi]);
       }
-      else if(strcasecmp(argv[argi], "--freeendgap") == 0)
-      {
-        if(cmd_type != NUCLEICS_ALIGN_NW_CMD)
-          usage("--freeendgap only valid with Needleman-Wunsch");
-        scoring->no_end_gap_penalty = true;
-      }
-      else if(strcasecmp(argv[argi], "--nogaps") == 0)
-      {
-        scoring->no_gaps_in_a = true;
-        scoring->no_gaps_in_b = true;
-      }
-      else if(strcasecmp(argv[argi], "--nogapsin1") == 0)
-      {
-        scoring->no_gaps_in_a = true;
-      }
-      else if(strcasecmp(argv[argi], "--nogapsin2") == 0)
-      {
-        scoring->no_gaps_in_b = true;
-      }
-      else if(strcasecmp(argv[argi], "--nogapsinlongest") == 0)
-      {
-        scoring->no_gaps_in_longest = true;
-      }
-      else if(strcasecmp(argv[argi], "--nomismatches") == 0)
-      {
-        scoring->no_mismatches = true;
-      }
-      else if(strcasecmp(argv[argi], "--case_sensitive") == 0)
-      {
-        // Already dealt with
-      }
-      else if(strcasecmp(argv[argi], "--printseq") == 0)
-      {
-        if(cmd_type != NUCLEICS_ALIGN_SW_CMD)
-          usage("--printseq only valid with Smith-Waterman");
-        cmd->print_seq = true;
-      }
-      else if(strcasecmp(argv[argi], "--printmatrices") == 0)
-      {
-        cmd->print_matrices = true;
-      }
-      else if(strcasecmp(argv[argi], "--printscores") == 0)
-      {
-        if(cmd_type != NUCLEICS_ALIGN_NW_CMD)
-          usage("--printscores only valid with Needleman-Wunsch");
-        cmd->print_scores = true;
-      }
-      else if(strcasecmp(argv[argi], "--printfasta") == 0)
-      {
-        cmd->print_fasta = true;
-      }
-      else if(strcasecmp(argv[argi], "--pretty") == 0)
-      {
-        cmd->print_pretty = true;
-      }
-      else if(strcasecmp(argv[argi], "--colour") == 0)
-      {
-        cmd->print_colour = true;
-      }
-      else if(strcasecmp(argv[argi], "--zam") == 0)
-      {
-        if(cmd_type != NUCLEICS_ALIGN_NW_CMD)
-          usage("--zam only valid with Needleman-Wunsch");
-        cmd->zam_stle_output = true;
-      }
-      else if(strcasecmp(argv[argi], "--scoreonly") == 0)
-      {
-        if(cmd_type != NUCLEICS_ALIGN_NW_CMD)
-          usage("--scoreonly only valid with Needleman-Wunsch");
-        cmd->score_only = true;
-      }
-      else if(strcasecmp(argv[argi], "--linear") == 0)
-      {
-        if(cmd_type != NUCLEICS_ALIGN_NW_CMD)
-          usage("--linear only valid with Needleman-Wunsch");
-        cmd->linear_space = true;
-      }
-      else if(strcasecmp(argv[argi], "--linearfallback") == 0)
-      {
-        if(cmd_type != NUCLEICS_ALIGN_NW_CMD)
-          usage("--linearfallback only valid with Needleman-Wunsch");
-        cmd->linear_fallback = true;
-      }
-      else if(strcasecmp(argv[argi], "--wfa") == 0)
-      {
-        if(cmd_type != NUCLEICS_ALIGN_NW_CMD)
-          usage("--wfa only valid with Needleman-Wunsch");
-        cmd->wfa_align = true;
-      }
-      else if(strcasecmp(argv[argi], "--fastlocal") == 0)
-      {
-        if(cmd_type != NUCLEICS_ALIGN_SW_CMD)
-          usage("--fastlocal only valid with Smith-Waterman");
-        cmd->fast_local = true;
-      }
-      else if(strcasecmp(argv[argi], "--stdin") == 0)
-      {
-        // Similar to --file argument below
-        cmdline_add_files(cmd, "", NULL);
-        cmd->interactive = true;
-      }
-      else if(argi == argc-1)
-      {
-        // All the remaining options take an extra argument
-        usage("Unknown argument without parameter: %s", argv[argi]);
-      }
-      else if(strcasecmp(argv[argi], "--scoring") == 0)
-      {
-        // This handled above
-        argi++; // took an argument
-      }
-      else if(strcasecmp(argv[argi], "--substitution_matrix") == 0)
-      {
-        gzFile sub_matrix_file = gzopen(argv[argi+1], "r");
-        if(sub_matrix_file == NULL) usage("Couldn't read: %s", argv[argi+1]);
-
-        align_scoring_load_matrix(sub_matrix_file, argv[argi+1], scoring);
-
-        gzclose(sub_matrix_file);
-        substitutions_set = true;
-
-        argi++; // took an argument
-      }
-      else if(strcasecmp(argv[argi], "--substitution_pairs") == 0)
-      {
-        gzFile sub_pairs_file = gzopen(argv[argi+1], "r");
-        if(sub_pairs_file == NULL) usage("Couldn't read: %s", argv[argi+1]);
-
-        align_scoring_load_pairwise(sub_pairs_file, argv[argi+1], scoring);
-
-        gzclose(sub_pairs_file);
-        substitutions_set = true;
-
-        argi++; // took an argument
-      }
-      else if(strcasecmp(argv[argi], "--minscore") == 0)
-      {
-        if(cmd_type != NUCLEICS_ALIGN_SW_CMD)
-          usage("--minscore only valid with Smith-Waterman");
-
-        // 0 and 1 alike: every hit with a positive score
-        if(!parse_entire_int(argv[argi+1], &cmd->min_score) ||
-           cmd->min_score < 0)
-          usage("Invalid --minscore <score> argument (must be an int >= 0)");
-
-        cmd->min_score_set = true;
-
-        argi++;
-      }
-      else if(strcasecmp(argv[argi], "--maxhits") == 0)
-      {
-        if(cmd_type != NUCLEICS_ALIGN_SW_CMD)
-          usage("--maxhits only valid with Smith-Waterman");
-
-        if(!parse_entire_uint(argv[argi+1], &cmd->max_hits_per_alignment) ||
-           cmd->max_hits_per_alignment == 0)
-          usage("Invalid --maxhits <hits> argument (must be at least 1)");
-
-        cmd->max_hits_per_alignment_set = true;
-
-        argi++;
-      }
-      else if(strcasecmp(argv[argi], "--linearabove") == 0)
-      {
-        if(cmd_type != NUCLEICS_ALIGN_NW_CMD)
-          usage("--linearabove only valid with Needleman-Wunsch");
-        if(!parse_entire_uint(argv[argi+1], &cmd->linear_above) ||
-           cmd->linear_above == 0)
-          usage("Invalid --linearabove <n> argument (must be at least 1)");
-        argi++;
-      }
-      else if(strcasecmp(argv[argi], "--wfabudget") == 0)
-      {
-        if(cmd_type != NUCLEICS_ALIGN_NW_CMD)
-          usage("--wfabudget only valid with Needleman-Wunsch");
-        const char *arg = argv[argi+1];
-        if(arg[0] == '\0' || !isdigit((unsigned char)arg[0]))
-          usage("Invalid --wfabudget <n> argument (must be a positive integer)");
-        char *end = NULL;
-        errno = 0;
-        unsigned long long v = strtoull(arg, &end, 10);
-        if(errno == ERANGE || end == NULL || *end != '\0' || v == 0 ||
-           v > (unsigned long long)SIZE_MAX)
-          usage("Invalid --wfabudget <n> argument (must be a positive integer)");
-        cmd->wfa_budget = (size_t)v;
-        argi++;
-      }
-      else if(strcasecmp(argv[argi], "--threads") == 0)
-      {
-        if(!parse_entire_uint(argv[argi+1], &cmd->threads) ||
-           cmd->threads == 0 || cmd->threads > 4096)
-          usage("Invalid --threads <n> argument (must be 1 to 4096)");
-        argi++;
-      }
-      else if(strcasecmp(argv[argi], "--context") == 0)
-      {
-        if(cmd_type != NUCLEICS_ALIGN_SW_CMD)
-          usage("--context only valid with Smith-Waterman");
-
-        if(!parse_entire_uint(argv[argi+1], &cmd->print_context))
-          usage("Invalid --context <c> argument (must be >= 0)");
-
-        argi++;
-      }
-      else if(strcasecmp(argv[argi], "--match") == 0)
-      {
-        if(!parse_entire_int(argv[argi+1], &scoring->match))
-        {
-          usage("Invalid --match argument ('%s') must be an int", argv[argi+1]);
-        }
-
-        match_set = true;
-        argi++; // took an argument
-      }
-      else if(strcasecmp(argv[argi], "--mismatch") == 0)
-      {
-        if(!parse_entire_int(argv[argi+1], &scoring->mismatch))
-        {
-          usage("Invalid --mismatch argument ('%s') must be an int", argv[argi+1]);
-        }
-
-        mismatch_set = true;
-        argi++; // took an argument
-      }
-      else if(strcasecmp(argv[argi], "--gapopen") == 0)
-      {
-        if(!parse_entire_int(argv[argi+1], &scoring->gap_open))
-        {
-          usage("Invalid --gapopen argument ('%s') must be an int", argv[argi+1]);
-        }
-
-        argi++; // took an argument
-      }
-      else if(strcasecmp(argv[argi], "--gapextend") == 0)
-      {
-        if(!parse_entire_int(argv[argi+1], &scoring->gap_extend))
-        {
-          usage("Invalid --gapextend argument ('%s') must be an int",
-                argv[argi+1]);
-        }
-
-        argi++; // took an argument
-      }
-      else if(strcasecmp(argv[argi], "--file") == 0)
-      {
-        cmdline_add_files(cmd, argv[argi+1], NULL);
-        argi++; // took an argument
-      }
-      // Remaining options take two arguments but check themselves
-      else if(strcasecmp(argv[argi], "--files") == 0)
-      {
-        if(argi >= argc-2)
-        {
-          usage("--files option takes 2 arguments");
-        }
-        else if(strcmp(argv[argi+1], "-") == 0 && strcmp(argv[argi+2], "-") == 0)
-        {
-          // Read both from stdin
-          cmdline_add_files(cmd, argv[argi+1], NULL);
-        }
-        else
-        {
-          cmdline_add_files(cmd, argv[argi+1], argv[argi+2]);
-        }
-
-        argi += 2; // took two arguments
-      }
-      else if(strcasecmp(argv[argi], "--wildcard") == 0)
-      {
-        int wildscore = 0;
-
-        if(argi == argc-2 || strlen(argv[argi+1]) != 1 ||
-           !parse_entire_int(argv[argi+2], &wildscore))
-        {
-          usage("--wildcard <w> <s> takes a single character and a number");
-        }
-        if(!score_in_range(wildscore))
-          usage("Scores must be between %i and %i", -SCORE_ABS_MAX, SCORE_ABS_MAX);
-
-        scoring_add_wildcard(scoring, argv[argi+1][0], wildscore);
-
-        argi += 2; // took two arguments
-      }
-      else usage("Unknown argument '%s'", argv[argi]);
+      if(opt->tool != TOOL_ANY && opt->tool != tool)
+        ctx_usage(c, "%s only valid with %s", opt->name,
+                  opt->tool == TOOL_NW ? "Needleman-Wunsch" : "Smith-Waterman");
+      // The first pass applied the early ones (and checked every option
+      // has its values)
+      if(!opt->early) opt->apply(c, &argv[argi+1]);
+      argi += opt->values;
     }
     else
     {
-      if(argc - argi != 2) usage("Unknown options: '%s'", argv[argi]);
+      if(argc - argi != 2) ctx_usage(c, "Unknown options: '%s'", argv[argi]);
       break;
     }
-  }
-
-  if(!score_in_range(scoring->match) || !score_in_range(scoring->mismatch) ||
-     !score_in_range(scoring->gap_open) || !score_in_range(scoring->gap_extend))
-  {
-    usage("Scores must be between %i and %i", -SCORE_ABS_MAX, SCORE_ABS_MAX);
-  }
-
-  if((match_set && !mismatch_set && !scoring->no_mismatches) ||
-     (!match_set && mismatch_set))
-  {
-    usage("--match --mismatch must both be set or neither set");
-  }
-  else if(substitutions_set && !match_set)
-  {
-    // if substitution table set and not match/mismatch
-    scoring->use_match_mismatch = 0;
-  }
-
-  if(scoring->use_match_mismatch && scoring->match < scoring->mismatch) {
-    usage("Match value should not be less than mismatch penalty");
-  }
-
-  // A gap scoring above 0 would grow out of Smith-Waterman's empty cells
-  if(cmd_type == NUCLEICS_ALIGN_SW_CMD && alignment_sw_gaps_unsupported(scoring))
-    usage("Smith-Waterman gaps must not score above 0: --gapextend, and "
-          "--gapopen plus --gapextend, must be at most 0");
-
-  // Cannot guarantee that we can perform a global alignment if nomismatches
-  // and nogaps is true
-  if(cmd_type == NUCLEICS_ALIGN_NW_CMD && scoring->no_mismatches &&
-     (scoring->no_gaps_in_a || scoring->no_gaps_in_b ||
-      scoring->no_gaps_in_longest))
-  {
-    usage("--nogaps.. --nomismatches cannot be used at together");
   }
 
   // Check for extra unused arguments
@@ -657,49 +655,9 @@ cmdline_t* cmdline_new(int argc, char **argv, scoring_t *scoring,
   {
     cmd->seq1 = argv[argi];
     cmd->seq2 = argv[argi+1];
-    // An option after the first sequence is a mistake, not a sequence
-    if(!options_ended && cmd->seq2[0] == '-')
-      usage("Unknown argument '%s' (put -- before sequences that start "
-            "with -)", cmd->seq2);
   }
 
-  if(cmd->seq1 == NULL && cmd->file_list_length == 0)
-  {
-    usage("No input specified");
-  }
-
-  if(cmd->zam_stle_output &&
-     (cmd->print_pretty || cmd->print_scores ||
-      cmd->print_colour || cmd->print_fasta))
-  {
-    usage("Cannot use --printscore, --printfasta, --pretty or --colour with "
-          "--zam");
-  }
-
-  if(cmd->score_only &&
-     (cmd->zam_stle_output || cmd->print_pretty || cmd->print_colour ||
-      cmd->print_matrices))
-  {
-    usage("--scoreonly cannot be used with --zam, --pretty, --colour or "
-          "--printmatrices");
-  }
-
-  if(cmd->linear_above > 0 && cmd->print_matrices)
-    usage("--linearabove cannot be used with --printmatrices");
-  if(cmd->linear_fallback && cmd->print_matrices)
-    usage("--linearfallback cannot be used with --printmatrices");
-  if(cmd->wfa_align && cmd->print_matrices)
-    usage("--wfa cannot be used with --printmatrices");
-
-  if(cmd->linear_space &&
-     (scoring->no_start_gap_penalty || scoring->no_end_gap_penalty ||
-      scoring->no_gaps_in_a || scoring->no_gaps_in_b ||
-      scoring->no_gaps_in_longest || scoring->no_mismatches ||
-      cmd->print_matrices))
-  {
-    usage("--linear cannot be used with --freestartgap, --freeendgap, "
-          "--nogaps.., --nomismatches or --printmatrices");
-  }
+  validate(c, options_ended);
 
   return cmd;
 }

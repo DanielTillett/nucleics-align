@@ -60,6 +60,11 @@ fixes listed under [Changes to output](#changes-to-output).
   file with headings and no rows is refused ("No rows in matrix") instead
   of being accepted empty. The public API's error messages take the tools'
   wording. `align_scoring_load_*()` take the case setting from the scoring
+- The tools' option parser is a table: one entry per option with its
+  name, how many values it takes, which tool takes it and a handler, so
+  the "only valid with" and "requires an argument" checks are made once,
+  in one place. The same options, values, messages and exit statuses as
+  before (every command line fixture is unchanged)
 - The unit tests are one file per subject (`tests/test_*.c`, twelve
   suites) on a shared harness (`tests/test_common.h`): one random
   generator reseeded for every test from the run's seed and the test's
