@@ -1,22 +1,20 @@
 #!/usr/bin/env python3
 """Benchmark parasail scan (nw_trace_scan_avx2_256_16) and deep BiWFA CIGAR re-scoring."""
-import re, statistics, subprocess, time
+import re, statistics, subprocess, sys, time
 
-WORK = "/tmp/nucleics_compare"
+from bench_common import (read_seqs, rescore_aligned, rescore_cigar,
+                          median_summary, timed_reps)
+
+# The work directory of compare_harness.sh and journal_bench.sh
+WORK = sys.argv[1] if len(sys.argv) > 1 else "/tmp/nucleics_compare"
 NW = "./bin/needleman_wunsch"
 SCAN = WORK + "/bin/run_parasail_scan"
 WFA2_CIG = WORK + "/bin/run_wfa2_cigar"
 
 def run3(cmd):
-    ws, rs = [], []
-    sc = None
-    for _ in range(3):
-        t0 = time.perf_counter()
-        p = subprocess.run(["/usr/bin/time", "-v"] + cmd, capture_output=True, text=True, check=True)
-        ws.append((time.perf_counter() - t0) * 1000.0)
-        rs.append(int(re.search(r"Maximum resident set size \(kbytes\):\s*(\d+)", p.stderr).group(1)) / 1024.0)
-        sc = int(re.findall(r"score:\s*(-?\d+)", p.stdout)[-1])
-    return statistics.median(ws), min(ws), max(ws), statistics.median(rs), sc
+    """(median wall, min, max, median RSS, score) of three runs"""
+    med, lo, hi, _, rss, sc, _ = median_summary(timed_reps(cmd, 3))
+    return med, lo, hi, rss, sc
 
 print("=== PARASAIL v2.6.2 SCAN (nw_trace_scan_avx2_256_16, 1t) ===")
 for name, f1, f2 in [
@@ -29,57 +27,17 @@ for name, f1, f2 in [
     med, lo, hi, rss, sc = run3([SCAN, WORK + "/proteins/" + f1, WORK + "/proteins/" + f2])
     print(f"  {name:14s}  scan_1t={med:7.2f} ms [{lo:6.2f}-{hi:6.2f}]  rss={rss:5.1f} MiB  score={sc}")
 
-def read_seqs(p):
-    s, c = [], []
-    for l in open(p):
-        if l.startswith(">"):
-            if c:
-                s.append("".join(c))
-                c = []
-        else:
-            c.append(l.strip())
-    if c:
-        s.append("".join(c))
-    return s
+
+# The DNA scoring of these runs: match 1, mismatch -2, gap -4 - 1 per letter
+def dna(x, y):
+    return 1 if x == y else -2
+
 
 def rescore_aln(a, b):
-    assert len(a) == len(b)
-    sc = 0
-    ia = ib = False
-    for x, y in zip(a, b):
-        assert not (x == "-" and y == "-")
-        if x == "-":
-            sc += -1 if ia else -5
-            ia, ib = True, False
-        elif y == "-":
-            sc += -1 if ib else -5
-            ib, ia = True, False
-        else:
-            ia = ib = False
-            sc += 1 if x.upper() == y.upper() else -2
-    return sc
+    return rescore_aligned(a, b, dna, -4, -1)
 
 def rescore_wfa_cig(sa, sb, cig):
-    i = j = sc = 0
-    prev = None
-    for op in cig:
-        if op in ("M", "X", "="):
-            sc += 1 if sa[i].upper() == sb[j].upper() else -2
-            i += 1
-            j += 1
-            prev = "M"
-        elif op == "I":
-            sc += -1 if prev == "I" else -5
-            j += 1
-            prev = "I"
-        elif op == "D":
-            sc += -1 if prev == "D" else -5
-            i += 1
-            prev = "D"
-        else:
-            raise ValueError(f"Unknown CIGAR op: {op!r}")
-    assert i == len(sa) and j == len(sb)
-    return sc
+    return rescore_cigar(sa, sb, cig, dna, -4, -1)
 
 print("\n=== DEEP BiWFA INDEPENDENT CIGAR/ALIGNMENT RE-SCORING (100 kb 1% & 1 Mb 0.1%) ===")
 for label, fa in [("100 kb 1%", WORK + "/scale/100000_1_s11.fa"), ("1 Mb 0.1%", WORK + "/scale/1000000_0.1_s11.fa")]:

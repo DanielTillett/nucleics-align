@@ -19,14 +19,8 @@ mkdir -p "$WORK/src" "$WORK/bin" "$WORK/pairs"
 
 NW="$ROOT/bin/needleman_wunsch"
 SW="$ROOT/bin/smith_waterman"
-if [ ! -x "$NW" ] || [ ! -x "$SW" ]; then
-  echo "Build Nucleics Align first with 'make' in $ROOT" >&2
-  exit 1
-fi
-if [ ! -x /usr/bin/time ]; then
-  echo "GNU time (/usr/bin/time) is required for CPU time and peak RSS" >&2
-  exit 1
-fi
+. "$ROOT/benchmarks/bench_common.sh"
+bench_require
 
 SEQALIGN_REV="dc41988"
 KSW2_REV="289609b"
@@ -34,15 +28,7 @@ WFA2_REV="cf3eb92"
 SSW_REV="a66636b"
 EDLIB_TAG="v1.2.7"
 
-echo "# host: $(uname -a)"
-echo "# cpu:  $(lscpu | awk -F: '/Model name/{gsub(/^ +/,"",$2); print $2; exit}')"
-echo "# governor: $(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null || echo unknown)"
-echo "# smt:  $(cat /sys/devices/system/cpu/smt/active 2>/dev/null || echo unknown)"
-echo "# gcc:  $(gcc --version | head -n1)"
-echo "# python: $(python3 --version)"
-echo "# nucleics-align: $(git -C "$ROOT" rev-parse --short HEAD)"
-echo "# nw_sha256: $(sha256sum "$NW" | awk '{print $1}')"
-echo "# sw_sha256: $(sha256sum "$SW" | awk '{print $1}')"
+bench_header
 
 # 1. Original seq-align (pinned commit dc41988)
 if [ ! -d "$WORK/src/seq-align" ]; then
@@ -318,6 +304,7 @@ gcc -O3 "$ROOT/benchmarks/ablation.c" -I "$ROOT/include" -I "$ROOT/src/lib" \
 
 python3 - "$ROOT" "$WORK" "$THREADS" "$SECTION" <<'PY'
 import hashlib, os, re, statistics, subprocess, sys, time
+from bench_common import sha256, timed
 
 ROOT, WORK, THREADS, SECTION = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 NW = os.path.join(ROOT, "bin/needleman_wunsch")
@@ -330,9 +317,6 @@ EDLIB = os.path.join(WORK, "bin/run_edlib")
 ABL = os.path.join(WORK, "bin/ablation")
 GEN = os.path.join(ROOT, "benchmarks/gen_pairs.py")
 
-def sha256(path):
-    return hashlib.sha256(open(path, "rb").read()).hexdigest()
-
 def ensure_pairs(length, div, seeds):
     pairs = []
     for seed in seeds:
@@ -342,23 +326,8 @@ def ensure_pairs(length, div, seeds):
     return pairs
 
 def run_once(cmd, require_score=True):
-    t0 = time.perf_counter()
-    p = subprocess.run(["/usr/bin/time", "-v"] + cmd, capture_output=True, text=True)
-    dt = (time.perf_counter() - t0) * 1000.0
-    if p.returncode != 0:
-        raise RuntimeError(f"Failed ({p.returncode}): {cmd}\n{p.stderr[:200]}")
-    m_rss = re.search(r"Maximum resident set size \(kbytes\):\s*(\d+)", p.stderr)
-    m_usr = re.search(r"User time \(seconds\):\s*([\d.]+)", p.stderr)
-    m_sys = re.search(r"System time \(seconds\):\s*([\d.]+)", p.stderr)
-    if not m_rss or not m_usr or not m_sys:
-        raise RuntimeError(f"Failed to parse GNU time output:\n{p.stderr}")
-    rss = int(m_rss.group(1)) / 1024.0
-    cpu = (float(m_usr.group(1)) + float(m_sys.group(1))) * 1000.0
-    m_sc = re.findall(r"(?:^|\s)score:\s*(-?\d+)", p.stdout)
-    if require_score and not m_sc:
-        raise RuntimeError(f"Missing score in output for {cmd}:\n{p.stdout[:200]}")
-    score = int(m_sc[-1]) if m_sc else None
-    return dt, cpu, rss, score, p.stdout
+    """(wall ms, CPU ms, RSS MiB, score, output) of one run"""
+    return timed(cmd, require_score)
 
 SEEDS = [1, 2, 3, 4, 5]
 

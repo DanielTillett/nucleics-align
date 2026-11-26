@@ -51,6 +51,15 @@ fixes listed under [Changes to output](#changes-to-output).
 
 ### Changed
 
+- Benchmarks: the harnesses share `benchmarks/bench_common.sh` (build and
+  GNU `time` checks, the machine header, NCBI downloads) and
+  `benchmarks/bench_common.py` (one GNU `time` runner with median and best
+  summaries, SHA-256, FASTA reading, alignment and CIGAR re-scoring) in
+  place of five runners, three digest helpers and two copies each of the
+  rest. `journal_extra.py` takes the work directory as its argument. The
+  same sequences, scores and digests as before; `protein_bench.sh` now
+  checks for GNU `time` too, and `journal_v130_extra.sh` logs the Python
+  version with the rest of its header
 - Perl: `NeedlemanWunsch.pm` and `SmithWaterman.pm` share a base package,
   `perl/NucleicsAlign/Tool.pm` (options, starting, writing to, reading from
   and stopping the tool, the sequence checks), which they load from beside

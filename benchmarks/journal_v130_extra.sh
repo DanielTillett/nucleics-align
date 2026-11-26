@@ -20,15 +20,10 @@ NW="$ROOT/bin/needleman_wunsch"
 SW="$ROOT/bin/smith_waterman"
 WFA2="$WORK/bin/run_wfa2"
 KSW2="$WORK/bin/run_ksw2"
+. "$ROOT/benchmarks/bench_common.sh"
+bench_require
 
-echo "# host: $(uname -a)"
-echo "# cpu:  $(lscpu | awk -F: '/Model name/{gsub(/^ +/,"",$2); print $2; exit}')"
-echo "# governor: $(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null || echo unknown)"
-echo "# smt:  $(cat /sys/devices/system/cpu/smt/active 2>/dev/null || echo unknown)"
-echo "# gcc:  $(gcc --version | head -n1)"
-echo "# nucleics-align: $(git -C "$ROOT" rev-parse --short HEAD)"
-echo "# nw_sha256: $(sha256sum "$NW" | awk '{print $1}')"
-echo "# sw_sha256: $(sha256sum "$SW" | awk '{print $1}')"
+bench_header
 
 # Ensure parasail config.h exists
 cat > "$WORK/src/config.h" <<'EOF'
@@ -309,6 +304,7 @@ gcc -O3 -msse4.1 -I "$WORK/src/ksw2" \
 # --- Run all benchmark sections via Python driver ---
 python3 - "$ROOT" "$WORK" "$THREADS" <<'PY'
 import os, random, re, statistics, subprocess, sys, time
+from bench_common import timed
 
 ROOT, WORK, THREADS = sys.argv[1], sys.argv[2], int(sys.argv[3])
 NW = os.path.join(ROOT, "bin/needleman_wunsch")
@@ -320,15 +316,8 @@ PARA_DNA = os.path.join(WORK, "bin/run_parasail_dna")
 INPROC = os.path.join(WORK, "bin/inproc_prot")
 
 def run_one(cmd):
-    t0 = time.perf_counter()
-    p = subprocess.run(["/usr/bin/time", "-v"] + cmd, capture_output=True, text=True, check=True)
-    dt = (time.perf_counter() - t0) * 1000.0
-    rss = int(re.search(r"Maximum resident set size \(kbytes\):\s*(\d+)", p.stderr).group(1)) / 1024.0
-    usr = float(re.search(r"User time \(seconds\):\s*([\d.]+)", p.stderr).group(1))
-    sys_t = float(re.search(r"System time \(seconds\):\s*([\d.]+)", p.stderr).group(1))
-    m_sc = re.findall(r"(?:^|\s)score:\s*(-?\d+)", p.stdout)
-    sc = int(m_sc[-1]) if m_sc else None
-    return dt, (usr + sys_t) * 1000.0, rss, sc
+    """(wall ms, CPU ms, RSS MiB, score) of one run"""
+    return timed(cmd)[:4]
 
 def run_seeds(tag, cmd_fn, seeds, expected_scores=None):
     ws, cs, rs, scs = [], [], [], []

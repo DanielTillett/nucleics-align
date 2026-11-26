@@ -15,26 +15,14 @@ mkdir -p "$OUT"
 
 NW="$ROOT/bin/needleman_wunsch"
 SW="$ROOT/bin/smith_waterman"
-if [ ! -x "$NW" ] || [ ! -x "$SW" ]; then
-  echo "Build the tools first with 'make' in $ROOT" >&2
-  exit 1
-fi
-if [ ! -x /usr/bin/time ]; then
-  echo "GNU time (/usr/bin/time) is required for CPU time and peak RSS" >&2
-  exit 1
-fi
+. "$ROOT/benchmarks/bench_common.sh"
+bench_require
 
 echo "# host: $(uname -a)"
 echo "# git:  $(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
 echo "# threads: $THREADS"
 
-fetch_acc() {
-  local acc="$1" db="$2" dst="$OUT/$3"
-  if [ ! -s "$dst" ]; then
-    curl -fsSL "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=${db}&id=${acc}&rettype=fasta&retmode=text" -o "$dst"
-    sleep 0.4
-  fi
-}
+fetch_acc() { fetch_ncbi "$2" "$1" "$OUT/$3"; }
 
 fetch_acc NC_012920.1 nuccore human_mt.fa
 fetch_acc NC_011137.1 nuccore neanderthal_mt.fa
@@ -51,43 +39,19 @@ fetch_acc NP_033894.3 protein mouse_brca1.fa
 
 python3 - "$NW" "$SW" "$OUT" "$THREADS" <<'PY'
 import hashlib, os, re, sys, subprocess, time
+import bench_common
+from bench_common import seq_len, best_run, timed_reps
 
 NW, SW, OUT, THREADS = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 
 def sha256(path):
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(65536), b""):
-            h.update(chunk)
-    return h.hexdigest()[:12]
+    """The first 12 hex digits of the SHA-256 digest (Table 1 prints these)"""
+    return bench_common.sha256(path)[:12]
 
-def seq_len(fa):
-    with open(fa) as f:
-        return sum(len(l.strip()) for l in f if not l.startswith(">"))
 
 def run_cmd(cmd, reps=3):
-    best = None
-    for _ in range(reps):
-        t0 = time.perf_counter()
-        p = subprocess.run(["/usr/bin/time", "-v"] + cmd, capture_output=True, text=True)
-        dt = (time.perf_counter() - t0) * 1000.0
-        if p.returncode != 0:
-            raise RuntimeError(f"Command failed ({p.returncode}): {cmd}\n{p.stderr}")
-        m_rss = re.search(r"Maximum resident set size \(kbytes\):\s*(\d+)", p.stderr)
-        m_usr = re.search(r"User time \(seconds\):\s*([\d.]+)", p.stderr)
-        m_sys = re.search(r"System time \(seconds\):\s*([\d.]+)", p.stderr)
-        if not m_rss or not m_usr or not m_sys:
-            raise RuntimeError(f"Failed to parse GNU time output:\n{p.stderr}")
-        rss_mib = int(m_rss.group(1)) / 1024.0
-        cpu_ms = (float(m_usr.group(1)) + float(m_sys.group(1))) * 1000.0
-        m_sc = re.findall(r"(?:^|\s)score:\s*(-?\d+)", p.stdout)
-        if not m_sc:
-            raise RuntimeError(f"Failed to parse score from output for {cmd}")
-        score = int(m_sc[-1])
-        cand = (dt, cpu_ms, rss_mib, score)
-        if best is None or dt < best[0]:
-            best = cand
-    return best
+    """(wall ms, CPU ms, RSS MiB, score) of the fastest of reps runs"""
+    return best_run(timed_reps(cmd, reps, require_score=True))[:4]
 
 def identity_pct(fa1, fa2, extra):
     p = subprocess.run([NW, "--threads", THREADS, "--pretty", "--files", fa1, fa2] + extra,

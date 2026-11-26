@@ -18,6 +18,8 @@ mkdir -p "$WORK/src" "$WORK/bin" "$WORK/scale"
 
 NW="$ROOT/bin/needleman_wunsch"
 SW="$ROOT/bin/smith_waterman"
+. "$ROOT/benchmarks/bench_common.sh"
+bench_require
 ORIG_NW="$WORK/src/seq-align/bin/needleman_wunsch"
 WFA2="$WORK/bin/run_wfa2"
 KSW2="$WORK/bin/run_ksw2"
@@ -29,15 +31,7 @@ for req in "$WORK/bin/run_wfa2" "$WORK/src/ksw2/ksw2.h" "$WORK/src/WFA2-lib/lib/
   fi
 done
 
-echo "# host: $(uname -a)"
-echo "# cpu:  $(lscpu | awk -F: '/Model name/{gsub(/^ +/,"",$2); print $2; exit}')"
-echo "# governor: $(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null || echo unknown)"
-echo "# smt:  $(cat /sys/devices/system/cpu/smt/active 2>/dev/null || echo unknown)"
-echo "# gcc:  $(gcc --version | head -n1)"
-echo "# python: $(python3 --version)"
-echo "# nucleics-align: $(git -C "$ROOT" rev-parse --short HEAD)"
-echo "# nw_sha256: $(sha256sum "$NW" | awk '{print $1}')"
-echo "# sw_sha256: $(sha256sum "$SW" | awk '{print $1}')"
+bench_header
 echo "# ksw2: $(git -C "$WORK/src/ksw2" rev-parse --short HEAD)"
 echo "# WFA2-lib: $(git -C "$WORK/src/WFA2-lib" rev-parse --short HEAD)"
 
@@ -197,6 +191,8 @@ gcc -O3 "$WORK/src/run_wfa2_cigar.c" -I "$WORK/src/WFA2-lib" "$WORK/src/WFA2-lib
 
 python3 - "$ROOT" "$WORK" "$THREADS" <<'PY'
 import os, re, statistics, subprocess, sys, time
+from bench_common import (read_seqs, rescore_aligned, rescore_cigar,
+                          median_summary, timed_reps)
 
 ROOT, WORK, THREADS = sys.argv[1], sys.argv[2], sys.argv[3]
 NW = os.path.join(ROOT, "bin/needleman_wunsch")
@@ -219,67 +215,10 @@ def load_blosum62(path):
 
 BLOSUM62 = load_blosum62(os.path.join(ROOT, "scoring/BLOSUM62.txt"))
 
-def read_seqs(path):
-    seqs, cur = [], []
-    for l in open(path):
-        if l.startswith(">"):
-            if cur: seqs.append("".join(cur)); cur = []
-        else:
-            cur.append(l.strip())
-    if cur: seqs.append("".join(cur))
-    return seqs
-
-def rescore_aligned(a, b, sub_fn, go, ge):
-    assert len(a) == len(b)
-    sc, in_a, in_b = 0, False, False
-    for x, y in zip(a, b):
-        assert not (x == "-" and y == "-"), "Invalid double-gap column"
-        if x == "-":
-            sc += ge if in_a else (go + ge); in_a, in_b = True, False
-        elif y == "-":
-            sc += ge if in_b else (go + ge); in_b, in_a = True, False
-        else:
-            in_a = in_b = False; sc += sub_fn(x.upper(), y.upper())
-    return sc
-
-def rescore_cigar(seq_a, seq_b, cigar_str, sub_fn, go, ge, swap_id=False):
-    i = j = sc = 0
-    if re.match(r"^[MIDX=]+$", cigar_str):
-        ops = [(1, ch) for ch in cigar_str]
-    else:
-        assert re.fullmatch(r"(?:[1-9]\d*[MIDX=])+", cigar_str), f"Malformed CIGAR: {cigar_str[:40]}"
-        ops = [(int(n), op) for n, op in re.findall(r"(\d+)([MIDX=])", cigar_str)]
-    prev_op = None
-    for n, op in ops:
-        if op in ("M", "=", "X"):
-            for _ in range(n):
-                sc += sub_fn(seq_a[i].upper(), seq_b[j].upper())
-                i += 1; j += 1
-            prev_op = "M"
-        elif (op == "I" and not swap_id) or (op == "D" and swap_id):
-            sc += (ge * n) if prev_op == "I" else (go + ge * n)
-            j += n; prev_op = "I"
-        else:
-            sc += (ge * n) if prev_op == "D" else (go + ge * n)
-            i += n; prev_op = "D"
-    assert i == len(seq_a) and j == len(seq_b), f"Span mismatch: ({i},{j}) vs ({len(seq_a)},{len(seq_b)})"
-    return sc
 
 def run_timed(cmd, reps=1):
-    walls, cpus, rsss = [], [], []
-    last_out = ""
-    for _ in range(reps):
-        t0 = time.perf_counter()
-        p = subprocess.run(["/usr/bin/time", "-v"] + cmd, capture_output=True, text=True, check=True)
-        dt = (time.perf_counter() - t0) * 1000.0
-        rss = int(re.search(r"Maximum resident set size \(kbytes\):\s*(\d+)", p.stderr).group(1)) / 1024.0
-        usr = float(re.search(r"User time \(seconds\):\s*([\d.]+)", p.stderr).group(1))
-        sys_t = float(re.search(r"System time \(seconds\):\s*([\d.]+)", p.stderr).group(1))
-        walls.append(dt); cpus.append((usr + sys_t) * 1000.0); rsss.append(rss)
-        last_out = p.stdout
-    m_sc = re.findall(r"(?:^|\s)score:\s*(-?\d+)", last_out)
-    sc = int(m_sc[-1]) if m_sc else None
-    return statistics.median(walls), min(walls), max(walls), statistics.median(cpus), statistics.median(rsss), sc, last_out
+    """(median wall, min, max, median CPU, median RSS, score, output)"""
+    return median_summary(timed_reps(cmd, reps))
 
 print("\n=== PARASAIL v2.6.2 (AVX2 16-bit striped, 1t) ON 5 REAL PROTEINS + INDEPENDENT RE-SCORING ===")
 PROT_DIR = os.path.join(WORK, "proteins")

@@ -16,22 +16,14 @@ mkdir -p "$OUT"
 NW="$ROOT/bin/needleman_wunsch"
 SW="$ROOT/bin/smith_waterman"
 ORIG_NW="$WORK/src/seq-align/bin/needleman_wunsch"
-if [ ! -x "$NW" ] || [ ! -x "$SW" ]; then
-  echo "Build Nucleics Align first with 'make' in $ROOT" >&2
-  exit 1
-fi
+. "$ROOT/benchmarks/bench_common.sh"
+bench_require
 if [ ! -x "$ORIG_NW" ]; then
   echo "Run benchmarks/compare_harness.sh first (or build seq-align at $ORIG_NW)" >&2
   exit 1
 fi
 
-fetch_prot() {
-  local acc="$1" dst="$OUT/$2"
-  if [ ! -s "$dst" ]; then
-    curl -fsSL "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=protein&id=${acc}&rettype=fasta&retmode=text" -o "$dst"
-    sleep 0.4
-  fi
-}
+fetch_prot() { fetch_ncbi protein "$1" "$OUT/$2"; }
 
 fetch_prot NP_000537.3 h_tp53.fa
 fetch_prot NP_035770.2 m_tp53.fa
@@ -46,35 +38,15 @@ fetch_prot NP_031525.2 m_atm.fa
 
 python3 - "$NW" "$SW" "$ORIG_NW" "$OUT" "$THREADS" <<'PY'
 import hashlib, os, re, statistics, subprocess, sys, time
+from bench_common import sha256, seq_len, median_summary, timed_reps
 
 NW, SW, ORIG_NW, OUT, THREADS = sys.argv[1:6]
 
-def sha256(p):
-    return hashlib.sha256(open(p, "rb").read()).hexdigest()
-
-def seq_len(fa):
-    return sum(len(l.strip()) for l in open(fa) if not l.startswith(">"))
 
 def run_best(cmd, reps=3):
-    walls, cpus, rsss = [], [], []
-    sc_out = None
-    for _ in range(reps):
-        t0 = time.perf_counter()
-        p = subprocess.run(["/usr/bin/time", "-v"] + cmd, capture_output=True, text=True)
-        dt = (time.perf_counter() - t0) * 1000.0
-        if p.returncode != 0:
-            raise RuntimeError(f"Failed: {cmd}\n{p.stderr[:200]}")
-        m_rss = re.search(r"Maximum resident set size \(kbytes\):\s*(\d+)", p.stderr)
-        m_usr = re.search(r"User time \(seconds\):\s*([\d.]+)", p.stderr)
-        m_sys = re.search(r"System time \(seconds\):\s*([\d.]+)", p.stderr)
-        m_sc = re.findall(r"(?:^|\s)score:\s*(-?\d+)", p.stdout)
-        if not m_sc:
-            raise RuntimeError(f"Missing score: {cmd}")
-        walls.append(dt)
-        cpus.append((float(m_usr.group(1)) + float(m_sys.group(1))) * 1000.0)
-        rsss.append(int(m_rss.group(1)) / 1024.0)
-        sc_out = int(m_sc[-1])
-    return statistics.median(walls), min(walls), max(walls), statistics.median(rsss), sc_out
+    """(median wall, min, max, median RSS, score) of reps runs"""
+    med, lo, hi, _, rss, sc, _ = median_summary(timed_reps(cmd, reps, require_score=True))
+    return med, lo, hi, rss, sc
 
 def identity_pct(fa1, fa2):
     p = subprocess.run([NW, "--threads", THREADS, "--scoring", "BLOSUM62", "--pretty", "--files", fa1, fa2],
