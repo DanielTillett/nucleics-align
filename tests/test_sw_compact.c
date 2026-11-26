@@ -174,6 +174,8 @@ void simd_test_strips()
   }
 #ifdef ALN_STRIPED
   ASSERT(smith_waterman_strip_alignments - used > 300); // strips were used
+#else
+  ASSERT(smith_waterman_strip_alignments == used); // they need the striped fill
 #endif
   ASSERT(hits > 350);
 

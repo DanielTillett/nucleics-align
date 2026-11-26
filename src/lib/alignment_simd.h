@@ -18,6 +18,18 @@
 #include <stdbool.h>
 #include "alignment_scoring.h" // score_t
 
+// Built under ThreadSanitizer: no CPU dispatch (the ifunc resolvers run
+// before it starts and crash the program), here or in alignment_wfa.c.
+// Defined for every build, scalar-only ones included
+#if defined(__has_feature)
+#  if __has_feature(thread_sanitizer)
+#    define ALN_TSAN 1
+#  endif
+#endif
+#if defined(__SANITIZE_THREAD__)
+#  define ALN_TSAN 1
+#endif
+
 #if defined(__has_builtin) && !defined(ALN_NO_SIMD)
 #  if __has_builtin(__builtin_shufflevector)
 #    define ALN_STRIPED 1
@@ -37,16 +49,7 @@
 // x86-64 Linux builds without -mavx2: compile the SIMD kernels for AVX2,
 // SSE4.1 and the baseline, and let the loader pick one for the CPU
 // (GCC/clang function multi-versioning, which needs ifunc support).
-// Not under ThreadSanitizer: the ifunc resolvers run before it starts and
-// crash the program
-#if defined(__has_feature)
-#  if __has_feature(thread_sanitizer)
-#    define ALN_TSAN 1
-#  endif
-#endif
-#if defined(__SANITIZE_THREAD__)
-#  define ALN_TSAN 1
-#endif
+// Not under ThreadSanitizer (ALN_TSAN, below)
 #if defined(__x86_64__) && defined(__linux__) && !defined(__AVX2__) && \
     !defined(ALN_TSAN) && defined(__has_attribute)
 #  if __has_attribute(target_clones)

@@ -10,8 +10,8 @@
 // global alignment, the linear-space score, the Smith-Waterman score scan
 // and the best local hit. Build and run from the repository root:
 //   make src/libalign.a
-//   cc -O2 -I include -I src/lib benchmarks/percore.c -L src -lalign \
-//      -lpthread -o percore && ./percore pair.txt
+//   cc -O2 -I include -I src/lib benchmarks/percore.c -L src -lalign
+//      -lpthread -o percore && ./percore pair.txt   (one command)
 
 #include <stdio.h>
 #include <stdlib.h>

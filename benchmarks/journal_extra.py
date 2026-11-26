@@ -13,7 +13,7 @@ WFA2_CIG = WORK + "/bin/run_wfa2_cigar"
 
 def run3(cmd):
     """(median wall, min, max, median RSS, score) of three runs"""
-    med, lo, hi, _, rss, sc, _ = median_summary(timed_reps(cmd, 3))
+    med, lo, hi, _, rss, sc, _ = median_summary(timed_reps(cmd, 3, require_score=True))
     return med, lo, hi, rss, sc
 
 print("=== PARASAIL v2.6.2 SCAN (nw_trace_scan_avx2_256_16, 1t) ===")

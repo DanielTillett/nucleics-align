@@ -308,7 +308,14 @@ static void test_setters_and_limits(void)
   na_aligner_set_linear_fallback(al, false);
 
   /* A long similar pair scores the same on every method */
+  // AUTO needs the compact traceback for a pair this long; a build without
+  // the SIMD kernels (-DALN_NO_SIMD) has only the full matrices, so it
+  // gets a pair they hold
+#ifdef ALN_NO_SIMD
+  enum { N = 3000 };
+#else
   enum { N = 100000 };
+#endif
   char *a = malloc(N + 1), *b = malloc(N + 1);
   CHECK(a && b);
   unsigned x = 12345;
@@ -320,10 +327,6 @@ static void test_setters_and_limits(void)
   a[N] = b[N] = '\0';
   na_score_t ref = 0;
   na_method_t methods[] = { NA_METHOD_AUTO, NA_METHOD_LINEAR, NA_METHOD_WFA };
-  // AUTO needs the compact traceback for a pair this long; a build without
-  // the SIMD kernels (-DALN_NO_SIMD) has only the full matrices, which do
-  // not fit, so let it fall back to linear memory (the same score)
-  na_aligner_set_linear_fallback(al, true);
   for(size_t i = 0; i < 3; i++) {
     na_aligner_set_method(al, methods[i]);
     na_aligner_set_wfa_budget(al, 0);
@@ -335,7 +338,6 @@ static void test_setters_and_limits(void)
                              na_alignment_length(res), sc, &checked) == NA_OK);
     CHECK(checked == ref);
   }
-  na_aligner_set_linear_fallback(al, false);
   na_score_t only = 0;
   CHECK(na_global_score(al, a, N, b, N, sc, &only) == NA_OK && only == ref);
   free(a);

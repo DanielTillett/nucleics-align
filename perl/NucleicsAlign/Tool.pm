@@ -17,6 +17,7 @@ use strict;
 use warnings;
 
 use Carp;
+use POSIX ();
 use IPC::Open3;
 use Symbol qw(gensym);
 
@@ -36,9 +37,11 @@ sub _new
   my $cmd = $spec->{cmd};
   my $timeout = 0;
 
-  # The tools want both or neither, unless mismatches are not allowed
-  if(!$options{'nomismatches'} &&
-     defined($options{'match'}) != defined($options{'mismatch'})) {
+  # The tools' rule: both or neither, except that match may come alone when
+  # mismatches are not allowed
+  if((defined($options{'match'}) && !defined($options{'mismatch'}) &&
+      !$options{'nomismatches'}) ||
+     (!defined($options{'match'}) && defined($options{'mismatch'}))) {
     carp("Setting only one of match/mismatch");
   }
 
@@ -103,12 +106,28 @@ sub _stop
 {
   my ($self, $key, $kill) = @_;
   my $p = delete($self->{_procs}{$key}) or return;
-  kill('TERM', $p->{pid}) if $kill;
   # The tool may already have gone: writing to it must not kill this process
   local $SIG{PIPE} = 'IGNORE';
   close($p->{to});
   close($p->{from});
-  waitpid($p->{pid}, 0);
+  _reap($p->{pid}, $kill);
+}
+
+# Wait for the tool to end. kill: terminate it first, and if it has not
+# ended a couple of seconds later (it may ignore TERM), kill it outright,
+# so a stalled tool can never hang the caller
+sub _reap
+{
+  my ($pid, $kill) = @_;
+  if($kill) {
+    kill('TERM', $pid);
+    for(1..40) {
+      return if waitpid($pid, POSIX::WNOHANG()) != 0;
+      select(undef, undef, undef, 0.05);
+    }
+    kill('KILL', $pid);
+  }
+  waitpid($pid, 0);
 }
 
 # Called with a tool's error line before it is stopped and the error
@@ -187,8 +206,7 @@ sub _run_once
   alarm(0);
   my $failed = $@;
   close($from);
-  kill('TERM', $pid) if $failed || defined($error);
-  waitpid($pid, 0);
+  _reap($pid, $failed || defined($error));
   croak($failed eq "timeout\n" ? "Timeout reading $self->{_cmd} output"
                                : "Cannot read $self->{_cmd} output: $failed")
     if $failed;

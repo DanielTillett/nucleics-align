@@ -54,9 +54,11 @@ fixes listed under [Changes to output](#changes-to-output).
 ### Fixed
 
 - Builds without the SIMD kernels (a compiler without
-  `__builtin_shufflevector`, or `-DALN_NO_SIMD`, new) compile and link
-  again: `alignment_grow_capacity()` and the `ALN_TARGET_CLONES` fallback
-  were declared only under `ALN_STRIPED`
+  `__builtin_shufflevector`, or `make NO_SIMD=1`, new, which defines
+  `ALN_NO_SIMD` and also leaves out the AVX2 wavefront extension) compile
+  and link again: `alignment_grow_capacity()` and the `ALN_TARGET_CLONES`
+  fallback were declared only under `ALN_STRIPED`. CI now runs the
+  scalar-only build with the sanitisers
 - `hirschberg_simd_available()` takes the options to answer for (NULL: the
   defaults); it read the process-wide `alignment_striped_enabled` whatever
   the aligner's options said
@@ -94,19 +96,30 @@ fixes listed under [Changes to output](#changes-to-output).
 - Perl: `NeedlemanWunsch.pm` and `SmithWaterman.pm` share a base package,
   `perl/NucleicsAlign/Tool.pm` (options, starting, writing to, reading from
   and stopping the tool, the sequence checks), which they load from beside
-  themselves. Their methods and messages are unchanged, except that
-  `NeedlemanWunsch` no longer warns about setting only `match` or only
-  `mismatch` with `nomismatches`, which the tool accepts. `perl/test.pl`
-  now checks that a tool that stops answering is timed out and killed
+  themselves. Their methods and messages are unchanged, except that both
+  now warn by the tools' own rule (both of `match` and `mismatch` or
+  neither, but `match` may come alone with `nomismatches`), so
+  `NeedlemanWunsch` no longer warns about `match` alone with
+  `nomismatches`. A tool that stops answering is timed out and terminated,
+  and killed outright if it ignores that, so it can never hang the caller;
+  `perl/test.pl` checks this for both modules and for the empty-sequence
+  path
 - One parser for the scoring file formats, in the library
   (`scoring_parse_matrix()`, `scoring_parse_pairs()`,
   `scoring_parse_strerror()` in `alignment_scoring.h`): the public API's
   `na_scoring_parse_*()` and the tools' `--substitution_matrix` and
-  `--substitution_pairs` read through it. The tools now read the whole
-  (gzipped) file first, and their loads are transactional too; a matrix
-  file with headings and no rows is refused ("No rows in matrix") instead
-  of being accepted empty. The public API's error messages take the tools'
-  wording. `align_scoring_load_*()` take the case setting from the scoring
+  `--substitution_pairs` read through it. It is the tools' grammar, as
+  before: a matrix score is read as a number prefix (`strtol()`) with the
+  separator or the end of the row checked after it, and a pairs score
+  must be the rest of its line. So the public API (new in this release)
+  now reads files exactly as the tools do, with their messages. Two
+  differences for the tools: a matrix file with headings and no rows is
+  refused ("No rows in matrix") instead of being accepted empty, and a
+  NUL byte ends its line's text, where the old line reader stopped reading
+  the file at a line starting with one. A damaged gzip file still reports
+  a parse error on a line before the damage first, then the read error.
+  Loads are transactional. `align_scoring_load_*()` take the case setting
+  from the scoring
 - The banded compact fill (`alignment_fill_banded()`) runs as its phases:
   the cost model (`band_cost_init()`, `band_first_width()`), the plan of a
   band's strips (`band_plan()`), their room (`band_alloc()`) and the strip

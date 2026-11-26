@@ -207,10 +207,12 @@ void test_out_of_memory()
   // bands forced below always hold the best path (a run deletion could
   // put it outside them, and the test then could not tell a band that
   // was not used from one whose allocations were made to fail)
-  test_rand_seq(a, 160, "acgt");
+  static const char bases[] = "acgt";
+  test_rand_seq(a, 160, bases);
   for(i = 0; i < 160; i++) {
     b[i] = a[i];
-    if(test_rand(25) == 0) b[i] = "acgt"[(strchr("acgt", a[i]) - "acgt" + 1 + test_rand(3)) % 4];
+    if(test_rand(25) == 0)
+      b[i] = bases[(strchr(bases, a[i]) - bases + 1 + test_rand(3)) % 4];
   }
   b[160] = '\0';
   // Blocks on several threads, the Smith-Waterman rectangle, and bands
@@ -258,7 +260,7 @@ void test_out_of_memory()
 #ifdef ALN_STRIPED
           if(kind == OOM_NW_COMPACT) ASSERT(c.nw->trace_banded);
 #endif
-          if(kind == OOM_HB && hirschberg_simd_available(NULL))
+          if(kind == OOM_HB && hirschberg_simd_available(c.opts))
             ASSERT(hirschberg_banded_passes > banded);
         }
         bool failed = n > 0 && alignment_alloc_fail_pending() == 0;

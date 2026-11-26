@@ -104,7 +104,10 @@ void test_myers_boundaries(void)
       char *a = malloc(la + 1), *b = malloc(la * 2 + 64);
       ASSERT(a && b);
       test_rand_seq(a, la, "ACGT");
-      test_mutate(b, a, rates[ri], "ACGT");
+      // Rate 0: an exact copy (test_mutate() still makes the odd edit),
+      // so edit distance 0 is tried at every word boundary
+      if(rates[ri] == 0) strcpy(b, a);
+      else test_mutate(b, a, rates[ri], "ACGT");
       size_t lb = strlen(b);
 
       sub_table_t tbl;
@@ -116,6 +119,9 @@ void test_myers_boundaries(void)
       ASSERT(hirschberg_align_checked(a, b, la, lb, &sc, &opts, aln, NULL) == ALN_OK);
       hs = aln->score;
       ASSERT(ms == hs);
+      // Both strings the alignment's length (the scorer stops at the shorter)
+      ASSERT(strlen(aln->result_a) == aln->length &&
+             strlen(aln->result_b) == aln->length);
       ASSERT(hirschberg_score_alignment(aln->result_a, aln->result_b, &sc) == ms);
       ASSERT(test_ungapped_equals(aln->result_a, a) && test_ungapped_equals(aln->result_b, b));
       sub_table_free(&tbl);
@@ -204,6 +210,7 @@ void test_strip_col0_and_striped_trace(void)
     ASSERT(needleman_wunsch_align_checked(a, b, la, lb, &sc_dna, nw2, r2, NULL) == ALN_OK);
     ASSERT_STRIPED(nw2->trace_striped);
     size_t dna_vl = nw2->trace_vl;
+    (void)dna_vl; // read only where the striped fill exists
     ASSERT(r1->score == r2->score && strcmp(r1->result_a, r2->result_a) == 0 && strcmp(r1->result_b, r2->result_b) == 0);
     nw2->options = &o_diff4;
     ASSERT(needleman_wunsch_align_checked(a, b, la, lb, &sc_dna, nw2, r2, NULL) == ALN_OK);

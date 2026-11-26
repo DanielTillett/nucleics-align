@@ -444,10 +444,10 @@ static bool hb_state_init(hb_state_t *st, const char *a, const char *b,
   #define HB_DABS(x) ((x) < 0 ? -(double)(x) : (double)(x))
   {
     double go = HB_DABS(scoring->gap_open), ge = HB_DABS(scoring->gap_extend);
-    double sub = 0, len = (double)len_a + (double)len_b + 2;
-    size_t c;
-    for(c = 0; c < st->table.n * st->table.n; c++)
-      sub = MAX2(sub, HB_DABS(st->table.scores[c]));
+    // The largest substitution score in magnitude (the table's unread
+    // cells are 0, which neither bound passes)
+    double sub = MAX2((double)st->table.smax, -(double)st->table.smin);
+    double len = (double)len_a + (double)len_b + 2;
     double lo = 3*go + len*ge + sub, hi = len*sub;
     st->in_range = 2*lo + go < (double)INT_MAX && 2*hi < (double)INT_MAX;
   }

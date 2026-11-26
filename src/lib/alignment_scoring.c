@@ -9,6 +9,12 @@
 // Turn on debugging output by defining NUCLEICS_ALIGN_VERBOSE
 //#define NUCLEICS_ALIGN_VERBOSE
 
+// strcasecmp() is POSIX: a strict C11 build (-std=c11) on a libc that
+// keeps to the standard hides it without this
+#ifndef _POSIX_C_SOURCE
+#  define _POSIX_C_SOURCE 200809L
+#endif
+
 #include <stdlib.h>
 #include <stdio.h>
 #include <limits.h> // INT_MAX
@@ -173,9 +179,11 @@ static char _scoring_check_wildcards(const scoring_t* scoring, char a, char b,
 
 // Considered match if lc(a)==lc(b) or if a or b are wildcards
 // Sets score and is_match, or returns false where the scoring has no
-// score for the pair
-bool scoring_try_lookup(const scoring_t* scoring, char a, char b,
-                        int *score, bool *is_match)
+// score for the pair (score and is_match may then be changed). Inlined
+// into both entry points below: scoring_lookup() is called per letter in
+// places (hirschberg.c), where a further call costs
+static inline bool lookup_pair(const scoring_t* scoring, char a, char b,
+                               int *score, bool *is_match)
 {
   if(!scoring->case_sensitive)
   {
@@ -217,11 +225,23 @@ bool scoring_try_lookup(const scoring_t* scoring, char a, char b,
   return false;
 }
 
+// Sets nothing unless the pair has a score
+bool scoring_try_lookup(const scoring_t* scoring, char a, char b,
+                        int *score, bool *is_match)
+{
+  int s;
+  bool m;
+  if(!lookup_pair(scoring, a, b, &s, &m)) return false;
+  *score = s;
+  *is_match = m;
+  return true;
+}
+
 // As scoring_try_lookup(), but exits on a pair with no score
 void scoring_lookup(const scoring_t* scoring, char a, char b,
                     int *score, bool *is_match)
 {
-  if(scoring_try_lookup(scoring, a, b, score, is_match)) return;
+  if(lookup_pair(scoring, a, b, score, is_match)) return;
   if(!scoring->case_sensitive)
   {
     a = (char)tolower((unsigned char)a);

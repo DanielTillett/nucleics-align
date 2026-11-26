@@ -439,9 +439,27 @@ void simd_test_myers()
   needleman_wunsch_free(nw);
 }
 
+/* Whether the SIMD passes run follows the options asked about (NULL: the
+ * process-wide default), not the default alone */
+void simd_test_hirschberg_available()
+{
+  alignment_options_t opts;
+  alignment_options_default(&opts);
+  alignment_striped_enabled = true;
+  const bool available = hirschberg_simd_available(NULL); // build and CPU
+  opts.striped = false;
+  ASSERT(!hirschberg_simd_available(&opts));
+  alignment_striped_enabled = false;
+  opts.striped = true;
+  ASSERT(hirschberg_simd_available(&opts) == available);
+  ASSERT(!hirschberg_simd_available(NULL));
+  alignment_striped_enabled = true;
+}
+
 void test_simd_hirschberg(void)
 {
   SUITE_START("SIMD linear-space passes");
+  RUN(simd_test_hirschberg_available());
   RUN(simd_test_hirschberg_band());
   RUN(simd_test_hirschberg_reuse());
   RUN(simd_test_hirschberg_narrow());

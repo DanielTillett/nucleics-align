@@ -198,7 +198,7 @@ gcc -O3 -mavx2 -std=c11 -D_POSIX_C_SOURCE=200809L \
   "$WORK/src/parasail/src/cigar.c" \
   "$WORK/src/parasail/src/matrix_lookup.c" \
   "$ROOT/src/libalign.a" \
-  -lpthread -lz -o "$WORK/bin/inproc_prot"
+  -lpthread -o "$WORK/bin/inproc_prot"
 
 # --- Build B: parasail AVX2 32-bit global DNA (scan) & 32-bit local DNA (striped) ---
 cat > "$WORK/src/run_parasail_dna.c" <<'EOF'

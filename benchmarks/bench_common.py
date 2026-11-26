@@ -32,7 +32,8 @@ def timed(cmd, require_score=False):
                        capture_output=True, text=True)
     wall = (time.perf_counter() - t0) * 1000.0
     if p.returncode != 0:
-        raise RuntimeError(f"Failed ({p.returncode}): {cmd}\n{p.stderr[-400:]}")
+        # The command's own messages come first; GNU time's report follows
+        raise RuntimeError(f"Failed ({p.returncode}): {cmd}\n{p.stderr[:400]}")
     m_rss, m_usr, m_sys = (r.search(p.stderr) for r in (_RSS_RE, _USER_RE, _SYS_RE))
     if not m_rss or not m_usr or not m_sys:
         raise RuntimeError(f"Failed to parse GNU time output:\n{p.stderr}")

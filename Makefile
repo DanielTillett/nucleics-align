@@ -24,6 +24,11 @@ ifdef NATIVE
 	OPT += -march=native
 endif
 
+# The scalar-only build, without the SIMD kernels: make NO_SIMD=1 test
+ifdef NO_SIMD
+	OPT += -DALN_NO_SIMD
+endif
+
 # Force the 32-bit lanes per SIMD vector (4, 8 or 16), to test the widths
 # this CPU would not pick: make LANES=16 test. Not with clang on x86-64
 # Linux, whose dispatch builds take only 4
@@ -57,7 +62,7 @@ LIB_SRCS = $(wildcard src/lib/*.c)
 LIB_OBJS = $(LIB_SRCS:.c=.o)
 LIB_HDRS = $(wildcard include/*.h) $(wildcard src/lib/*.h)
 
-# Shared CLI support objects (linked only into CLI tools & CLI-scoring tests)
+# Shared CLI support objects (linked only into the command line tools)
 CLI_COMMON_SRCS = src/cli/alignment_cmdline.c src/cli/alignment_scoring_load.c src/cli/cli_seqio.c
 CLI_COMMON_OBJS = $(CLI_COMMON_SRCS:.c=.o)
 CLI_HDRS = $(wildcard src/cli/*.h)

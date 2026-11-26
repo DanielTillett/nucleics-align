@@ -217,6 +217,9 @@ void test_biwfa_deep(void)
     // Sufficient budget must succeed via BiWFA (> 2048 cutoff) and rescore identically
     ASSERT(alignment_wfa_align(&tbl, &sc, a, la, b, lb, 5000000, aln) == ALN_OK);
     ASSERT(aln->score == ref);
+    // Both strings the alignment's length (the scorer stops at the shorter)
+    ASSERT(strlen(aln->result_a) == aln->length &&
+           strlen(aln->result_b) == aln->length);
     ASSERT(hirschberg_score_alignment(aln->result_a, aln->result_b, &sc) == ref);
     ASSERT(test_ungapped_equals(aln->result_a, a) && test_ungapped_equals(aln->result_b, b));
     sub_table_free(&tbl);

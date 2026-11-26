@@ -24,32 +24,34 @@ static void out_of_memory(void)
   exit(EXIT_FAILURE);
 }
 
-// The whole of file into memory (len bytes), or exit on a read error (a
-// damaged gzip file, say)
-static char *read_whole_file(gzFile file, size_t *len)
+// The whole of file into memory (len bytes). A read error (a damaged gzip
+// file, say) leaves what was read before it, its message in *error (NULL
+// if none). Read in small pieces, so little is lost before an error
+static char *read_whole_file(gzFile file, size_t *len, char *error,
+                             size_t error_size, bool *failed)
 {
   size_t cap = 1 << 16, n = 0;
   char *buf = malloc(cap);
   if(buf == NULL) out_of_memory();
+  *failed = false;
   for(;;) {
-    if(n == cap) {
+    if(cap - n < 4096) {
       if(cap > SIZE_MAX / 2) out_of_memory();
       cap *= 2;
       char *nb = realloc(buf, cap);
       if(nb == NULL) out_of_memory();
       buf = nb;
     }
-    const size_t room = cap - n;
-    int got = gzread(file, buf + n, room > INT_MAX ? INT_MAX : (unsigned)room);
+    int got = gzread(file, buf + n, 4096);
     if(got <= 0) {
       // The end of the file, or a damaged one (which may read as the end
       // of the data rather than an error): not the same thing
       int errnum = 0;
       const char *msg = gzerror(file, &errnum);
       if(got < 0 || (errnum != Z_OK && errnum != Z_STREAM_END)) {
-        fprintf(stderr, "Error: reading scoring file: %s\n",
-                msg != NULL && *msg != '\0' ? msg : "read error");
-        exit(EXIT_FAILURE);
+        snprintf(error, error_size, "%s",
+                 msg != NULL && *msg != '\0' ? msg : "read error");
+        *failed = true;
       }
       break;
     }
@@ -72,25 +74,44 @@ static void loading_error(scoring_parse_t status, const char *file_path,
   exit(EXIT_FAILURE);
 }
 
+// Load file with parse (the matrix or pairs parser). Errors are reported
+// in the order a line-by-line reader meets them: a parse error on a line
+// read in full before a read error first, then the read error
+static void load(gzFile file, const char *file_path, scoring_t *scoring,
+                 bool is_matrix)
+{
+  char error[256];
+  bool failed;
+  size_t len;
+  char *text = read_whole_file(file, &len, error, sizeof(error), &failed);
+  // Lines read in full: up to the last line feed
+  size_t whole = len, lines = 0, i;
+  if(failed) {
+    while(whole > 0 && text[whole - 1] != '\n') whole--;
+    for(i = 0; i < whole; i++) lines += text[i] == '\n';
+  }
+  int line;
+  const scoring_parse_t status = is_matrix
+    ? scoring_parse_matrix(scoring, text, whole, &line)
+    : scoring_parse_pairs(scoring, text, whole, &line);
+  free(text);
+  if(failed && (status == SCORING_PARSE_OK || line == -1 ||
+                (size_t)line > lines)) {
+    fprintf(stderr, "Error: reading scoring file: %s\n", error);
+    exit(EXIT_FAILURE);
+  }
+  if(status != SCORING_PARSE_OK) loading_error(status, file_path, line, is_matrix);
+}
+
 // Line numbers reported in errors are 1-based
 void align_scoring_load_matrix(gzFile file, const char* file_path,
                                scoring_t* scoring)
 {
-  size_t len;
-  char *text = read_whole_file(file, &len);
-  int line;
-  scoring_parse_t status = scoring_parse_matrix(scoring, text, len, &line);
-  free(text);
-  if(status != SCORING_PARSE_OK) loading_error(status, file_path, line, true);
+  load(file, file_path, scoring, true);
 }
 
 void align_scoring_load_pairwise(gzFile file, const char* file_path,
                                  scoring_t* scoring)
 {
-  size_t len;
-  char *text = read_whole_file(file, &len);
-  int line;
-  scoring_parse_t status = scoring_parse_pairs(scoring, text, len, &line);
-  free(text);
-  if(status != SCORING_PARSE_OK) loading_error(status, file_path, line, false);
+  load(file, file_path, scoring, false);
 }

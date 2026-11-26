@@ -140,7 +140,7 @@ unsigned int test_seed(void)
 // FNV-1a, so each test's stream depends on its name and the run's seed
 static unsigned long long name_hash(const char *name)
 {
-  unsigned long long h = 1469598103934665603ULL;
+  unsigned long long h = 14695981039346656037ULL;
   for(; *name != '\0'; name++) {
     h ^= (unsigned char)*name;
     h *= 1099511628211ULL;
@@ -158,6 +158,11 @@ void test_begin(const char *name)
 void test_end(const char *name)
 {
   globals_restore(&saved_globals, name);
+  // An allocation set to fail and not reached would fail in the next test
+  if(alignment_alloc_fail_pending() != 0) {
+    fprintf(stderr, "note: %s left an allocation set to fail; cleared\n", name);
+    alignment_alloc_fail(0);
+  }
   test_name = "(no test)";
 }
 

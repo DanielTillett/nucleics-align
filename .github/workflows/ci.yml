@@ -29,6 +29,13 @@ jobs:
             cc: clang
             sanitize: ''
             native: '1'
+          # The scalar-only build (no SIMD kernels anywhere), with the
+          # sanitisers
+          - os: ubuntu-latest
+            cc: gcc
+            sanitize: '1'
+            native: ''
+            no_simd: '1'
           # Linux on Arm64 (macOS runners are Arm64 too): NEON vectors,
           # without the x86 dispatch
           - os: ubuntu-24.04-arm
@@ -62,6 +69,6 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y zlib1g-dev
       - name: Build and test
-        run: make CC=${{ matrix.cc }} ${{ matrix.sanitize && 'SANITIZE=1' || '' }} ${{ matrix.native && 'NATIVE=1' || '' }} ${{ matrix.lanes && format('LANES={0}', matrix.lanes) || '' }} all test
+        run: make CC=${{ matrix.cc }} ${{ matrix.sanitize && 'SANITIZE=1' || '' }} ${{ matrix.native && 'NATIVE=1' || '' }} ${{ matrix.lanes && format('LANES={0}', matrix.lanes) || '' }} ${{ matrix.no_simd && 'NO_SIMD=1' || '' }} all test
       - name: Python and Perl modules
         run: python3 -m unittest discover python && perl perl/test.pl

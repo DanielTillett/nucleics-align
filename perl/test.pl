@@ -141,10 +141,11 @@ my $input = "$FindBin::Bin/../tests/cli/input";
 # rather than waited for (a tool mid-alignment would not notice its input
 # closing)
 SKIP: {
-  skip('needs a POSIX shell', 3) if $^O eq 'MSWin32';
+  skip('needs a POSIX shell', 6) if $^O eq 'MSWin32';
   require File::Temp;
+  # The tool ignores TERM too, so only the escalation to KILL ends it
   my ($fh, $path) = File::Temp::tempfile(UNLINK => 1);
-  print $fh "#!/bin/sh\nexec sleep 30\n";
+  print $fh "#!/bin/sh\ntrap '' TERM\nexec sleep 30\n";
   close($fh);
   chmod(0755, $path);
   for my $class ('NeedlemanWunsch', 'SmithWaterman') {
@@ -153,10 +154,14 @@ SKIP: {
     eval { $tool->do_alignment('ACGT', 'AGT'); $tool->get_next_hit() };
     like($@, qr/Timeout reading/, "$class: timeout");
     $tool->destructor();
-    if($class eq 'SmithWaterman') {
-      cmp_ok(time() - $start, '<', 10, 'the stalled tool was killed');
-    }
+    cmp_ok(time() - $start, '<', 10, "$class: the stalled tool was killed");
   }
+  # The same for a pair with an empty sequence (run once, on the command
+  # line)
+  my $start = time();
+  eval { NeedlemanWunsch->new(cmd => $path, timeout => 1)->do_alignment('', 'ACGT') };
+  like($@, qr/Timeout reading/, 'empty pair: timeout');
+  cmp_ok(time() - $start, '<', 10, 'empty pair: the stalled tool was killed');
 }
 
 done_testing();

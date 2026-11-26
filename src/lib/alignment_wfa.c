@@ -31,8 +31,9 @@
 #include "alignment_alloc.h"
 #include "alignment_simd.h"
 
+// (not in the scalar-only build, -DALN_NO_SIMD)
 #if defined(__x86_64__) && (defined(__GNUC__) || defined(__clang__)) && \
-    !defined(ALN_TSAN)
+    !defined(ALN_TSAN) && !defined(ALN_NO_SIMD)
 #  include <immintrin.h>
 #  define WFA_HAS_X86_AVX2 1
 #endif

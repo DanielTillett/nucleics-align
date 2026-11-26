@@ -103,3 +103,10 @@ nw_threads_zero  | -     | ./bin/needleman_wunsch --threads 0 --printscores --fi
 sw_maxhits_neg   | -     | ./bin/smith_waterman --maxhits -1 ACGT ACGT
 nw_threads_range | -     | ./bin/needleman_wunsch --threads 99999999999999999999 ACGT AGT
 nw_threads_blank | -     | ./bin/needleman_wunsch --threads "   " ACGT AGT
+# The integer parsers' edges, once unit tests of parse_entire_int/uint
+sw_context_neg0  | -     | ./bin/smith_waterman --context -0 ACGT ACGT
+nw_gapopen_big   | -     | ./bin/needleman_wunsch --gapopen 99999999999999999999 ACGT AGT
+nw_gapopen_small | -     | ./bin/needleman_wunsch --gapopen -99999999999999999999 ACGT AGT
+nw_gapopen_space | -     | ./bin/needleman_wunsch --printscores --gapopen " -4" ACGT AGT
+sw_maxhits_wrap  | -     | ./bin/smith_waterman --maxhits -18446744073709551615 ACGT ACGT
+nw_threads_neg0  | -     | ./bin/needleman_wunsch --threads -0 ACGT AGT

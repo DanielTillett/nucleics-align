@@ -85,7 +85,8 @@ unsigned int test_rand(unsigned int n);
 void test_rand_seq(char *seq, size_t len, const char *alphabet);
 // A copy of in with about per_mille substitutions, a quarter as many
 // deletions and insertions, and now and then a deleted run of 20. out
-// holds at least 3/2 the length of in, plus one
+// holds at least twice the length of in, plus one (an insertion after
+// every letter)
 void test_mutate(char *out, const char *in, unsigned int per_mille,
                  const char *alphabet);
 

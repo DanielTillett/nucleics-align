@@ -20,7 +20,7 @@ $ cd nucleics-align
 $ make test                      # unit tests, then the command line fixtures
 $ make SANITIZE=1 test           # with AddressSanitizer and UBSan
 $ make LANES=16 test             # other SIMD widths (4, 8 or 16)
-$ make CFLAGS=-DALN_NO_SIMD test  # the scalar-only build
+$ make NO_SIMD=1 test            # the scalar-only build
 $ python3 -m unittest discover python
 $ perl perl/test.pl
 ```
