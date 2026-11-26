@@ -100,11 +100,11 @@ bin/smith_waterman: src/cli/sw_cmdline.c $(CLI_COMMON_OBJS) src/libalign.a $(LIB
 bin/lcs: src/cli/lcs_cmdline.c $(CLI_COMMON_OBJS) src/libalign.a $(LIB_HDRS) $(CLI_HDRS) | bin
 	$(CC) -o $@ $< $(CLI_COMMON_OBJS) $(CFLAGS) $(TGTFLAGS) $(CLI_INCS) $(LIBS) $(CLI_LINK)
 
-bin/nucleics_align_tests: tests/tests.c $(CLI_COMMON_OBJS) src/libalign.a $(LIB_HDRS) $(CLI_HDRS) | bin
-	$(CC) -o $@ $< $(CLI_COMMON_OBJS) $(CFLAGS) $(TGTFLAGS) $(CLI_INCS) $(LIBS) $(CLI_LINK)
-
-bin/test_v130: tests/test_v130.c src/libalign.a $(LIB_HDRS) | bin
-	$(CC) -o $@ $< $(CFLAGS) $(TGTFLAGS) $(LIB_INCS) $(LIBS) $(LIB_LINK)
+# The unit tests: tests/tests.c (main) and one suite per tests/test_*.c,
+# on the internal headers and libalign.a alone (no CLI objects, no zlib)
+TEST_SRCS = tests/tests.c $(filter-out tests/test_v2_api.c,$(wildcard tests/test_*.c))
+bin/nucleics_align_tests: $(TEST_SRCS) tests/test_common.h src/libalign.a $(LIB_HDRS) | bin
+	$(CC) -o $@ $(TEST_SRCS) $(CFLAGS) $(TGTFLAGS) $(LIB_INCS) $(LIBS) $(LIB_LINK)
 
 bin/test_v2_api: tests/test_v2_api.c src/libalign.a include/nucleics_align.h | bin
 	$(CC) -o $@ $< $(CFLAGS) $(TGTFLAGS) -I include $(LIBS) $(LIB_LINK)
@@ -119,9 +119,8 @@ clean:
 	rm -rf bin src/*.o src/*.d src/lib/*.o src/lib/*.d src/cli/*.o src/cli/*.d src/libalign.a src/.build-flags
 	cd examples && $(MAKE) clean
 
-test: bin/nucleics_align_tests bin/test_v130 bin/test_v2_api bin/needleman_wunsch bin/smith_waterman bin/lcs
+test: bin/nucleics_align_tests bin/test_v2_api bin/needleman_wunsch bin/smith_waterman bin/lcs
 	./bin/nucleics_align_tests
-	./bin/test_v130
 	./bin/test_v2_api
 	sh tests/cli/run.sh
 

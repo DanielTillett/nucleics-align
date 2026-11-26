@@ -5,7 +5,7 @@
  date: Nov 2026
  */
 
-// Private: hooks for the unit tests (src/tools/tests.c), not part of the
+// Private: hooks for the unit tests (tests/test_*.c), not part of the
 // library's interface. They may change or go without notice
 
 #ifndef ALIGNMENT_TESTING_HEADER_SEEN

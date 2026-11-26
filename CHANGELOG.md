@@ -51,6 +51,19 @@ fixes listed under [Changes to output](#changes-to-output).
 
 ### Changed
 
+- The unit tests are one file per subject (`tests/test_*.c`, twelve
+  suites) on a shared harness (`tests/test_common.h`): one random
+  generator reseeded for every test from the run's seed and the test's
+  name, so `NUCLEICS_ALIGN_TEST_SEED` repeats a run and a failing test
+  repeats on its own; the library's tuning globals saved before and
+  restored after each test, with a note for any a test left changed; one
+  random sequence generator, mutator and alignment comparison in place of
+  three or four each; a failed assertion names its test. The v1.3.0
+  targeted tests (`tests/test_v130.c`) are folded into the suites. The
+  unit tests no longer link the command line objects or zlib: the
+  scoring-file loader and the option parsers' ranges are pinned by the
+  command line fixtures instead, which gain cases for `--help`,
+  `--fastlocal`, `--wfabudget`, `--threads 0` and out-of-range values
 - `NA_VERSION_STR` is built from `NA_VERSION_MAJOR/MINOR/PATCH`, and
   `NA_VERSION_NUMBER` (0x020000) is new, for `#if` checks. The unused
   `NUCLEICS_ALIGN_VERSION` and `NUCLEICS_ALIGN_VERSION_STR` macros are gone,

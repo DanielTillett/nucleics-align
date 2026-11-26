@@ -94,3 +94,12 @@ nw_pm_linearfallback | - | ./bin/needleman_wunsch --printmatrices --linearfallba
 nw_matrix_gz_bad | -     | ./bin/needleman_wunsch --substitution_matrix @/bad_matrix.txt.gz --printscores --file @/protein.fa
 sw_interact_noname | -   | ./bin/smith_waterman --stdin < @/sw_interactive_noname.txt
 lcs_help         | -     | ./bin/lcs --help
+# Usage, the opt-in modes and the parsers' ranges (26 Nov 2026 refactoring)
+nw_help          | -     | ./bin/needleman_wunsch --help
+sw_help          | -     | ./bin/smith_waterman --help
+sw_fastlocal     | batch | ./bin/smith_waterman --fastlocal --maxhits 1 --file @/batch.fa
+nw_wfabudget     | batch | ./bin/needleman_wunsch --wfa --wfabudget 100 --printscores --file @/batch.fa
+nw_threads_zero  | -     | ./bin/needleman_wunsch --threads 0 --printscores --file @/ties.fa
+sw_maxhits_neg   | -     | ./bin/smith_waterman --maxhits -1 ACGT ACGT
+nw_threads_range | -     | ./bin/needleman_wunsch --threads 99999999999999999999 ACGT AGT
+nw_threads_blank | -     | ./bin/needleman_wunsch --threads "   " ACGT AGT

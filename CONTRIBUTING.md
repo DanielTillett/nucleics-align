@@ -25,12 +25,17 @@ $ python3 -m unittest discover python
 $ perl perl/test.pl
 ```
 
-- `make test` runs the library's unit tests (`bin/nucleics_align_tests`),
-  then [`tests/cli/run.sh`](tests/cli/run.sh), which compares the tools'
-  output, error messages and exit status with the files in
-  `tests/cli/expected`, running each batch case on one thread and on four
+- `make test` runs the library's unit tests (`bin/nucleics_align_tests`:
+  one suite per `tests/test_*.c`, on the harness in
+  [`tests/test_common.h`](tests/test_common.h)) and the public API's
+  (`bin/test_v2_api`), then [`tests/cli/run.sh`](tests/cli/run.sh), which
+  compares the tools' output, error messages and exit status with the
+  files in `tests/cli/expected`, running each batch case on one thread and
+  on four
 - The unit tests print their random seed; set `NUCLEICS_ALIGN_TEST_SEED` to
-  repeat a run
+  repeat a run. Each test's random data comes from that seed and the test's
+  name, so a failure repeats on its own, and the library's tuning globals
+  are restored after every test
 - Changing the compiler, flags or any header rebuilds what depends on it, so
   a build never mixes objects compiled different ways
 - CI runs gcc and clang, with and without sanitisers, on Linux (x86 and Arm)
@@ -38,10 +43,11 @@ $ perl perl/test.pl
 
 ## Pull requests
 
-- Add a test that fails without your change: a unit test in
-  [`tests/tests.c`](tests/tests.c) (or [`tests/test_v2_api.c`](tests/test_v2_api.c)
-  for the public API), or a fixture in [`tests/cli/cases`](tests/cli/cases)
-  for the tools' output
+- Add a test that fails without your change: a unit test in the
+  `tests/test_*.c` file for its subject (`RUN()` it from the suite at the
+  end of the file; [`tests/test_v2_api.c`](tests/test_v2_api.c) for the
+  public API), or a fixture in [`tests/cli/cases`](tests/cli/cases) for the
+  tools' output
 - For a speed-up, include timings before and after (best of several runs,
   with the machine), and check the output is unchanged against the previous
   build. [`benchmarks/`](benchmarks) has scripts for this
